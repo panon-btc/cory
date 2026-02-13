@@ -1,4 +1,4 @@
-import type { GraphResponse, LabelFileSummary } from "./types";
+import type { Bip329Type, GraphResponse, LabelFileSummary } from "./types";
 
 interface ApiErrorPayload {
   error?: string;
@@ -143,6 +143,7 @@ export async function importLabelFile(
 
 export async function setLabelInFile(
   fileId: string,
+  labelType: Bip329Type,
   ref: string,
   label: string,
 ): Promise<LabelFileSummary> {
@@ -151,17 +152,18 @@ export async function setLabelInFile(
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ type: "tx", ref, label }),
+    body: JSON.stringify({ type: labelType, ref, label }),
   });
   return resp.json() as Promise<LabelFileSummary>;
 }
 
 export async function deleteLabelInFile(
   fileId: string,
+  labelType: Bip329Type,
   ref: string,
 ): Promise<LabelFileSummary> {
   const query = new URLSearchParams({
-    type: "tx",
+    type: labelType,
     ref,
   });
   const resp = await apiFetch(

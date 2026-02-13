@@ -1,7 +1,13 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import type { Node, Edge } from "@xyflow/react";
-import type { GraphResponse, LabelFileSummary } from "./types";
+import type {
+  Bip329Type,
+  GraphResponse,
+  LabelEntry,
+  LabelFileSummary,
+  LabelsByType,
+} from "./types";
 import {
   deleteLabelInFile,
   fetchGraph,
@@ -9,12 +15,25 @@ import {
   initializeAuth,
   setLabelInFile,
 } from "./api";
-import { computeLayout, type TxNodeData } from "./layout";
+import { computeLayout, refreshNodesFromGraph } from "./layout";
 import Header from "./components/Header";
 import GraphPanel from "./components/GraphPanel";
 import LabelPanel from "./components/LabelPanel";
 
+function editableLabelBucket(
+  labels: LabelsByType,
+  labelType: Bip329Type,
+): Record<string, LabelEntry[]> | null {
+  if (labelType === "tx") return labels.tx;
+  if (labelType === "input") return labels.input;
+  if (labelType === "output") return labels.output;
+  if (labelType === "addr") return labels.addr;
+  return null;
+}
+
 export default function App() {
+  const SIDEBAR_MIN_WIDTH = 320;
+  const SIDEBAR_MAX_WIDTH = 960;
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [graph, setGraph] = useState<GraphResponse | null>(null);
@@ -22,6 +41,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [labelFiles, setLabelFiles] = useState<LabelFileSummary[]>([]);
+  const [sidebarWidth, setSidebarWidth] = useState(390);
   const lastSearchRef = useRef("");
   const labelFilesRef = useRef<LabelFileSummary[]>([]);
 
@@ -36,124 +56,91 @@ export default function App() {
   }, []);
 
   const upsertLabelInState = useCallback(
-    (fileId: string, fileName: string, txid: string, label: string) => {
+    (
+      fileId: string,
+      fileName: string,
+      labelType: Bip329Type,
+      refId: string,
+      label: string,
+    ) => {
       setGraph((prev) => {
         if (!prev) return prev;
-        const nextLabels = { ...prev.labels };
-        const existing = [...(nextLabels[txid] ?? [])];
-        const idx = existing.findIndex((entry) => entry.file_id === fileId);
-        if (idx >= 0) {
-          existing[idx] = {
-            file_id: fileId,
-            file_name: fileName,
-            file_kind: "local",
-            editable: true,
-            label,
-          };
-        } else {
-          existing.push({
-            file_id: fileId,
-            file_name: fileName,
-            file_kind: "local",
-            editable: true,
-            label,
-          });
-        }
-        nextLabels[txid] = existing;
-        return { ...prev, labels: nextLabels };
-      });
+        const next = {
+          ...prev,
+          labels_by_type: {
+            tx: { ...prev.labels_by_type.tx },
+            input: { ...prev.labels_by_type.input },
+            output: { ...prev.labels_by_type.output },
+            addr: { ...prev.labels_by_type.addr },
+          },
+        };
 
-      setNodes((prevNodes) =>
-        prevNodes.map((node) => {
-          if (node.id !== txid) return node;
-          const data = node.data as TxNodeData;
-          const existing = [...data.labels];
-          const idx = existing.findIndex((entry) => entry.file_id === fileId);
-          if (idx >= 0) {
-            existing[idx] = {
-              file_id: fileId,
-              file_name: fileName,
-              file_kind: "local",
-              editable: true,
-              label,
-            };
-          } else {
-            existing.push({
-              file_id: fileId,
-              file_name: fileName,
-              file_kind: "local",
-              editable: true,
-              label,
-            });
-          }
-          return {
-            ...node,
-            data: {
-              ...data,
-              labels: existing,
-            },
-          };
-        }),
-      );
+        const bucket = editableLabelBucket(next.labels_by_type, labelType);
+        if (!bucket) {
+          return prev;
+        }
+
+        const existing = [...(bucket[refId] ?? [])];
+        const idx = existing.findIndex((entry) => entry.file_id === fileId);
+        const row: LabelEntry = {
+          file_id: fileId,
+          file_name: fileName,
+          file_kind: "local",
+          editable: true,
+          label,
+        };
+        if (idx >= 0) {
+          existing[idx] = row;
+        } else {
+          existing.push(row);
+        }
+        bucket[refId] = existing;
+
+        return next;
+      });
     },
     [],
   );
 
-  const removeLabelFromState = useCallback((fileId: string, txid: string) => {
-    setGraph((prev) => {
-      if (!prev) return prev;
-      const nextLabels = { ...prev.labels };
-      const existing = nextLabels[txid] ?? [];
-      nextLabels[txid] = existing.filter((entry) => entry.file_id !== fileId);
-      return { ...prev, labels: nextLabels };
-    });
-
-    setNodes((prevNodes) =>
-      prevNodes.map((node) => {
-        if (node.id !== txid) return node;
-        const data = node.data as TxNodeData;
-        return {
-          ...node,
-          data: {
-            ...data,
-            labels: data.labels.filter((entry) => entry.file_id !== fileId),
+  const removeLabelFromState = useCallback(
+    (fileId: string, labelType: Bip329Type, refId: string) => {
+      setGraph((prev) => {
+        if (!prev) return prev;
+        const next = {
+          ...prev,
+          labels_by_type: {
+            tx: { ...prev.labels_by_type.tx },
+            input: { ...prev.labels_by_type.input },
+            output: { ...prev.labels_by_type.output },
+            addr: { ...prev.labels_by_type.addr },
           },
         };
-      }),
-    );
-  }, []);
+
+        const bucket = editableLabelBucket(next.labels_by_type, labelType);
+        if (!bucket) {
+          return prev;
+        }
+
+        const existing = bucket[refId] ?? [];
+        bucket[refId] = existing.filter((entry) => entry.file_id !== fileId);
+        return next;
+      });
+    },
+    [],
+  );
 
   const refreshLabelFiles = useCallback(async (): Promise<
     LabelFileSummary[]
   > => {
     try {
       const files = await fetchLabelFiles();
-      const onlyLocal = files.filter((file) => file.kind === "local");
-      setLabelFiles(onlyLocal);
-      return onlyLocal;
+      setLabelFiles(files);
+      return files;
     } catch {
       // Keep current list if label file metadata request fails.
       return labelFilesRef.current;
     }
   }, []);
-
-  const handleNodeLabelSave = useCallback(
-    async (fileId: string, txid: string, label: string): Promise<void> => {
-      const summary = await setLabelInFile(fileId, txid, label);
-      upsertLabelInState(fileId, summary.name, txid, label);
-      await refreshLabelFiles();
-    },
-    [refreshLabelFiles, upsertLabelInState],
-  );
-
-  const handleNodeLabelDelete = useCallback(
-    async (fileId: string, txid: string): Promise<void> => {
-      await deleteLabelInFile(fileId, txid);
-      removeLabelFromState(fileId, txid);
-      await refreshLabelFiles();
-    },
-    [removeLabelFromState, refreshLabelFiles],
-  );
 
   const doSearch = useCallback(
     async (
@@ -161,20 +148,14 @@ export default function App() {
       opts?: {
         preserveSelectedTxid?: string | null;
         quietErrors?: boolean;
-        localFilesOverride?: LabelFileSummary[];
       },
     ) => {
       lastSearchRef.current = txid;
       setLoading(true);
       setError(null);
       try {
-        const localFilesForLayout = opts?.localFilesOverride ?? labelFiles;
         const resp = await fetchGraph(txid);
-        const { nodes: n, edges: e } = await computeLayout(resp, {
-          localFiles: localFilesForLayout,
-          onSaveLabel: handleNodeLabelSave,
-          onDeleteLabel: handleNodeLabelDelete,
-        });
+        const { nodes: n, edges: e } = await computeLayout(resp);
         const preservedTxid = opts?.preserveSelectedTxid;
         const nextSelectedTxid =
           preservedTxid && resp.nodes[preservedTxid]
@@ -196,26 +177,39 @@ export default function App() {
         setLoading(false);
       }
     },
-    [labelFiles, handleNodeLabelSave, handleNodeLabelDelete],
+    [],
+  );
+
+  const handleSaveLabel = useCallback(
+    async (
+      fileId: string,
+      labelType: Bip329Type,
+      refId: string,
+      label: string,
+  ): Promise<void> => {
+      const summary = await setLabelInFile(fileId, labelType, refId, label);
+      upsertLabelInState(fileId, summary.name, labelType, refId, label);
+      await refreshLabelFiles();
+    },
+    [refreshLabelFiles, upsertLabelInState],
+  );
+
+  const handleDeleteLabel = useCallback(
+    async (
+      fileId: string,
+      labelType: Bip329Type,
+      refId: string,
+  ): Promise<void> => {
+      await deleteLabelInFile(fileId, labelType, refId);
+      removeLabelFromState(fileId, labelType, refId);
+      await refreshLabelFiles();
+    },
+    [refreshLabelFiles, removeLabelFromState],
   );
 
   useEffect(() => {
     void refreshLabelFiles();
   }, [refreshLabelFiles]);
-
-  useEffect(() => {
-    setNodes((prevNodes) =>
-      prevNodes.map((node) => ({
-        ...node,
-        data: {
-          ...node.data,
-          localFiles: labelFiles,
-          onSaveLabel: handleNodeLabelSave,
-          onDeleteLabel: handleNodeLabelDelete,
-        },
-      })),
-    );
-  }, [labelFiles, handleNodeLabelSave, handleNodeLabelDelete]);
 
   const handleNodesUpdate = useCallback((nextNodes: Node[]) => {
     setNodes(nextNodes);
@@ -227,7 +221,7 @@ export default function App() {
 
   const handleLabelsChanged = useCallback(
     async (opts?: { refreshGraph?: boolean }) => {
-      const freshFiles = await refreshLabelFiles();
+      await refreshLabelFiles();
       if (opts?.refreshGraph === false) {
         return;
       }
@@ -235,11 +229,43 @@ export default function App() {
         await doSearch(lastSearchRef.current, {
           preserveSelectedTxid: selectedTxid,
           quietErrors: true,
-          localFilesOverride: freshFiles,
         });
       }
     },
     [doSearch, refreshLabelFiles, selectedTxid],
+  );
+
+  useEffect(() => {
+    if (!graph) {
+      return;
+    }
+    setNodes((prevNodes) => refreshNodesFromGraph(graph, prevNodes));
+  }, [graph]);
+
+  const handleSidebarResizeStart = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = sidebarWidth;
+
+      const onMouseMove = (moveEvent: MouseEvent) => {
+        const deltaX = moveEvent.clientX - startX;
+        const next = Math.min(
+          SIDEBAR_MAX_WIDTH,
+          Math.max(SIDEBAR_MIN_WIDTH, startWidth - deltaX),
+        );
+        setSidebarWidth(next);
+      };
+
+      const onMouseUp = () => {
+        window.removeEventListener("mousemove", onMouseMove);
+        window.removeEventListener("mouseup", onMouseUp);
+      };
+
+      window.addEventListener("mousemove", onMouseMove);
+      window.addEventListener("mouseup", onMouseUp);
+    },
+    [sidebarWidth],
   );
 
   return (
@@ -260,9 +286,26 @@ export default function App() {
             onNodeClick={handleNodeClick}
             onNodesUpdate={handleNodesUpdate}
           />
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            onMouseDown={handleSidebarResizeStart}
+            style={{
+              width: 6,
+              cursor: "col-resize",
+              background: "var(--border)",
+              opacity: 0.45,
+            }}
+            title="Drag to resize panel"
+          />
           <LabelPanel
+            width={sidebarWidth}
             labelFiles={labelFiles}
+            graph={graph}
+            selectedTxid={selectedTxid}
             onLabelsChanged={handleLabelsChanged}
+            onSaveLabel={handleSaveLabel}
+            onDeleteLabel={handleDeleteLabel}
           />
         </div>
       </div>

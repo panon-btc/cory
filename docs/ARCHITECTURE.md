@@ -131,6 +131,7 @@ visible.
 Key operations:
 
 - `list_local_files()` — enumerate editable local files
+- `list_files()` — enumerate local + pack files in resolution order
 - `create_local_file(name)` — create empty local file
 - `import_local_file(name, content)` — create and import JSONL
 - `replace_local_file_content(file_id, content)` — replace full file
@@ -138,7 +139,7 @@ Key operations:
 - `export_local_file(file_id)` — export one local file as JSONL
 - `remove_local_file(file_id)` — drop local file from memory
 - `load_pack_dir(path)` — recursively load read-only `.jsonl` pack files
-- `get_all_labels_for_ref(ref)` — all matching labels with source metadata
+- `get_all_labels_for(type, ref)` — all matching labels with source metadata
 
 The caller (`cory` server) wraps the store in `Arc<RwLock<LabelStore>>` for
 concurrent access.
@@ -177,7 +178,7 @@ Clap derive struct. Notable options:
 |--------|------|------|-------------|
 | GET | `/api/v1/health` | No | `{"status": "ok"}` |
 | GET | `/api/v1/graph/tx/{txid}` | No | Build ancestry graph |
-| GET | `/api/v1/label` | No | List local label files |
+| GET | `/api/v1/label` | No | List local + pack label files |
 | POST | `/api/v1/label` | Yes | Create file or import JSONL |
 | POST | `/api/v1/label/{file_id}` | Yes | Upsert label or replace file content |
 | DELETE | `/api/v1/label/{file_id}/entry?type=tx&ref=<txid>` | Yes | Delete one label entry from a local file |
@@ -189,7 +190,9 @@ Auth is via `X-API-Token` header, checked only on mutating endpoints.
 CORS is locked to the exact server origin.
 
 The graph response includes the raw `AncestryGraph` (flattened), plus
-per-node `enrichments` (fee, feerate, RBF, locktime) and `labels`.
+per-node `enrichments` (fee, feerate, RBF, locktime), typed labels in
+`labels_by_type`, and address resolution maps:
+`input_address_refs`, `output_address_refs`, and `address_occurrences`.
 
 Local label files are in-memory only for the server process lifetime.
 The browser owns disk I/O: import reads local files and sends content to
@@ -216,19 +219,22 @@ ui/src/
   components/
     Header.tsx             Brand + search bar + API token input
     GraphPanel.tsx         React Flow wrapper (nodes, edges, controls, minimap)
-    TxNode.tsx             Custom node (txid, fee/feerate meta, inline label editors)
-    LabelPanel.tsx         Right sidebar: local label file manager
+    TxNode.tsx             Custom node (txid/meta + input/output rows + label subtitles)
+    LabelPanel.tsx         Right sidebar: pack labels, local files, selected tx editor
+    SelectedTxEditor.tsx   Tx/input/output/address label editing for current node
+    TargetLabelEditor.tsx  Reusable target-scoped label editor card
 ```
 
 **Features:**
 
 - Txid search → interactive DAG visualization with ELK layered layout
-- Click a node to select it → label panel shows details
+- Click a node to select it → sidebar shows selected-transaction editor
 - Create/import/remove local label files (POST/DELETE with API token)
-- Edit node labels inline with autosave (2s debounce) in a specific local file
-- Delete one node label from a local file (DELETE entry endpoint)
+- Edit `tx`, `input`, `output`, and derived `addr` labels from the selected transaction editor
+- Address labels are shared by address string (reused addresses map to one label target)
+- Delete one label entry from a local file (DELETE entry endpoint)
 - Export per-file BIP-329 JSONL
-- Drag nodes, zoom, pan, minimap, fit-to-view controls
+- Drag nodes, zoom, pan, minimap, fit-to-view controls, and resize the right sidebar
 
 **Build integration:**
 
@@ -285,11 +291,12 @@ fixtures.
 
 ## Known quirks and things that may need fixing
 
-### `TxNode.block_height` is always None
+### Block height resolution costs extra RPCs
 
-Bitcoin Core's `getrawtransaction` (verbosity=1) does not include block
-height. We'd need a separate `getblockheader` call on the block hash to
-populate it. This means `TxNode::confirmations()` always returns `None`.
+When `getrawtransaction` does not include `blockheight`, the HTTP RPC
+adapter resolves it from `blockhash` via `getblockheader` and caches the
+mapping in-memory. Heights are now populated, but this introduces extra
+RPC traffic for previously unseen block hashes.
 
 ### Graph BFS is still sequential per node
 
@@ -303,8 +310,17 @@ do not process multiple BFS frontier nodes concurrently. Spawning tasks
 If a funding transaction is beyond the graph limits (not fetched), and
 the output is already spent (so `gettxout` returns nothing), the input's
 value and script type remain `None`. This is unavoidable without
-fetching the funding tx, but it means fee calculation returns `None` for
-the spending transaction.
+fetching the funding tx. A post-BFS backfill step now recovers many of
+these cases when the funding tx is already present in the in-memory graph,
+but true out-of-graph spent prevouts can still leave fee calculation as
+`None`.
+
+### Label edits do not re-run ELK layout
+
+Single-label edits update graph label state in place and refresh existing
+node render data without recomputing layout. This preserves zoom/pan and
+manual node positions, but node heights can change without a fresh
+ELK pass until a full graph reload.
 
 ### Local labels are ephemeral
 

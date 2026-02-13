@@ -31,6 +31,7 @@ pub struct AppState {
     pub jwt_manager: Arc<crate::auth::JwtManager>,
     pub default_limits: GraphLimits,
     pub rpc_concurrency: usize,
+    pub network: bitcoin::Network,
 }
 
 type SharedState = Arc<AppState>;
@@ -172,7 +173,10 @@ struct GraphResponse {
     #[serde(flatten)]
     graph: cory_core::AncestryGraph,
     enrichments: std::collections::HashMap<String, TxEnrichment>,
-    labels: std::collections::HashMap<String, Vec<LabelEntry>>,
+    labels_by_type: GraphLabelsByType,
+    input_address_refs: std::collections::HashMap<String, String>,
+    output_address_refs: std::collections::HashMap<String, String>,
+    address_occurrences: std::collections::HashMap<String, Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -190,6 +194,14 @@ struct LabelEntry {
     file_kind: LabelFileKind,
     editable: bool,
     label: String,
+}
+
+#[derive(Default, Serialize)]
+struct GraphLabelsByType {
+    tx: std::collections::HashMap<String, Vec<LabelEntry>>,
+    input: std::collections::HashMap<String, Vec<LabelEntry>>,
+    output: std::collections::HashMap<String, Vec<LabelEntry>>,
+    addr: std::collections::HashMap<String, Vec<LabelEntry>>,
 }
 
 async fn get_graph(
@@ -217,18 +229,22 @@ async fn get_graph(
     .await
     .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    // Compute enrichments and collect labels for each node.
+    // Compute enrichments and collect labels for each target type.
     let mut enrichments = std::collections::HashMap::new();
-    let mut labels_map = std::collections::HashMap::new();
+    let mut labels_by_type = GraphLabelsByType::default();
+    let mut input_address_refs = std::collections::HashMap::new();
+    let mut output_address_refs = std::collections::HashMap::new();
+    let mut address_occurrences = std::collections::HashMap::new();
     let label_store = state.labels.read().await;
 
     for (txid, node) in &graph.nodes {
+        let txid_str = txid.to_string();
         let fee = enrich::compute_fee(node);
         let feerate = fee.map(|f| enrich::compute_feerate(f, node.vsize));
         let has_non_final = node.inputs.iter().any(|i| i.sequence < 0xFFFFFFFF);
 
         enrichments.insert(
-            txid.to_string(),
+            txid_str.clone(),
             TxEnrichment {
                 fee_sats: fee.map(|f| f.to_sat()),
                 feerate_sat_vb: feerate,
@@ -237,28 +253,78 @@ async fn get_graph(
             },
         );
 
-        let node_labels = label_store.get_all_labels_for_ref(&txid.to_string());
-        if !node_labels.is_empty() {
-            labels_map.insert(
-                txid.to_string(),
-                node_labels
-                    .into_iter()
-                    .map(|(meta, rec)| LabelEntry {
-                        file_id: meta.id,
-                        file_name: meta.name,
-                        file_kind: meta.kind,
-                        editable: meta.editable,
-                        label: rec.label,
-                    })
-                    .collect(),
-            );
+        let tx_labels = label_store.get_all_labels_for(Bip329Type::Tx, &txid_str);
+        if !tx_labels.is_empty() {
+            labels_by_type
+                .tx
+                .insert(txid_str.clone(), to_label_entries(tx_labels));
         }
+
+        for (vin, _) in node.inputs.iter().enumerate() {
+            let input_ref = format!("{txid_str}:{vin}");
+            let input_labels = label_store.get_all_labels_for(Bip329Type::Input, &input_ref);
+            if !input_labels.is_empty() {
+                labels_by_type
+                    .input
+                    .insert(input_ref, to_label_entries(input_labels));
+            }
+        }
+
+        for (vout, output) in node.outputs.iter().enumerate() {
+            let output_ref = format!("{txid_str}:{vout}");
+            let output_labels = label_store.get_all_labels_for(Bip329Type::Output, &output_ref);
+            if !output_labels.is_empty() {
+                labels_by_type
+                    .output
+                    .insert(output_ref.clone(), to_label_entries(output_labels));
+            }
+
+            if let Ok(address) =
+                bitcoin::Address::from_script(output.script_pub_key.as_script(), state.network)
+            {
+                let address_ref = address.to_string();
+                output_address_refs.insert(output_ref.clone(), address_ref.clone());
+                address_occurrences
+                    .entry(address_ref.clone())
+                    .or_insert_with(Vec::new)
+                    .push(output_ref);
+
+                if !labels_by_type.addr.contains_key(&address_ref) {
+                    let addr_labels =
+                        label_store.get_all_labels_for(Bip329Type::Addr, &address_ref);
+                    if !addr_labels.is_empty() {
+                        labels_by_type
+                            .addr
+                            .insert(address_ref, to_label_entries(addr_labels));
+                    }
+                }
+            }
+        }
+    }
+
+    for edge in &graph.edges {
+        let Some(funding_node) = graph.nodes.get(&edge.funding_txid) else {
+            continue;
+        };
+        let Some(funding_output) = funding_node.outputs.get(edge.funding_vout as usize) else {
+            continue;
+        };
+        let Ok(address) =
+            bitcoin::Address::from_script(funding_output.script_pub_key.as_script(), state.network)
+        else {
+            continue;
+        };
+        let input_ref = format!("{}:{}", edge.spending_txid, edge.input_index);
+        input_address_refs.insert(input_ref, address.to_string());
     }
 
     Ok(Json(GraphResponse {
         graph,
         enrichments,
-        labels: labels_map,
+        labels_by_type,
+        input_address_refs,
+        output_address_refs,
+        address_occurrences,
     }))
 }
 
@@ -288,7 +354,7 @@ async fn list_local_label_files(
     State(state): State<SharedState>,
 ) -> Result<Json<Vec<LabelFileSummary>>, AppError> {
     let store = state.labels.read().await;
-    Ok(Json(store.list_local_files()))
+    Ok(Json(store.list_files()))
 }
 
 async fn create_or_import_local_label_file(
@@ -469,6 +535,23 @@ async fn static_files(uri: axum::http::Uri) -> Response {
 // Helpers
 // ==============================================================================
 
+fn to_label_entries(
+    labels: Vec<(
+        cory_core::labels::LabelFileMeta,
+        cory_core::labels::Bip329Record,
+    )>,
+) -> Vec<LabelEntry> {
+    labels
+        .into_iter()
+        .map(|(meta, rec)| LabelEntry {
+            file_id: meta.id,
+            file_name: meta.name,
+            file_kind: meta.kind,
+            editable: meta.editable,
+            label: rec.label,
+        })
+        .collect()
+}
 fn map_label_store_error(err: LabelStoreError) -> AppError {
     match err {
         LabelStoreError::DuplicateLocalFile(name) => {

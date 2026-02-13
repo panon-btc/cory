@@ -4,6 +4,7 @@ mod server;
 
 use std::sync::Arc;
 
+use bitcoin::Network;
 use clap::Parser;
 use eyre::{eyre, WrapErr};
 
@@ -74,6 +75,7 @@ async fn main() -> eyre::Result<()> {
         jwt_manager: jwt_manager.clone(),
         default_limits: graph_limits,
         rpc_concurrency: args.rpc_concurrency,
+        network: map_chain_to_network(&chain_info.chain),
     };
 
     let bind_addr = format!("{}:{}", args.bind, args.port);
@@ -133,4 +135,14 @@ fn format_rpc_connect_error(rpc_url: &str, source_error: &str) -> String {
     }
 
     lines.join("\n")
+}
+
+fn map_chain_to_network(chain: &str) -> Network {
+    match chain {
+        "main" => Network::Bitcoin,
+        "test" => Network::Testnet,
+        "signet" => Network::Signet,
+        "regtest" => Network::Regtest,
+        _ => Network::Bitcoin,
+    }
 }

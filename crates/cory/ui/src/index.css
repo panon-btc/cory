@@ -27,6 +27,7 @@ body {
 }
 
 input,
+select,
 button {
   font-family: var(--mono);
   font-size: 13px;

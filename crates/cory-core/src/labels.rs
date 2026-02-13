@@ -135,6 +135,20 @@ impl LabelStore {
             .collect()
     }
 
+    pub fn list_files(&self) -> Vec<LabelFileSummary> {
+        self.local_files
+            .iter()
+            .chain(self.pack_files.iter())
+            .map(|file| LabelFileSummary {
+                id: file.meta.id.clone(),
+                name: file.meta.name.clone(),
+                kind: file.meta.kind,
+                editable: file.meta.editable,
+                record_count: file.labels.len(),
+            })
+            .collect()
+    }
+
     pub fn get_local_file_summary(&self, file_id: &str) -> Option<LabelFileSummary> {
         self.find_local_file_by_id(file_id)
             .map(|file| LabelFileSummary {
@@ -268,22 +282,26 @@ impl LabelStore {
     // Query
     // ========================================================================
 
-    /// Returns labels for a given reference in deterministic precedence order:
-    /// local files first (creation order), then pack files (load order).
-    pub fn get_all_labels_for_ref(&self, ref_id: &str) -> Vec<(LabelFileMeta, Bip329Record)> {
+    /// Returns labels for a specific `(type, ref)` in deterministic precedence
+    /// order: local files first (creation order), then pack files (load order).
+    pub fn get_all_labels_for(
+        &self,
+        label_type: Bip329Type,
+        ref_id: &str,
+    ) -> Vec<(LabelFileMeta, Bip329Record)> {
         let mut results = Vec::new();
 
         for file in &self.local_files {
-            for ((_, r), record) in &file.labels {
-                if r == ref_id {
+            for ((t, r), record) in &file.labels {
+                if *t == label_type && r == ref_id {
                     results.push((file.meta.clone(), record.clone()));
                 }
             }
         }
 
         for file in &self.pack_files {
-            for ((_, r), record) in &file.labels {
-                if r == ref_id {
+            for ((t, r), record) in &file.labels {
+                if *t == label_type && r == ref_id {
                     results.push((file.meta.clone(), record.clone()));
                 }
             }
@@ -511,9 +529,40 @@ mod tests {
             labels: pack_labels,
         });
 
-        let labels = store.get_all_labels_for_ref("txid1");
+        let labels = store.get_all_labels_for(Bip329Type::Tx, "txid1");
         assert_eq!(labels.len(), 2);
         assert_eq!(labels[0].0.kind, LabelFileKind::Local);
         assert_eq!(labels[1].0.kind, LabelFileKind::Pack);
+    }
+
+    #[test]
+    fn typed_lookup_ignores_other_label_types() {
+        let mut store = LabelStore::new();
+        let file = store.create_local_file("wallet").expect("create file");
+
+        store
+            .set_local_label(
+                &file.id,
+                Bip329Type::Tx,
+                "abc".to_string(),
+                "tx label".to_string(),
+            )
+            .expect("set tx label");
+        store
+            .set_local_label(
+                &file.id,
+                Bip329Type::Addr,
+                "abc".to_string(),
+                "addr label".to_string(),
+            )
+            .expect("set addr label");
+
+        let tx_labels = store.get_all_labels_for(Bip329Type::Tx, "abc");
+        assert_eq!(tx_labels.len(), 1);
+        assert_eq!(tx_labels[0].1.label, "tx label");
+
+        let addr_labels = store.get_all_labels_for(Bip329Type::Addr, "abc");
+        assert_eq!(addr_labels.len(), 1);
+        assert_eq!(addr_labels[0].1.label, "addr label");
     }
 }

@@ -101,7 +101,10 @@ async fn regtest_server_endpoints_cover_api_surface() {
         "truncated",
         "stats",
         "enrichments",
-        "labels",
+        "labels_by_type",
+        "input_address_refs",
+        "output_address_refs",
+        "address_occurrences",
     ] {
         assert!(
             graph_json.get(key).is_some(),
