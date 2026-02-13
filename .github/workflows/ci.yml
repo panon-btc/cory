@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run clippy with warnings denied
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build all targets with warnings denied
+        run: cargo build --workspace --all-targets --all-features
+
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --workspace --all-targets --all-features
+
+  regtest:
+    name: Regtest Scripts
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install Bitcoin Core binaries (bitcoind + bitcoin-cli)
+        env:
+          BITCOIN_VERSION: "30.2"
+        run: |
+          set -euo pipefail
+          arch="x86_64-linux-gnu"
+          tarball="bitcoin-${BITCOIN_VERSION}-${arch}.tar.gz"
+          base_url="https://bitcoincore.org/bin/bitcoin-core-${BITCOIN_VERSION}"
+          curl -fsSLO "${base_url}/${tarball}"
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf "${tarball}"
+          install -m 0755 "bitcoin-${BITCOIN_VERSION}/bin/bitcoind" "$HOME/.local/bin/bitcoind"
+          install -m 0755 "bitcoin-${BITCOIN_VERSION}/bin/bitcoin-cli" "$HOME/.local/bin/bitcoin-cli"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run regtest scripts
+        run: |
+          set -euo pipefail
+          if [ -d "scripts/regtests" ]; then
+            regtest_dir="scripts/regtests"
+          elif [ -d "scripts/regtest" ]; then
+            regtest_dir="scripts/regtest"
+          else
+            echo "No regtest directory found (expected scripts/regtests or scripts/regtest)"
+            exit 1
+          fi
+
+          python3 "${regtest_dir}/rpc_e2e.py"
+          python3 "${regtest_dir}/graph.py"
+          python3 "${regtest_dir}/server_e2e.py"
