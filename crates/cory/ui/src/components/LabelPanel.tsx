@@ -1,75 +1,171 @@
 import { useState, useCallback, useRef } from "react";
-import type { GraphResponse } from "../types";
-import { setLabel, importLabels, exportLabels } from "../api";
+import {
+  ApiError,
+  createLabelFile,
+  deleteLabelFile,
+  exportLabelFile,
+  importLabelFile,
+  replaceLabelFile,
+} from "../api";
+import type { LabelFileSummary } from "../types";
 
 interface LabelPanelProps {
-  graph: GraphResponse | null;
-  selectedTxid: string | null;
-  onRefresh: () => void;
+  labelFiles: LabelFileSummary[];
+  onLabelsChanged: (opts?: { refreshGraph?: boolean }) => void | Promise<void>;
+}
+
+function normalizeLabelFileId(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .split("-")
+    .filter((segment) => segment.length > 0)
+    .join("-");
+}
+
+function fileNameWithoutJsonl(fileName: string): string {
+  return fileName.toLowerCase().endsWith(".jsonl")
+    ? fileName.slice(0, -6)
+    : fileName;
 }
 
 export default function LabelPanel({
-  graph,
-  selectedTxid,
-  onRefresh,
+  labelFiles,
+  onLabelsChanged,
 }: LabelPanelProps) {
-  const [labelText, setLabelText] = useState("");
+  const [newFileName, setNewFileName] = useState("");
+  const [panelError, setPanelError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const labels = selectedTxid ? (graph?.labels[selectedTxid] ?? []) : [];
+  const handleCreateFile = useCallback(async () => {
+    const trimmed = newFileName.trim();
+    if (!trimmed) return;
 
-  const handleSave = useCallback(async () => {
-    if (!selectedTxid || !labelText.trim()) return;
     try {
-      await setLabel(selectedTxid, labelText.trim());
-      setLabelText("");
-      onRefresh();
-    } catch (e) {
-      alert("Error saving label: " + (e as Error).message);
+      await createLabelFile(trimmed);
+      setNewFileName("");
+      setPanelError(null);
+      onLabelsChanged({ refreshGraph: false });
+    } catch (err) {
+      setPanelError("Create failed: " + (err as Error).message);
     }
-  }, [selectedTxid, labelText, onRefresh]);
+  }, [newFileName, onLabelsChanged]);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter") handleSave();
-    },
-    [handleSave],
-  );
-
-  const handleImport = useCallback(async () => {
+  const handleImportClick = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
 
-  const handleFileChange = useCallback(
+  const handleImportFile = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
+
       try {
-        const text = await file.text();
-        await importLabels(text);
-        alert("Labels imported successfully.");
-        onRefresh();
+        const content = await file.text();
+        const name = fileNameWithoutJsonl(file.name);
+        await importLabelFile(name, content);
+        setPanelError(null);
+        onLabelsChanged({ refreshGraph: true });
       } catch (err) {
-        alert("Import failed: " + (err as Error).message);
+        const apiErr = err as ApiError;
+        const fileId = normalizeLabelFileId(fileNameWithoutJsonl(file.name));
+        if (apiErr.status === 409) {
+          const confirmed = window.confirm(
+            `Label file '${fileNameWithoutJsonl(file.name)}' already exists. Replace its content?`,
+          );
+          if (confirmed) {
+            try {
+              const content = await file.text();
+              await replaceLabelFile(fileId, content);
+              setPanelError(null);
+              onLabelsChanged({ refreshGraph: true });
+            } catch (replaceErr) {
+              setPanelError("Replace failed: " + (replaceErr as Error).message);
+            }
+          }
+        } else {
+          setPanelError("Import failed: " + (err as Error).message);
+        }
       }
+
       e.target.value = "";
     },
-    [onRefresh],
+    [onLabelsChanged],
   );
 
-  const handleExport = useCallback(async () => {
+  const handleExport = useCallback(async (file: LabelFileSummary) => {
     try {
-      const text = await exportLabels();
+      const text = await exportLabelFile(file.id);
+      const finalName = `${file.name}.jsonl`;
+
+      type SavePickerWindow = Window & {
+        showSaveFilePicker?: (opts: {
+          suggestedName?: string;
+          excludeAcceptAllOption?: boolean;
+          types?: Array<{
+            description: string;
+            accept: Record<string, string[]>;
+          }>;
+        }) => Promise<{
+          createWritable: () => Promise<{
+            write: (data: Blob | string) => Promise<void>;
+            close: () => Promise<void>;
+          }>;
+        }>;
+      };
+
+      const picker = (window as SavePickerWindow).showSaveFilePicker;
+      if (picker) {
+        const handle = await picker({
+          suggestedName: finalName,
+          excludeAcceptAllOption: false,
+          types: [
+            {
+              description: "JSON Lines",
+              accept: {
+                "application/json": [".jsonl"],
+                "text/plain": [".jsonl"],
+              },
+            },
+          ],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(text);
+        await writable.close();
+        return;
+      }
+
       const blob = new Blob([text], { type: "text/plain" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "labels.jsonl";
-      a.click();
-      URL.revokeObjectURL(a.href);
-    } catch (e) {
-      alert("Export failed: " + (e as Error).message);
+      const anchor = document.createElement("a");
+      anchor.href = URL.createObjectURL(blob);
+      anchor.download = finalName;
+      anchor.click();
+      URL.revokeObjectURL(anchor.href);
+    } catch (err) {
+      if ((err as Error).name === "AbortError") {
+        return;
+      }
+      setPanelError("Export failed: " + (err as Error).message);
     }
   }, []);
+
+  const handleDelete = useCallback(
+    async (file: LabelFileSummary) => {
+      const confirmed = window.confirm(
+        `Remove label file '${file.name}' from server memory?`,
+      );
+      if (!confirmed) return;
+
+      try {
+        await deleteLabelFile(file.id);
+        setPanelError(null);
+        onLabelsChanged({ refreshGraph: true });
+      } catch (err) {
+        setPanelError("Delete failed: " + (err as Error).message);
+      }
+    },
+    [onLabelsChanged],
+  );
 
   return (
     <div
@@ -86,21 +182,33 @@ export default function LabelPanel({
       }}
     >
       <h3 style={{ fontSize: 13, color: "var(--accent)", margin: 0 }}>
-        Labels
+        Label Files
       </h3>
+
+      <div style={{ display: "flex", gap: 6 }}>
+        <input
+          type="text"
+          value={newFileName}
+          onChange={(e) => setNewFileName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              void handleCreateFile();
+            }
+          }}
+          placeholder="New file name"
+          autoComplete="off"
+          spellCheck={false}
+          style={{ flex: 1 }}
+        />
+        <button onClick={() => void handleCreateFile()}>Create</button>
+      </div>
 
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         <button
-          onClick={handleImport}
+          onClick={handleImportClick}
           style={{ fontSize: 11, padding: "4px 8px" }}
         >
           Import JSONL
-        </button>
-        <button
-          onClick={handleExport}
-          style={{ fontSize: 11, padding: "4px 8px" }}
-        >
-          Export JSONL
         </button>
       </div>
 
@@ -109,61 +217,59 @@ export default function LabelPanel({
         type="file"
         accept=".jsonl"
         style={{ display: "none" }}
-        onChange={handleFileChange}
+        onChange={handleImportFile}
       />
 
-      {selectedTxid ? (
-        <div>
-          <p
-            style={{
-              fontSize: 11,
-              color: "var(--text-muted)",
-              wordBreak: "break-all",
-              marginBottom: 8,
-            }}
-          >
-            {selectedTxid}
-          </p>
+      {panelError && (
+        <p style={{ color: "var(--accent)", fontSize: 11 }}>{panelError}</p>
+      )}
 
-          {labels.length > 0 ? (
-            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {labels.map((l, i) => (
-                <li
-                  key={i}
-                  style={{
-                    padding: "4px 0",
-                    borderBottom: "1px solid var(--border)",
-                    fontSize: 12,
-                  }}
-                >
-                  {l.label}{" "}
-                  <span style={{ color: "var(--text-muted)", fontSize: 10 }}>
-                    {l.namespace}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p style={{ color: "var(--text-muted)", fontSize: 11 }}>
-              No labels.
-            </p>
-          )}
-
-          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-            <input
-              type="text"
-              value={labelText}
-              onChange={(e) => setLabelText(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Add or edit label..."
-              style={{ flex: 1 }}
-            />
-            <button onClick={handleSave}>Save</button>
-          </div>
-        </div>
+      {labelFiles.length > 0 ? (
+        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+          {labelFiles.map((file) => (
+            <li
+              key={file.id}
+              style={{
+                padding: "6px 0",
+                borderBottom: "1px solid var(--border)",
+                fontSize: 12,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 6,
+                  alignItems: "center",
+                }}
+              >
+                <div>
+                  <div style={{ color: "var(--text)" }}>{file.name}</div>
+                  <div style={{ color: "var(--text-muted)", fontSize: 10 }}>
+                    {file.record_count} labels
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <button
+                    onClick={() => void handleExport(file)}
+                    style={{ fontSize: 10, padding: "2px 6px" }}
+                  >
+                    Export
+                  </button>
+                  <button
+                    onClick={() => void handleDelete(file)}
+                    style={{ fontSize: 10, padding: "2px 6px" }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
       ) : (
         <p style={{ color: "var(--text-muted)", fontSize: 11 }}>
-          Click a transaction in the graph to view and edit its labels.
+          No local label files loaded.
         </p>
       )}
     </div>

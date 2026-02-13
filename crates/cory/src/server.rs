@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::rejection::JsonRejection;
@@ -6,7 +5,7 @@ use axum::extract::{Path, Query, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{from_fn_with_state, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use rust_embed::Embed;
 use serde::{Deserialize, Serialize};
@@ -17,7 +16,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use crate::auth::{AuthenticatedUser, JWT_COOKIE_NAME};
 use cory_core::cache::Cache;
 use cory_core::enrich;
-use cory_core::labels::{Bip329Type, LabelStore};
+use cory_core::labels::{Bip329Type, LabelFileKind, LabelFileSummary, LabelStore, LabelStoreError};
 use cory_core::rpc::BitcoinRpc;
 use cory_core::types::GraphLimits;
 
@@ -32,8 +31,6 @@ pub struct AppState {
     pub jwt_manager: Arc<crate::auth::JwtManager>,
     pub default_limits: GraphLimits,
     pub rpc_concurrency: usize,
-    /// If set, local labels are persisted to this file on every mutation.
-    pub local_labels_path: Option<PathBuf>,
 }
 
 type SharedState = Arc<AppState>;
@@ -50,6 +47,7 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,
+            axum::http::Method::DELETE,
             axum::http::Method::OPTIONS,
         ])
         .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::COOKIE])
@@ -58,23 +56,36 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
     let shared = Arc::new(state);
     let jwt_manager = shared.jwt_manager.clone();
 
-    // Keep auth policy declarative: public API and protected API live in
-    // separate routers, and only the protected subtree gets JWT middleware.
     let public_api = Router::new()
         .route("/api/v1/health", get(health))
         .route("/api/v1/auth/token", post(get_or_create_token));
 
     let protected_api = Router::new()
-        .route("/api/v1/labels/export", get(export_labels))
         .route("/api/v1/graph/tx/{txid}", get(get_graph))
-        .route("/api/v1/labels/import", post(import_labels))
-        .route("/api/v1/labels/set", post(set_label))
-        .route("/api/v1/auth/refresh", post(refresh_token))
-        .route_layer(from_fn_with_state(jwt_manager, require_jwt_cookie_auth));
+        .route(
+            "/api/v1/label",
+            get(list_local_label_files).post(create_or_import_local_label_file),
+        )
+        .route(
+            "/api/v1/label/{file_id}",
+            post(upsert_or_replace_local_label_file).delete(delete_local_label_file),
+        )
+        .route(
+            "/api/v1/label/{file_id}/entry",
+            delete(delete_local_label_entry),
+        )
+        .route(
+            "/api/v1/label/{file_id}/export",
+            get(export_local_label_file),
+        );
 
     Router::new()
         .merge(public_api)
-        .merge(protected_api)
+        .merge(
+            protected_api
+                .route("/api/v1/auth/refresh", post(refresh_token))
+                .route_layer(from_fn_with_state(jwt_manager, require_jwt_cookie_auth)),
+        )
         .fallback(static_files)
         .layer(CookieManagerLayer::new())
         .layer(cors)
@@ -97,26 +108,22 @@ async fn require_jwt_cookie_auth(
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "ok" }))
 }
-/// Get or create a JWT token and set it as an HttpOnly cookie.
+
 async fn get_or_create_token(
     State(state): State<SharedState>,
     cookies: Cookies,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // Generate a new session ID and JWT token
     let session_id = uuid::Uuid::new_v4().to_string();
     let token = state
         .jwt_manager
         .generate_token(session_id.clone())
-        .map_err(|e| AppError::Internal(format!("failed to generate token: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("failed to generate token: {e}")))?;
 
-    // Set the JWT token as an HttpOnly cookie for security
     let mut cookie = Cookie::new(JWT_COOKIE_NAME, token);
     cookie.set_http_only(true);
     cookie.set_path("/");
     cookie.set_same_site(tower_cookies::cookie::SameSite::Strict);
-    // Cookie expires in 24 hours (matching JWT expiration)
     cookie.set_max_age(tower_cookies::cookie::time::Duration::seconds(86400));
-
     cookies.add(cookie);
 
     Ok(Json(serde_json::json!({
@@ -126,27 +133,21 @@ async fn get_or_create_token(
     })))
 }
 
-/// Refresh an existing JWT token.
 async fn refresh_token(
     State(state): State<SharedState>,
     AuthenticatedUser(claims): AuthenticatedUser,
     cookies: Cookies,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    tracing::info!(session_id = %claims.session_id, "Refreshing JWT token");
-
-    // Generate a new token with the same session ID but updated timestamps
     let new_token = state
         .jwt_manager
         .generate_token(claims.session_id)
-        .map_err(|e| AppError::Internal(format!("failed to generate token: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("failed to generate token: {e}")))?;
 
-    // Update the cookie with the new token
     let mut cookie = Cookie::new(JWT_COOKIE_NAME, new_token);
     cookie.set_http_only(true);
     cookie.set_path("/");
     cookie.set_same_site(tower_cookies::cookie::SameSite::Strict);
     cookie.set_max_age(tower_cookies::cookie::time::Duration::seconds(86400));
-
     cookies.add(cookie);
 
     Ok(Json(serde_json::json!({
@@ -184,7 +185,10 @@ struct TxEnrichment {
 
 #[derive(Serialize)]
 struct LabelEntry {
-    namespace: String,
+    file_id: String,
+    file_name: String,
+    file_kind: LabelFileKind,
+    editable: bool,
     label: String,
 }
 
@@ -239,8 +243,11 @@ async fn get_graph(
                 txid.to_string(),
                 node_labels
                     .into_iter()
-                    .map(|(ns, rec)| LabelEntry {
-                        namespace: ns.to_string(),
+                    .map(|(meta, rec)| LabelEntry {
+                        file_id: meta.id,
+                        file_name: meta.name,
+                        file_kind: meta.kind,
+                        editable: meta.editable,
                         label: rec.label,
                     })
                     .collect(),
@@ -255,53 +262,61 @@ async fn get_graph(
     }))
 }
 
-// -- Labels -------------------------------------------------------------------
+// -- Label files ---------------------------------------------------------------
 
-async fn import_labels(
-    State(state): State<SharedState>,
-    user: AuthenticatedUser,
-    body: String,
-) -> Result<Json<serde_json::Value>, AppError> {
-    tracing::info!(
-        session_id = %user.0.session_id,
-        body_len = body.len(),
-        "Importing labels"
-    );
-
-    let mut store = state.labels.write().await;
-    let local_ns = store.local_namespace();
-    store
-        .import_bip329(&body, local_ns)
-        .map_err(|e| AppError::BadRequest(e.to_string()))?;
-
-    persist_labels(&state.local_labels_path, &store).await;
-
-    Ok(Json(serde_json::json!({ "status": "imported" })))
-}
-
-async fn export_labels(State(state): State<SharedState>) -> Result<Response, AppError> {
-    let store = state.labels.read().await;
-    let content = store.export_local_bip329();
-
-    Ok((
-        StatusCode::OK,
-        [
-            (
-                axum::http::header::CONTENT_TYPE,
-                "text/plain; charset=utf-8",
-            ),
-            (
-                axum::http::header::CONTENT_DISPOSITION,
-                "attachment; filename=\"labels.jsonl\"",
-            ),
-        ],
-        content,
-    )
-        .into_response())
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateLocalLabelFileRequest {
+    name: String,
 }
 
 #[derive(Deserialize)]
-struct SetLabelRequest {
+#[serde(deny_unknown_fields)]
+struct ImportLocalLabelFileRequest {
+    name: String,
+    content: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum CreateOrImportLabelFileRequest {
+    Create(CreateLocalLabelFileRequest),
+    Import(ImportLocalLabelFileRequest),
+}
+
+async fn list_local_label_files(
+    State(state): State<SharedState>,
+) -> Result<Json<Vec<LabelFileSummary>>, AppError> {
+    let store = state.labels.read().await;
+    Ok(Json(store.list_local_files()))
+}
+
+async fn create_or_import_local_label_file(
+    State(state): State<SharedState>,
+    _user: AuthenticatedUser,
+    req: Result<Json<CreateOrImportLabelFileRequest>, JsonRejection>,
+) -> Result<Json<LabelFileSummary>, AppError> {
+    let Json(req) = req.map_err(|e| AppError::BadRequest(e.to_string()))?;
+
+    let mut store = state.labels.write().await;
+    let created = match req {
+        CreateOrImportLabelFileRequest::Create(request) => store.create_local_file(&request.name),
+        CreateOrImportLabelFileRequest::Import(request) => {
+            store.import_local_file(&request.name, &request.content)
+        }
+    }
+    .map_err(map_label_store_error)?;
+
+    let summary = store
+        .get_local_file_summary(&created.id)
+        .ok_or_else(|| AppError::Internal("created local label file was not found".to_string()))?;
+
+    Ok(Json(summary))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpsertLocalLabelRequest {
     #[serde(rename = "type")]
     label_type: Bip329Type,
     #[serde(rename = "ref")]
@@ -309,25 +324,107 @@ struct SetLabelRequest {
     label: String,
 }
 
-async fn set_label(
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplaceLocalLabelFileRequest {
+    content: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum UpsertOrReplaceLabelFileRequest {
+    Upsert(UpsertLocalLabelRequest),
+    Replace(ReplaceLocalLabelFileRequest),
+}
+
+async fn upsert_or_replace_local_label_file(
     State(state): State<SharedState>,
-    user: AuthenticatedUser,
-    req: Result<Json<SetLabelRequest>, JsonRejection>,
-) -> Result<Json<serde_json::Value>, AppError> {
+    _user: AuthenticatedUser,
+    Path(file_id): Path<String>,
+    req: Result<Json<UpsertOrReplaceLabelFileRequest>, JsonRejection>,
+) -> Result<Json<LabelFileSummary>, AppError> {
     let Json(req) = req.map_err(|e| AppError::BadRequest(e.to_string()))?;
 
-    tracing::info!(
-        session_id = %user.0.session_id,
-        ref_id = %req.ref_id,
-        "Setting label for transaction"
-    );
-
     let mut store = state.labels.write().await;
-    store.set_label(req.label_type, req.ref_id, req.label);
+    match req {
+        UpsertOrReplaceLabelFileRequest::Upsert(request) => {
+            store.set_local_label(&file_id, request.label_type, request.ref_id, request.label)
+        }
+        UpsertOrReplaceLabelFileRequest::Replace(request) => {
+            store.replace_local_file_content(&file_id, &request.content)
+        }
+    }
+    .map_err(map_label_store_error)?;
 
-    persist_labels(&state.local_labels_path, &store).await;
+    let summary = store
+        .get_local_file_summary(&file_id)
+        .ok_or_else(|| AppError::Internal("updated local label file was not found".to_string()))?;
 
-    Ok(Json(serde_json::json!({ "status": "ok" })))
+    Ok(Json(summary))
+}
+
+async fn delete_local_label_file(
+    State(state): State<SharedState>,
+    _user: AuthenticatedUser,
+    Path(file_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let mut store = state.labels.write().await;
+    store
+        .remove_local_file(&file_id)
+        .map_err(map_label_store_error)?;
+
+    Ok(Json(serde_json::json!({ "status": "deleted" })))
+}
+
+#[derive(Deserialize)]
+struct DeleteLabelQuery {
+    #[serde(rename = "type")]
+    label_type: Bip329Type,
+    #[serde(rename = "ref")]
+    ref_id: String,
+}
+
+async fn delete_local_label_entry(
+    State(state): State<SharedState>,
+    _user: AuthenticatedUser,
+    Path(file_id): Path<String>,
+    Query(query): Query<DeleteLabelQuery>,
+) -> Result<Json<LabelFileSummary>, AppError> {
+    let mut store = state.labels.write().await;
+    store
+        .delete_local_label(&file_id, query.label_type, &query.ref_id)
+        .map_err(map_label_store_error)?;
+
+    let summary = store
+        .get_local_file_summary(&file_id)
+        .ok_or_else(|| AppError::Internal("updated local label file was not found".to_string()))?;
+    Ok(Json(summary))
+}
+
+async fn export_local_label_file(
+    State(state): State<SharedState>,
+    Path(file_id): Path<String>,
+) -> Result<Response, AppError> {
+    let store = state.labels.read().await;
+    let summary = store
+        .get_local_file_summary(&file_id)
+        .ok_or_else(|| AppError::NotFound(format!("local label file not found: {file_id}")))?;
+    let content = store
+        .export_local_file(&file_id)
+        .map_err(map_label_store_error)?;
+
+    let mut response = (StatusCode::OK, content).into_response();
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    let disposition = format!("attachment; filename=\"{}.jsonl\"", summary.name);
+    let disposition_header = axum::http::HeaderValue::from_str(&disposition)
+        .map_err(|e| AppError::Internal(format!("invalid content disposition header: {e}")))?;
+    response
+        .headers_mut()
+        .insert(axum::http::header::CONTENT_DISPOSITION, disposition_header);
+    Ok(response)
 }
 
 // ==============================================================================
@@ -372,13 +469,16 @@ async fn static_files(uri: axum::http::Uri) -> Response {
 // Helpers
 // ==============================================================================
 
-/// Write the local namespace to disk if a persistence path is configured.
-async fn persist_labels(path: &Option<PathBuf>, store: &LabelStore) {
-    if let Some(path) = path {
-        let exported = store.export_local_bip329();
-        if let Err(e) = tokio::fs::write(path, &exported).await {
-            tracing::warn!(path = %path.display(), error = %e, "could not persist labels to disk");
+fn map_label_store_error(err: LabelStoreError) -> AppError {
+    match err {
+        LabelStoreError::DuplicateLocalFile(name) => {
+            AppError::Conflict(format!("local label file already exists: {name}"))
         }
+        LabelStoreError::LocalFileNotFound(file_id) => {
+            AppError::NotFound(format!("local label file not found: {file_id}"))
+        }
+        LabelStoreError::EmptyFileName => AppError::BadRequest(err.to_string()),
+        LabelStoreError::Core(core) => AppError::BadRequest(core.to_string()),
     }
 }
 
@@ -388,6 +488,8 @@ async fn persist_labels(path: &Option<PathBuf>, store: &LabelStore) {
 
 enum AppError {
     BadRequest(String),
+    NotFound(String),
+    Conflict(String),
     Internal(String),
 }
 
@@ -395,6 +497,8 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             Self::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
+            Self::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
+            Self::Conflict(msg) => (StatusCode::CONFLICT, msg),
             Self::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
         };
 

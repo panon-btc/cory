@@ -50,6 +50,17 @@ export interface TxEnrichment {
 }
 
 export interface LabelEntry {
-  namespace: string;
+  file_id: string;
+  file_name: string;
+  file_kind: "local" | "pack";
+  editable: boolean;
   label: string;
+}
+
+export interface LabelFileSummary {
+  id: string;
+  name: string;
+  kind: "local" | "pack";
+  editable: boolean;
+  record_count: number;
 }

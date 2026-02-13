@@ -35,9 +35,6 @@ impl std::fmt::Display for Bip329Type {
 }
 
 /// A single BIP-329 label record, as defined by the specification.
-///
-/// Each record associates a label string with a typed reference (transaction,
-/// address, pubkey, input, output, or xpub).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Bip329Record {
     #[serde(rename = "type")]
@@ -52,155 +49,189 @@ pub struct Bip329Record {
 }
 
 // ==============================================================================
-// Namespace
+// Label Files
 // ==============================================================================
 
-/// A namespace controls where labels come from and whether they're editable.
-///
-/// Labels are resolved with deterministic precedence: local edits take
-/// priority over user custom packs, which take priority over default packs.
-/// The UI should show all matching labels, not silently drop conflicts.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Namespace {
-    /// Locally editable labels. The string identifies the session/wallet.
-    Local(String),
-    /// Read-only label pack loaded from a directory. The string is the
-    /// relative path used as a namespace identifier.
-    Pack(String),
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LabelFileKind {
+    Local,
+    Pack,
 }
 
-impl std::fmt::Display for Namespace {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Local(name) => write!(f, "local:{name}"),
-            Self::Pack(name) => write!(f, "pack:{name}"),
-        }
-    }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LabelFileMeta {
+    pub id: String,
+    pub name: String,
+    pub kind: LabelFileKind,
+    pub editable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LabelFileSummary {
+    pub id: String,
+    pub name: String,
+    pub kind: LabelFileKind,
+    pub editable: bool,
+    pub record_count: usize,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum LabelStoreError {
+    #[error("label file name cannot be empty")]
+    EmptyFileName,
+
+    #[error("label file already exists: {0}")]
+    DuplicateLocalFile(String),
+
+    #[error("local label file not found: {0}")]
+    LocalFileNotFound(String),
+
+    #[error(transparent)]
+    Core(#[from] CoreError),
 }
 
 /// Composite key for looking up labels: (type, ref_id).
 type LabelKey = (Bip329Type, String);
 
-// ==============================================================================
-// Label Store
-// ==============================================================================
+struct LabelFile {
+    meta: LabelFileMeta,
+    labels: HashMap<LabelKey, Bip329Record>,
+}
 
-/// Manages labels across multiple namespaces with deterministic precedence.
-///
-/// The store is an ordered list of namespaces (local first, then packs in
-/// load order). When resolving labels for a given key, all matching labels
-/// are returned in precedence order so the UI can display them all.
-///
-/// Callers that need shared async access should wrap this in
-/// `Arc<RwLock<LabelStore>>`.
 pub struct LabelStore {
-    /// Ordered list of namespaces. The local namespace comes first (highest
-    /// precedence), followed by packs in the order they were loaded.
-    namespaces: Vec<(Namespace, HashMap<LabelKey, Bip329Record>)>,
-    /// The namespace name used for the local editable labels.
-    local_namespace_name: String,
+    local_files: Vec<LabelFile>,
+    pack_files: Vec<LabelFile>,
 }
 
 impl LabelStore {
-    /// Create a new store with an empty local namespace ready for editing.
-    pub fn new(local_namespace_name: &str) -> Self {
+    pub fn new() -> Self {
         Self {
-            namespaces: vec![(
-                Namespace::Local(local_namespace_name.to_string()),
-                HashMap::new(),
-            )],
-            local_namespace_name: local_namespace_name.to_string(),
+            local_files: Vec::new(),
+            pack_files: Vec::new(),
         }
     }
 
-    /// The `Namespace` value used for local edits.
-    pub fn local_namespace(&self) -> Namespace {
-        Namespace::Local(self.local_namespace_name.clone())
+    // ========================================================================
+    // Local file lifecycle
+    // ========================================================================
+
+    pub fn list_local_files(&self) -> Vec<LabelFileSummary> {
+        self.local_files
+            .iter()
+            .map(|file| LabelFileSummary {
+                id: file.meta.id.clone(),
+                name: file.meta.name.clone(),
+                kind: file.meta.kind,
+                editable: file.meta.editable,
+                record_count: file.labels.len(),
+            })
+            .collect()
     }
 
-    // ==========================================================================
-    // Import / Export
-    // ==========================================================================
+    pub fn get_local_file_summary(&self, file_id: &str) -> Option<LabelFileSummary> {
+        self.find_local_file_by_id(file_id)
+            .map(|file| LabelFileSummary {
+                id: file.meta.id.clone(),
+                name: file.meta.name.clone(),
+                kind: file.meta.kind,
+                editable: file.meta.editable,
+                record_count: file.labels.len(),
+            })
+    }
 
-    /// Parse BIP-329 JSONL content and insert records into the given namespace.
-    /// If the namespace doesn't exist yet, it is appended (i.e. lowest
-    /// precedence among existing namespaces).
-    pub fn import_bip329(&mut self, content: &str, namespace: Namespace) -> Result<(), CoreError> {
-        let map = self.get_or_create_namespace(namespace);
-        parse_jsonl_records(content, map)?;
+    pub fn create_local_file(&mut self, name: &str) -> Result<LabelFileMeta, LabelStoreError> {
+        let parsed = parse_local_file_name(name)?;
+        if self.find_local_file_index_by_id(&parsed.id).is_some() {
+            return Err(LabelStoreError::DuplicateLocalFile(parsed.id));
+        }
+
+        let meta = LabelFileMeta {
+            id: parsed.id,
+            name: parsed.name,
+            kind: LabelFileKind::Local,
+            editable: true,
+        };
+        self.local_files.push(LabelFile {
+            meta: meta.clone(),
+            labels: HashMap::new(),
+        });
+        Ok(meta)
+    }
+
+    pub fn import_local_file(
+        &mut self,
+        name: &str,
+        content: &str,
+    ) -> Result<LabelFileMeta, LabelStoreError> {
+        let parsed = parse_local_file_name(name)?;
+        if self.find_local_file_index_by_id(&parsed.id).is_some() {
+            return Err(LabelStoreError::DuplicateLocalFile(parsed.id));
+        }
+
+        let mut labels = HashMap::new();
+        parse_jsonl_records(content, &mut labels)?;
+
+        let meta = LabelFileMeta {
+            id: parsed.id,
+            name: parsed.name,
+            kind: LabelFileKind::Local,
+            editable: true,
+        };
+        self.local_files.push(LabelFile {
+            meta: meta.clone(),
+            labels,
+        });
+
+        Ok(meta)
+    }
+
+    pub fn replace_local_file_content(
+        &mut self,
+        file_id: &str,
+        content: &str,
+    ) -> Result<(), LabelStoreError> {
+        let idx = self
+            .find_local_file_index_by_id(file_id)
+            .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
+
+        let mut labels = HashMap::new();
+        parse_jsonl_records(content, &mut labels)?;
+        self.local_files[idx].labels = labels;
         Ok(())
     }
 
-    /// Serialize all records in the local editable namespace to BIP-329 JSONL.
-    pub fn export_local_bip329(&self) -> String {
-        self.export_namespace(&self.local_namespace())
+    pub fn remove_local_file(&mut self, file_id: &str) -> Result<(), LabelStoreError> {
+        let idx = self
+            .find_local_file_index_by_id(file_id)
+            .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
+        self.local_files.remove(idx);
+        Ok(())
     }
 
-    /// Serialize all records in a specific namespace to BIP-329 JSONL.
-    /// The output includes a trailing newline for JSONL compatibility.
-    pub fn export_namespace(&self, namespace: &Namespace) -> String {
-        let mut lines = Vec::new();
-        for (ns, map) in &self.namespaces {
-            if ns == namespace {
-                for record in map.values() {
-                    // serde_json::to_string on a valid Bip329Record cannot fail.
-                    lines.push(serde_json::to_string(record).expect("valid JSON"));
-                }
-                break;
-            }
-        }
-        if lines.is_empty() {
-            return String::new();
-        }
-        let mut result = lines.join("\n");
-        result.push('\n');
-        result
+    // ========================================================================
+    // Local file import/export and mutation
+    // ========================================================================
+
+    pub fn export_local_file(&self, file_id: &str) -> Result<String, LabelStoreError> {
+        let file = self
+            .find_local_file_by_id(file_id)
+            .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
+        Ok(export_map_to_jsonl(&file.labels))
     }
 
-    // ==========================================================================
-    // Query
-    // ==========================================================================
-
-    /// Return all labels matching the given type and ref_id across all
-    /// namespaces, ordered by precedence (local first, then packs).
-    pub fn get_labels(
-        &self,
+    pub fn set_local_label(
+        &mut self,
+        file_id: &str,
         label_type: Bip329Type,
-        ref_id: &str,
-    ) -> Vec<(Namespace, Bip329Record)> {
-        let key = (label_type, ref_id.to_string());
-        let mut results = Vec::new();
-        for (ns, map) in &self.namespaces {
-            if let Some(record) = map.get(&key) {
-                results.push((ns.clone(), record.clone()));
-            }
-        }
-        results
-    }
-
-    /// Get all labels for a given ref_id across all types and namespaces.
-    pub fn get_all_labels_for_ref(&self, ref_id: &str) -> Vec<(Namespace, Bip329Record)> {
-        let mut results = Vec::new();
-        for (ns, map) in &self.namespaces {
-            for ((_, r), record) in map.iter() {
-                if r == ref_id {
-                    results.push((ns.clone(), record.clone()));
-                }
-            }
-        }
-        results
-    }
-
-    // ==========================================================================
-    // Mutation (local namespace only)
-    // ==========================================================================
-
-    /// Upsert a label in the local editable namespace.
-    pub fn set_label(&mut self, label_type: Bip329Type, ref_id: String, label: String) {
-        let local_ns = self.local_namespace();
-        let map = self.get_or_create_namespace(local_ns);
+        ref_id: String,
+        label: String,
+    ) -> Result<(), LabelStoreError> {
+        let idx = self
+            .find_local_file_index_by_id(file_id)
+            .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
         let key = (label_type, ref_id.clone());
-        map.insert(
+        self.local_files[idx].labels.insert(
             key,
             Bip329Record {
                 label_type,
@@ -210,14 +241,55 @@ impl LabelStore {
                 spendable: None,
             },
         );
+        Ok(())
     }
 
-    // ==========================================================================
-    // Pack Loading
-    // ==========================================================================
+    pub fn delete_local_label(
+        &mut self,
+        file_id: &str,
+        label_type: Bip329Type,
+        ref_id: &str,
+    ) -> Result<(), LabelStoreError> {
+        let idx = self
+            .find_local_file_index_by_id(file_id)
+            .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
+        let key = (label_type, ref_id.to_string());
+        self.local_files[idx].labels.remove(&key);
+        Ok(())
+    }
 
-    /// Walk a directory tree and load each `.jsonl` file as a pack namespace.
-    /// The namespace name is derived from the file's path relative to `dir`.
+    // ========================================================================
+    // Query
+    // ========================================================================
+
+    /// Returns labels for a given reference in deterministic precedence order:
+    /// local files first (creation order), then pack files (load order).
+    pub fn get_all_labels_for_ref(&self, ref_id: &str) -> Vec<(LabelFileMeta, Bip329Record)> {
+        let mut results = Vec::new();
+
+        for file in &self.local_files {
+            for ((_, r), record) in &file.labels {
+                if r == ref_id {
+                    results.push((file.meta.clone(), record.clone()));
+                }
+            }
+        }
+
+        for file in &self.pack_files {
+            for ((_, r), record) in &file.labels {
+                if r == ref_id {
+                    results.push((file.meta.clone(), record.clone()));
+                }
+            }
+        }
+
+        results
+    }
+
+    // ========================================================================
+    // Pack loading
+    // ========================================================================
+
     pub fn load_pack_dir(&mut self, dir: &Path) -> Result<(), CoreError> {
         if !dir.is_dir() {
             return Err(CoreError::Io(std::io::Error::new(
@@ -226,28 +298,72 @@ impl LabelStore {
             )));
         }
 
-        walk_pack_dir(dir, dir, &mut self.namespaces)
+        walk_pack_dir(dir, dir, &mut self.pack_files)
     }
 
-    // ==========================================================================
+    // ========================================================================
     // Internal
-    // ==========================================================================
+    // ========================================================================
 
-    /// Find or create a namespace, returning a mutable reference to its map.
-    fn get_or_create_namespace(
-        &mut self,
-        namespace: Namespace,
-    ) -> &mut HashMap<LabelKey, Bip329Record> {
-        let pos = self.namespaces.iter().position(|(ns, _)| *ns == namespace);
-        match pos {
-            Some(idx) => &mut self.namespaces[idx].1,
-            None => {
-                self.namespaces.push((namespace, HashMap::new()));
-                let last = self.namespaces.len() - 1;
-                &mut self.namespaces[last].1
-            }
-        }
+    fn find_local_file_index_by_id(&self, file_id: &str) -> Option<usize> {
+        self.local_files.iter().position(|f| f.meta.id == file_id)
     }
+
+    fn find_local_file_by_id(&self, file_id: &str) -> Option<&LabelFile> {
+        self.local_files.iter().find(|f| f.meta.id == file_id)
+    }
+}
+
+struct ParsedLocalFileName {
+    id: String,
+    name: String,
+}
+
+fn parse_local_file_name(raw: &str) -> Result<ParsedLocalFileName, LabelStoreError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(LabelStoreError::EmptyFileName);
+    }
+
+    let name = trimmed
+        .strip_suffix(".jsonl")
+        .unwrap_or(trimmed)
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        return Err(LabelStoreError::EmptyFileName);
+    }
+
+    let id = normalize_label_file_id(&name);
+    if id.is_empty() {
+        return Err(LabelStoreError::EmptyFileName);
+    }
+
+    Ok(ParsedLocalFileName { id, name })
+}
+
+pub fn normalize_label_file_id(name: &str) -> String {
+    name.chars()
+        .flat_map(|c| c.to_lowercase())
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn export_map_to_jsonl(map: &HashMap<LabelKey, Bip329Record>) -> String {
+    let mut lines = Vec::new();
+    for record in map.values() {
+        lines.push(serde_json::to_string(record).expect("valid JSON"));
+    }
+    if lines.is_empty() {
+        return String::new();
+    }
+    let mut result = lines.join("\n");
+    result.push('\n');
+    result
 }
 
 /// Parse JSONL content into a label map, skipping empty lines.
@@ -271,198 +387,127 @@ fn parse_jsonl_records(
     Ok(())
 }
 
-/// Recursively walk a directory, loading `.jsonl` files as pack namespaces.
+/// Recursively walk a directory, loading `.jsonl` files as pack files.
 fn walk_pack_dir(
     base: &Path,
     current: &Path,
-    namespaces: &mut Vec<(Namespace, HashMap<LabelKey, Bip329Record>)>,
+    pack_files: &mut Vec<LabelFile>,
 ) -> Result<(), CoreError> {
     for entry in std::fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            walk_pack_dir(base, &path, namespaces)?;
-        } else if path.extension().is_some_and(|ext| ext == "jsonl") {
-            let relative = path
-                .strip_prefix(base)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .to_string();
-            let namespace = Namespace::Pack(relative);
-            let content = std::fs::read_to_string(&path)?;
-
-            let mut map = HashMap::new();
-            parse_jsonl_records(&content, &mut map)?;
-
-            namespaces.push((namespace, map));
+            walk_pack_dir(base, &path, pack_files)?;
+            continue;
         }
+
+        if !path.extension().is_some_and(|ext| ext == "jsonl") {
+            continue;
+        }
+
+        let relative = path
+            .strip_prefix(base)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+        let file_name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("pack")
+            .to_string();
+
+        let content = std::fs::read_to_string(&path)?;
+        let mut labels = HashMap::new();
+        parse_jsonl_records(&content, &mut labels)?;
+
+        let id_core = normalize_label_file_id(&relative);
+        let file_id = if id_core.is_empty() {
+            "pack".to_string()
+        } else {
+            format!("pack:{id_core}")
+        };
+
+        pack_files.push(LabelFile {
+            meta: LabelFileMeta {
+                id: file_id,
+                name: file_name,
+                kind: LabelFileKind::Pack,
+                editable: false,
+            },
+            labels,
+        });
     }
     Ok(())
 }
-
-// ==============================================================================
-// Tests
-// ==============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn bip329_round_trip() {
-        let records = vec![
-            Bip329Record {
-                label_type: Bip329Type::Tx,
-                ref_id: "abc123".into(),
-                label: "Payment to Alice".into(),
-                origin: None,
-                spendable: None,
-            },
-            Bip329Record {
-                label_type: Bip329Type::Addr,
-                ref_id: "bc1qtest".into(),
-                label: "Cold storage".into(),
-                origin: Some("m/84'/0'/0'/0/0".into()),
-                spendable: Some(true),
-            },
-            Bip329Record {
-                label_type: Bip329Type::Output,
-                ref_id: "abc123:0".into(),
-                label: "Change output".into(),
-                origin: None,
-                spendable: None,
-            },
-            Bip329Record {
-                label_type: Bip329Type::Pubkey,
-                ref_id: "02aabbcc".into(),
-                label: "Hardware key".into(),
-                origin: None,
-                spendable: None,
-            },
-            Bip329Record {
-                label_type: Bip329Type::Xpub,
-                ref_id: "xpub6test".into(),
-                label: "Main wallet".into(),
-                origin: Some("m/84'/0'/0'".into()),
-                spendable: None,
-            },
-            Bip329Record {
-                label_type: Bip329Type::Input,
-                ref_id: "abc123:1".into(),
-                label: "Input from exchange".into(),
-                origin: None,
-                spendable: None,
-            },
-        ];
-
-        // Serialize to JSONL.
-        let jsonl: String = records
-            .iter()
-            .map(|r| serde_json::to_string(r).expect("valid JSON"))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        // Re-parse via the label store.
-        let mut store = LabelStore::new("test");
-        store
-            .import_bip329(&jsonl, Namespace::Local("test".into()))
-            .expect("import should succeed");
-
-        let exported = store.export_local_bip329();
-        let mut reimported: Vec<Bip329Record> = exported
-            .lines()
-            .map(|line| serde_json::from_str(line).expect("valid JSON"))
-            .collect();
-
-        // Sort both for comparison since HashMap ordering is nondeterministic.
-        let mut original = records;
-        original.sort_by_key(|r| (r.ref_id.clone(), r.label.clone()));
-        reimported.sort_by_key(|r| (r.ref_id.clone(), r.label.clone()));
-
-        assert_eq!(original.len(), reimported.len(), "record count mismatch");
-        for (orig, re) in original.iter().zip(reimported.iter()) {
-            assert_eq!(orig, re, "record mismatch");
-        }
+    fn normalize_file_id() {
+        assert_eq!(normalize_label_file_id("My Wallet"), "my-wallet");
+        assert_eq!(normalize_label_file_id("wallet.jsonl"), "wallet-jsonl");
     }
 
     #[test]
-    fn label_precedence() {
-        let mut store = LabelStore::new("local");
+    fn local_file_lifecycle_and_export() {
+        let mut store = LabelStore::new();
+        let created = store
+            .create_local_file("wallet-a")
+            .expect("create local file should succeed");
+        assert_eq!(created.id, "wallet-a");
 
-        // Add a label in the local namespace.
-        store.set_label(Bip329Type::Tx, "txid1".into(), "Local label".into());
-
-        // Add a conflicting label in a pack namespace.
-        let pack_jsonl = r#"{"type":"tx","ref":"txid1","label":"Pack label"}"#;
         store
-            .import_bip329(pack_jsonl, Namespace::Pack("default.jsonl".into()))
-            .expect("import pack");
+            .set_local_label(
+                "wallet-a",
+                Bip329Type::Tx,
+                "txid1".to_string(),
+                "Label 1".to_string(),
+            )
+            .expect("set local label should succeed");
 
-        // Both labels should be returned, local first.
-        let labels = store.get_labels(Bip329Type::Tx, "txid1");
-        assert_eq!(
-            labels.len(),
-            2,
-            "should have 2 labels from different namespaces"
-        );
-        assert_eq!(labels[0].0, Namespace::Local("local".into()));
-        assert_eq!(labels[0].1.label, "Local label");
-        assert_eq!(labels[1].0, Namespace::Pack("default.jsonl".into()));
-        assert_eq!(labels[1].1.label, "Pack label");
+        let exported = store
+            .export_local_file("wallet-a")
+            .expect("export should succeed");
+        assert!(exported.contains("\"label\":\"Label 1\""));
+
+        store
+            .remove_local_file("wallet-a")
+            .expect("delete local file should succeed");
+        assert!(store.list_local_files().is_empty());
     }
 
     #[test]
-    fn set_label_only_affects_local() {
-        let mut store = LabelStore::new("local");
-
-        // Import a pack label.
-        let pack_jsonl = r#"{"type":"tx","ref":"txid1","label":"Pack label"}"#;
+    fn get_all_labels_preserves_local_then_pack_precedence() {
+        let mut store = LabelStore::new();
         store
-            .import_bip329(pack_jsonl, Namespace::Pack("pack.jsonl".into()))
-            .expect("import pack");
+            .import_local_file(
+                "wallet-a",
+                r#"{"type":"tx","ref":"txid1","label":"Local label"}"#,
+            )
+            .expect("local import should succeed");
 
-        // Set a local label for the same key.
-        store.set_label(Bip329Type::Tx, "txid1".into(), "My label".into());
+        let mut pack_labels = HashMap::new();
+        parse_jsonl_records(
+            r#"{"type":"tx","ref":"txid1","label":"Pack label"}"#,
+            &mut pack_labels,
+        )
+        .expect("pack parse should succeed");
 
-        // The pack label should be unchanged.
-        let labels = store.get_labels(Bip329Type::Tx, "txid1");
+        store.pack_files.push(LabelFile {
+            meta: LabelFileMeta {
+                id: "pack:default".into(),
+                name: "default".into(),
+                kind: LabelFileKind::Pack,
+                editable: false,
+            },
+            labels: pack_labels,
+        });
+
+        let labels = store.get_all_labels_for_ref("txid1");
         assert_eq!(labels.len(), 2);
-
-        // Export local: should only contain the local label.
-        let local_export = store.export_local_bip329();
-        let local_records: Vec<Bip329Record> = local_export
-            .lines()
-            .map(|l| serde_json::from_str(l).expect("valid JSON"))
-            .collect();
-        assert_eq!(local_records.len(), 1);
-        assert_eq!(local_records[0].label, "My label");
-
-        // Export pack: should only contain the pack label.
-        let pack_export = store.export_namespace(&Namespace::Pack("pack.jsonl".into()));
-        let pack_records: Vec<Bip329Record> = pack_export
-            .lines()
-            .map(|l| serde_json::from_str(l).expect("valid JSON"))
-            .collect();
-        assert_eq!(pack_records.len(), 1);
-        assert_eq!(pack_records[0].label, "Pack label");
-    }
-
-    #[test]
-    fn empty_lines_are_skipped() {
-        let mut store = LabelStore::new("test");
-
-        let content = r#"
-{"type":"tx","ref":"txid1","label":"First"}
-
-{"type":"tx","ref":"txid2","label":"Second"}
-"#;
-        store
-            .import_bip329(content, Namespace::Local("test".into()))
-            .expect("import with empty lines");
-
-        let labels1 = store.get_labels(Bip329Type::Tx, "txid1");
-        assert_eq!(labels1.len(), 1);
-        let labels2 = store.get_labels(Bip329Type::Tx, "txid2");
-        assert_eq!(labels2.len(), 1);
+        assert_eq!(labels[0].0.kind, LabelFileKind::Local);
+        assert_eq!(labels[1].0.kind, LabelFileKind::Pack);
     }
 }

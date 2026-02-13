@@ -3,12 +3,12 @@ import ELK, {
   type ElkExtendedEdge,
 } from "elkjs/lib/elk.bundled.js";
 import type { Node, Edge } from "@xyflow/react";
-import type { GraphResponse } from "./types";
+import type { GraphResponse, LabelEntry, LabelFileSummary } from "./types";
 
 const elk = new ELK();
 
-const NODE_WIDTH = 220;
-const NODE_HEIGHT = 60;
+const NODE_WIDTH = 320;
+const NODE_HEIGHT = 150;
 
 export interface TxNodeData {
   txid: string;
@@ -18,7 +18,10 @@ export interface TxNodeData {
   rbfSignaling: boolean;
   isCoinbase: boolean;
   outputCount: number;
-  label: string | null;
+  labels: LabelEntry[];
+  localFiles: LabelFileSummary[];
+  onSaveLabel: (fileId: string, txid: string, label: string) => Promise<void>;
+  onDeleteLabel: (fileId: string, txid: string) => Promise<void>;
   [key: string]: unknown;
 }
 
@@ -29,6 +32,11 @@ function shortTxid(txid: string): string {
 
 export async function computeLayout(
   response: GraphResponse,
+  opts: {
+    localFiles: LabelFileSummary[];
+    onSaveLabel: (fileId: string, txid: string, label: string) => Promise<void>;
+    onDeleteLabel: (fileId: string, txid: string) => Promise<void>;
+  },
 ): Promise<{ nodes: Node[]; edges: Edge[] }> {
   const nodeIds = new Set(Object.keys(response.nodes));
 
@@ -53,9 +61,9 @@ export async function computeLayout(
     layoutOptions: {
       "elk.algorithm": "layered",
       "elk.direction": "RIGHT",
-      "elk.spacing.nodeNode": "30",
+      "elk.spacing.nodeNode": "40",
       "elk.spacing.edgeNode": "20",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "60",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "70",
       "elk.edgeRouting": "ORTHOGONAL",
     },
     children,
@@ -68,7 +76,7 @@ export async function computeLayout(
     const txid = n.id;
     const nodeData = response.nodes[txid]!;
     const enrichment = response.enrichments[txid];
-    const labels = response.labels[txid];
+    const labels = response.labels[txid] ?? [];
     const isCoinbase =
       nodeData.inputs.length === 1 && nodeData.inputs[0]?.prevout === null;
 
@@ -80,7 +88,10 @@ export async function computeLayout(
       rbfSignaling: enrichment?.rbf_signaling ?? false,
       isCoinbase,
       outputCount: nodeData.outputs.length,
-      label: labels?.[0]?.label ?? null,
+      labels,
+      localFiles: opts.localFiles,
+      onSaveLabel: opts.onSaveLabel,
+      onDeleteLabel: opts.onDeleteLabel,
     };
 
     return {

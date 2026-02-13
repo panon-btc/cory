@@ -1,16 +1,27 @@
-import type { GraphResponse } from "./types";
+import type { GraphResponse, LabelFileSummary } from "./types";
 
-// Manages JWT token lifecycle and deduplicates concurrent auth calls.
+interface ApiErrorPayload {
+  error?: string;
+}
+
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 class TokenManager {
   private tokenAcquisitionPromise: Promise<void> | null = null;
   private tokenRefreshPromise: Promise<boolean> | null = null;
 
-  // Acquire a JWT token by calling the auth endpoint.
   async acquireToken(): Promise<void> {
     if (this.tokenAcquisitionPromise) {
       return this.tokenAcquisitionPromise;
     }
-
     this.tokenAcquisitionPromise = this.performTokenAcquisition();
     try {
       await this.tokenAcquisitionPromise;
@@ -19,13 +30,10 @@ class TokenManager {
     }
   }
 
-  // Attempt to refresh the current JWT cookie. Returns false when refresh is
-  // not possible (for example, no cookie or expired cookie).
   async refreshToken(): Promise<boolean> {
     if (this.tokenRefreshPromise) {
       return this.tokenRefreshPromise;
     }
-
     this.tokenRefreshPromise = this.performTokenRefresh();
     try {
       return await this.tokenRefreshPromise;
@@ -34,8 +42,6 @@ class TokenManager {
     }
   }
 
-  // Recover auth after a 401. Prefer refresh, then fall back to minting a new
-  // token if refresh is not possible.
   async recoverAuth(): Promise<void> {
     const refreshed = await this.refreshToken();
     if (!refreshed) {
@@ -44,45 +50,28 @@ class TokenManager {
   }
 
   private async performTokenAcquisition(): Promise<void> {
-    console.debug("Acquiring new JWT token...");
     const resp = await fetch("/api/v1/auth/token", {
       method: "POST",
       credentials: "include",
     });
-
     if (!resp.ok) {
       const error = await resp.text();
-      console.error(
-        `Token acquisition failed with status ${resp.status}: ${error}`,
-      );
-      throw new Error(
-        `Failed to acquire authentication token: ${resp.statusText}`,
-      );
+      throw new Error(`Failed to acquire authentication token: ${error}`);
     }
-
-    const data = (await resp.json()) as { expires_in: number };
-    console.info(`JWT token acquired, expires in ${data.expires_in}s`);
   }
 
   private async performTokenRefresh(): Promise<boolean> {
-    console.debug("Refreshing JWT token...");
     const resp = await fetch("/api/v1/auth/refresh", {
       method: "POST",
       credentials: "include",
     });
-
     if (resp.status === 401) {
-      console.info("JWT refresh unavailable; acquiring a new token");
       return false;
     }
-
     if (!resp.ok) {
       const error = await resp.text();
       throw new Error(`Failed to refresh authentication token: ${error}`);
     }
-
-    const data = (await resp.json()) as { expires_in: number };
-    console.info(`JWT token refreshed, expires in ${data.expires_in}s`);
     return true;
   }
 }
@@ -90,48 +79,28 @@ class TokenManager {
 const tokenManager = new TokenManager();
 
 export async function initializeAuth(): Promise<void> {
-  try {
-    await tokenManager.acquireToken();
-    console.info("Authentication initialized successfully");
-  } catch (err) {
-    console.error("Failed to initialize authentication:", err);
-    throw err;
-  }
+  await tokenManager.acquireToken();
 }
-
-// ==============================================================================
-// API Fetch Helper
-// ==============================================================================
 
 async function apiFetch(
   path: string,
   opts: RequestInit = {},
   allowAuthRecovery = true,
 ): Promise<Response> {
-  const fetchOpts: RequestInit = {
+  const resp = await fetch(path, {
     ...opts,
     credentials: "include",
-    headers: {
-      ...(opts.headers instanceof Headers
-        ? Object.fromEntries(opts.headers.entries())
-        : typeof opts.headers === "object"
-          ? opts.headers
-          : {}),
-    },
-  };
-
-  const resp = await fetch(path, fetchOpts);
-
+  });
   if (resp.status === 401 && allowAuthRecovery) {
     await tokenManager.recoverAuth();
     return apiFetch(path, opts, false);
   }
-
   if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ error: resp.statusText }));
-    throw new Error((err as { error?: string }).error || resp.statusText);
+    const err = (await resp
+      .json()
+      .catch(() => ({ error: resp.statusText }))) as ApiErrorPayload;
+    throw new ApiError(resp.status, err.error || resp.statusText);
   }
-
   return resp;
 }
 
@@ -140,29 +109,93 @@ export async function fetchGraph(txid: string): Promise<GraphResponse> {
   return resp.json() as Promise<GraphResponse>;
 }
 
-export async function setLabel(ref: string, label: string): Promise<void> {
-  // Protected route - requires valid JWT cookie from initializeAuth()
-  await apiFetch("/api/v1/labels/set", {
+export async function fetchLabelFiles(): Promise<LabelFileSummary[]> {
+  const resp = await apiFetch("/api/v1/label");
+  return resp.json() as Promise<LabelFileSummary[]>;
+}
+
+export async function createLabelFile(
+  name: string,
+): Promise<LabelFileSummary> {
+  const resp = await apiFetch("/api/v1/label", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name }),
+  });
+  return resp.json() as Promise<LabelFileSummary>;
+}
+
+export async function importLabelFile(
+  name: string,
+  content: string,
+): Promise<LabelFileSummary> {
+  const resp = await apiFetch("/api/v1/label", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name, content }),
+  });
+  return resp.json() as Promise<LabelFileSummary>;
+}
+
+export async function replaceLabelFile(
+  fileId: string,
+  content: string,
+): Promise<LabelFileSummary> {
+  const resp = await apiFetch(`/api/v1/label/${encodeURIComponent(fileId)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ content }),
+  });
+  return resp.json() as Promise<LabelFileSummary>;
+}
+
+export async function setLabelInFile(
+  fileId: string,
+  ref: string,
+  label: string,
+): Promise<LabelFileSummary> {
+  const resp = await apiFetch(`/api/v1/label/${encodeURIComponent(fileId)}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ type: "tx", ref, label }),
   });
+  return resp.json() as Promise<LabelFileSummary>;
 }
 
-export async function importLabels(body: string): Promise<void> {
-  // Protected route - requires valid JWT cookie from initializeAuth()
-  await apiFetch("/api/v1/labels/import", {
-    method: "POST",
-    headers: {
-      "Content-Type": "text/plain",
+export async function deleteLabelInFile(
+  fileId: string,
+  ref: string,
+): Promise<LabelFileSummary> {
+  const query = new URLSearchParams({
+    type: "tx",
+    ref,
+  });
+  const resp = await apiFetch(
+    `/api/v1/label/${encodeURIComponent(fileId)}/entry?${query.toString()}`,
+    {
+      method: "DELETE",
     },
-    body,
+  );
+  return resp.json() as Promise<LabelFileSummary>;
+}
+
+export async function deleteLabelFile(fileId: string): Promise<void> {
+  await apiFetch(`/api/v1/label/${encodeURIComponent(fileId)}`, {
+    method: "DELETE",
   });
 }
 
-export async function exportLabels(): Promise<string> {
-  const resp = await apiFetch("/api/v1/labels/export");
+export async function exportLabelFile(fileId: string): Promise<string> {
+  const resp = await apiFetch(
+    `/api/v1/label/${encodeURIComponent(fileId)}/export`,
+  );
   return resp.text();
 }

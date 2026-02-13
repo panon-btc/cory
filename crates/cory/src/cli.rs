@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use clap::Parser;
 
 /// Cory — local Bitcoin transaction ancestry explorer with BIP-329 label editing.
@@ -26,14 +24,9 @@ pub struct Cli {
     #[arg(long, default_value = "3080")]
     pub port: u16,
 
-    /// Label pack directories to load (repeatable).
+    /// Label pack directories to load (repeatable, read-only in the UI).
     #[arg(long)]
-    pub label_pack_dir: Vec<PathBuf>,
-
-    /// Path to the local labels JSONL file for persistence.
-    /// If omitted, labels are in-memory only.
-    #[arg(long)]
-    pub local_labels: Option<PathBuf>,
+    pub label_pack_dir: Vec<std::path::PathBuf>,
 
     /// Maximum ancestry graph depth.
     #[arg(long, default_value = "50")]

@@ -17,10 +17,6 @@
 - **No disk cache yet**: Caching is in-memory only; optional persistent
   cache by chain/network remains unimplemented.
 
-- **Label import API namespace behavior is limited**:
-  `/api/v1/labels/import` imports into local namespace only; there is no
-  API path for caller-selected namespace imports.
-
 - **Cycle scenarios are not representable for ancestry graphs**:
   Bitcoin's UTXO model is acyclic, so integration stress coverage should
   focus on merge-heavy and wide/deep DAG shapes instead of true cycles.
@@ -52,3 +48,8 @@
   re-trigger the build script even when no UI files changed, because
   `npm install` can touch `package-lock.json` timestamps. A hash-based
   check could avoid this.
+
+- **ELK node height is fixed while label editors are variable-height**:
+  `layout.ts` uses static `NODE_HEIGHT`, so transactions with many label
+  rows in-node may visually overlap nearby edges/nodes until dynamic
+  sizing or post-render relayout is added.

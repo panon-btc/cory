@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from "react";
+import { useMemo, useCallback, useEffect } from "react";
 import {
   ReactFlow,
   Controls,
@@ -24,6 +24,7 @@ interface GraphPanelProps {
     max_depth_reached: number;
   } | null;
   onNodeClick: NodeMouseHandler;
+  onNodesUpdate: (nodes: Node[]) => void;
 }
 
 export default function GraphPanel({
@@ -35,6 +36,7 @@ export default function GraphPanel({
   truncated,
   stats,
   onNodeClick,
+  onNodesUpdate,
 }: GraphPanelProps) {
   const nodeTypes = useMemo(() => ({ tx: TxNode }), []);
   const [nodes, setNodes, onNodesChange] = useNodesState([] as Node[]);
@@ -47,6 +49,10 @@ export default function GraphPanel({
   }, [inputNodes, inputEdges, setNodes, setEdges]);
 
   const minimapNodeColor = useCallback(() => "var(--accent-dim)", []);
+
+  useEffect(() => {
+    onNodesUpdate(nodes);
+  }, [nodes, onNodesUpdate]);
 
   if (loading) {
     return (

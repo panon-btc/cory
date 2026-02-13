@@ -28,12 +28,6 @@ def main() -> int:
     wallet_sink = os.environ.get("WALLET_SINK", "itest_sink")
     bind = "127.0.0.1"
     port = int(os.environ.get("CORY_PORT", str(pick_free_port())))
-    local_labels = Path(
-        os.environ.get(
-            "LOCAL_LABELS_FILE",
-            str(cfg.tmp_dir / f"regtest_server_labels-{cfg.run_id}.jsonl"),
-        )
-    )
     cory_log = Path(
         os.environ.get("CORY_LOG", str(cfg.tmp_dir / f"regtest-cory-{cfg.run_id}.log"))
     )
@@ -69,7 +63,6 @@ def main() -> int:
             rpc_pass=cfg.rpc_pass,
             bind=bind,
             port=port,
-            local_labels=local_labels,
             log_path=cory_log,
         )
         wait_for_health(base_url)
@@ -79,7 +72,6 @@ def main() -> int:
             "schema_version": 1,
             "base_url": base_url,
             "valid_txid": txid,
-            "local_labels_file": str(local_labels),
         }
         fixture_file.write_text(json.dumps(fixture, indent=2), encoding="utf-8")
         log(f"wrote server fixture to {fixture_file}")
