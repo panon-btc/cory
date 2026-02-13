@@ -393,7 +393,8 @@ def print_scenario_table(scenarios: list[dict[str, Any]]) -> None:
     print("-" * 130)
 
 
-def print_examples(server_url: str, api_token: str, scenarios: list[dict[str, Any]]) -> None:
+def print_examples(server_url: str, scenarios: list[dict[str, Any]]) -> None:
+    """Print example commands using cookie-based authentication."""
     deep = next(s for s in scenarios if s["name"].startswith("deep_chain_"))
     diamond = next(s for s in scenarios if s["name"] == "diamond_merge")
 
@@ -403,19 +404,24 @@ def print_examples(server_url: str, api_token: str, scenarios: list[dict[str, An
     print("1) UI walkthrough (diamond merge):")
     print(f"   Open: {server_url}/")
     print(f"   Search txid: {diamond['root_txid']}")
-    print("   Inspect that two branches merge to a shared ancestor.")
+    print("   Authentication is automatic - just use the UI!")
     print()
     print("2) API check for truncation (long chain):")
     print(
         f"   curl -s \"{server_url}/api/v1/graph/tx/{deep['root_txid']}\" | jq '.truncated,.stats.max_depth_reached'"
     )
     print()
-    print("3) Mutating API example with token (set label on deep root):")
+    print("3) Mutating API example (set label on deep root):")
+    print("   Note: You need to establish a cookie session first:")
+    print(f"   # First, get a token (sets cookie)")
+    print(f"   curl -s -X POST -c cookies.txt \"{server_url}/api/v1/auth/token\"")
+    print()
+    print("   # Then use the cookie for authenticated requests")
     print(
         "   curl -s -X POST "
         f"\"{server_url}/api/v1/labels/set\" "
         "-H \"content-type: application/json\" "
-        f"-H \"x-api-token: {api_token}\" "
+        "-b cookies.txt "
         f"-d '{{\"type\":\"tx\",\"ref\":\"{deep['root_txid']}\",\"label\":\"manual-fixture\"}}'"
     )
 
@@ -505,7 +511,7 @@ def main() -> int:
         )
 
         rpc_url = f"http://127.0.0.1:{cfg.rpc_port}"
-        cory_proc, cory_log_file, server_url, api_token = start_cory(
+        cory_proc, cory_log_file, server_url, jwt_token = start_cory(
             root_dir=root_dir,
             rpc_url=rpc_url,
             rpc_user=cfg.rpc_user,
@@ -521,7 +527,7 @@ def main() -> int:
             "schema_version": 1,
             "run_id": cfg.run_id,
             "server_url": server_url,
-            "api_token": api_token,
+            "jwt_token": jwt_token,
             "scenarios": [
                 {
                     "name": s["name"],
@@ -538,13 +544,12 @@ def main() -> int:
         print()
         print(f"Run ID:      {cfg.run_id}")
         print(f"Server URL:  {server_url}")
-        print(f"API Token:   {api_token}")
         print(f"Fixture:     {fixture_file}")
         print(f"bitcoind log:{cfg.bitcoind_log}")
         print(f"cory log:    {cory_log}")
 
         print_scenario_table(scenarios)
-        print_examples(server_url, api_token, scenarios)
+        print_examples(server_url, scenarios)
 
         print()
         print("Shutdown")
