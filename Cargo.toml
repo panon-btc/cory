@@ -2,6 +2,9 @@
 resolver = "2"
 members = ["crates/cory-core", "crates/cory"]
 
+[workspace.package]
+license = "MIT"
+
 [workspace.dependencies]
 async-trait = "0.1"
 axum = "0.8"

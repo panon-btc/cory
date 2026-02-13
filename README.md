@@ -125,4 +125,4 @@ Architecture details:
 
 ## License
 
-TBD.
+Licensed under the MIT License. See `LICENSE`.
