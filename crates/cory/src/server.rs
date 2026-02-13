@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
@@ -226,9 +227,10 @@ struct SetLabelRequest {
 async fn set_label(
     State(state): State<SharedState>,
     headers: HeaderMap,
-    Json(req): Json<SetLabelRequest>,
+    req: Result<Json<SetLabelRequest>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     check_auth(&state.api_token, &headers)?;
+    let Json(req) = req.map_err(|e| AppError::BadRequest(e.to_string()))?;
 
     let mut store = state.labels.write().await;
     store.set_label(req.label_type, req.ref_id, req.label);
