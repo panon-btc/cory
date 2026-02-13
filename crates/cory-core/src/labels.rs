@@ -104,6 +104,12 @@ pub struct LabelStore {
     pack_files: Vec<LabelFile>,
 }
 
+impl Default for LabelStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LabelStore {
     pub fn new() -> Self {
         Self {
@@ -401,7 +407,7 @@ fn walk_pack_dir(
             continue;
         }
 
-        if !path.extension().is_some_and(|ext| ext == "jsonl") {
+        if path.extension().is_none_or(|ext| ext != "jsonl") {
             continue;
         }
 

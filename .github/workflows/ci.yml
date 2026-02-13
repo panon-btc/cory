@@ -8,8 +8,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  fmt:
-    name: Format
+  lint:
+    name: Lint
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -17,9 +17,17 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
-      - name: Check formatting
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check Rust formatting
         run: cargo fmt --all -- --check
+
+      - name: Run clippy with warnings denied
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   ui:
     name: UI
@@ -40,26 +48,8 @@ jobs:
       - name: Build (typecheck + bundle)
         run: npm run build
 
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run clippy with warnings denied
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-  build:
-    name: Build
+  test:
+    name: Build & Test
     runs-on: ubuntu-24.04
     env:
       RUSTFLAGS: -D warnings
@@ -73,76 +63,11 @@ jobs:
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Build all targets with warnings denied
-        run: cargo build --workspace --all-targets --all-features
-
-  test:
-    name: Unit Tests
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run tests
+      - name: Build and run tests with warnings denied
         run: cargo test --workspace --all-targets --all-features
 
-  regtest:
-    name: Regtest Scripts
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-
-      - name: Install Bitcoin Core binaries (bitcoind + bitcoin-cli)
-        env:
-          BITCOIN_VERSION: "30.2"
-        run: |
-          set -euo pipefail
-          arch="x86_64-linux-gnu"
-          tarball="bitcoin-${BITCOIN_VERSION}-${arch}.tar.gz"
-          base_url="https://bitcoincore.org/bin/bitcoin-core-${BITCOIN_VERSION}"
-          curl -fsSLO "${base_url}/${tarball}"
-          mkdir -p "$HOME/.local/bin"
-          tar -xzf "${tarball}"
-          install -m 0755 "bitcoin-${BITCOIN_VERSION}/bin/bitcoind" "$HOME/.local/bin/bitcoind"
-          install -m 0755 "bitcoin-${BITCOIN_VERSION}/bin/bitcoin-cli" "$HOME/.local/bin/bitcoin-cli"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      - name: Run regtest scripts
-        run: |
-          set -euo pipefail
-          if [ -d "scripts/regtests" ]; then
-            regtest_dir="scripts/regtests"
-          elif [ -d "scripts/regtest" ]; then
-            regtest_dir="scripts/regtest"
-          else
-            echo "No regtest directory found (expected scripts/regtests or scripts/regtest)"
-            exit 1
-          fi
-
-          python3 "${regtest_dir}/rpc_e2e.py"
-          python3 "${regtest_dir}/graph.py"
-          python3 "${regtest_dir}/server_e2e.py"
-
-  playwright:
-    name: Playwright E2E
+  e2e:
+    name: E2E (regtest + Playwright)
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -179,5 +104,26 @@ jobs:
           pip install playwright
           python -m playwright install --with-deps chromium
 
+      # Pre-build the cory binary so that `cargo run` inside the Python
+      # scripts is a near-instant no-op. Without this, the first
+      # `start_cory()` call compiles from scratch and can exceed the 90s
+      # startup timeout on CI runners.
+      - name: Build cory binary
+        run: cargo build --bin cory
+
+      - name: Run regtest scripts
+        run: |
+          set -euo pipefail
+          python3 scripts/regtest/rpc_e2e.py
+          python3 scripts/regtest/graph.py
+          python3 scripts/regtest/server_e2e.py
+
       - name: Run Playwright E2E tests
         run: python3 scripts/ui/playwright/label.py
+
+      - name: Upload cory logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cory-e2e-logs
+          path: tmp/*.log
