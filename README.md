@@ -31,7 +31,8 @@ Install a local binary and run by command name:
 - Designed to run fully offline against your own node.
 - The local web server binds to `127.0.0.1` by default.
 - The UI serves local static assets only (no CDNs).
-- Mutating API calls require a per-run API token (printed on startup) to reduce localhost CSRF risk.
+- Mutating API calls require JWT cookie authentication to reduce localhost CSRF risk.
+  A session token is automatically acquired by the UI on page load.
 
 
 ## Labels
@@ -99,7 +100,8 @@ Optional heuristics (must be opt-in and clearly labeled as uncertain):
 | `make test` | Run unit tests across all crates |
 | `make fmt` | Format all code (Rust + UI) |
 | `make regtest` | Run regtest e2e scripts (requires `bitcoind` in PATH) |
-| `make uitest` | Run manual UI fixture workflow (requires `bitcoind` in PATH) |
+| `make uireg` | Run manual UI fixture workflow (requires `bitcoind` in PATH) |
+| `make playwright` | Run Playwright E2E tests (requires `playwright` + Chromium) |
 | `make ui` | Start Vite dev server with HMR on `:5173` (for UI development) |
 | `make run` | Start the Cory server on `:3080` |
 | `make clean` | Remove all build artifacts (Rust `target/` + UI `node_modules/` and `dist/`) |

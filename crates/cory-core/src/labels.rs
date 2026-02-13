@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -81,6 +81,12 @@ pub enum LabelStoreError {
     #[error("label file name cannot be empty")]
     EmptyFileName,
 
+    #[error("ref must not be empty")]
+    EmptyRef,
+
+    #[error("label must not be empty")]
+    EmptyLabel,
+
     #[error("label file already exists: {0}")]
     DuplicateLocalFile(String),
 
@@ -102,6 +108,8 @@ struct LabelFile {
 pub struct LabelStore {
     local_files: Vec<LabelFile>,
     pack_files: Vec<LabelFile>,
+    /// When set, local label files are persisted as JSONL in this directory.
+    label_dir: Option<PathBuf>,
 }
 
 impl Default for LabelStore {
@@ -115,7 +123,57 @@ impl LabelStore {
         Self {
             local_files: Vec::new(),
             pack_files: Vec::new(),
+            label_dir: None,
         }
+    }
+
+    /// Creates a new label store with persistence. Existing JSONL files in
+    /// `dir` are loaded as editable local label files. Subsequent mutations
+    /// are flushed to disk automatically.
+    pub fn with_persistence(dir: &Path) -> Result<Self, CoreError> {
+        std::fs::create_dir_all(dir)?;
+
+        let mut store = Self {
+            local_files: Vec::new(),
+            pack_files: Vec::new(),
+            label_dir: Some(dir.to_path_buf()),
+        };
+
+        // Load existing JSONL files from the label directory.
+        let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<Vec<_>, _>>()?;
+        entries.sort_by_key(|e| e.path());
+
+        for entry in entries {
+            let path = entry.path();
+            if path.extension().is_none_or(|ext| ext != "jsonl") {
+                continue;
+            }
+            let file_name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("labels")
+                .to_string();
+            let id = normalize_label_file_id(&file_name);
+            if id.is_empty() {
+                continue;
+            }
+
+            let content = std::fs::read_to_string(&path)?;
+            let mut labels = HashMap::new();
+            parse_jsonl_records(&content, &mut labels)?;
+
+            store.local_files.push(LabelFile {
+                meta: LabelFileMeta {
+                    id,
+                    name: file_name,
+                    kind: LabelFileKind::Local,
+                    editable: true,
+                },
+                labels,
+            });
+        }
+
+        Ok(store)
     }
 
     // ========================================================================
@@ -167,7 +225,7 @@ impl LabelStore {
         }
 
         let meta = LabelFileMeta {
-            id: parsed.id,
+            id: parsed.id.clone(),
             name: parsed.name,
             kind: LabelFileKind::Local,
             editable: true,
@@ -176,6 +234,7 @@ impl LabelStore {
             meta: meta.clone(),
             labels: HashMap::new(),
         });
+        self.flush_local_file(&parsed.id)?;
         Ok(meta)
     }
 
@@ -193,7 +252,7 @@ impl LabelStore {
         parse_jsonl_records(content, &mut labels)?;
 
         let meta = LabelFileMeta {
-            id: parsed.id,
+            id: parsed.id.clone(),
             name: parsed.name,
             kind: LabelFileKind::Local,
             editable: true,
@@ -202,6 +261,7 @@ impl LabelStore {
             meta: meta.clone(),
             labels,
         });
+        self.flush_local_file(&parsed.id)?;
 
         Ok(meta)
     }
@@ -218,6 +278,7 @@ impl LabelStore {
         let mut labels = HashMap::new();
         parse_jsonl_records(content, &mut labels)?;
         self.local_files[idx].labels = labels;
+        self.flush_local_file(file_id)?;
         Ok(())
     }
 
@@ -225,7 +286,9 @@ impl LabelStore {
         let idx = self
             .find_local_file_index_by_id(file_id)
             .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
+        let name = self.local_files[idx].meta.name.clone();
         self.local_files.remove(idx);
+        self.remove_local_file_on_disk(&name);
         Ok(())
     }
 
@@ -247,6 +310,12 @@ impl LabelStore {
         ref_id: String,
         label: String,
     ) -> Result<(), LabelStoreError> {
+        if ref_id.trim().is_empty() {
+            return Err(LabelStoreError::EmptyRef);
+        }
+        if label.trim().is_empty() {
+            return Err(LabelStoreError::EmptyLabel);
+        }
         let idx = self
             .find_local_file_index_by_id(file_id)
             .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
@@ -261,6 +330,7 @@ impl LabelStore {
                 spendable: None,
             },
         );
+        self.flush_local_file(file_id)?;
         Ok(())
     }
 
@@ -275,6 +345,7 @@ impl LabelStore {
             .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
         let key = (label_type, ref_id.to_string());
         self.local_files[idx].labels.remove(&key);
+        self.flush_local_file(file_id)?;
         Ok(())
     }
 
@@ -289,21 +360,12 @@ impl LabelStore {
         label_type: Bip329Type,
         ref_id: &str,
     ) -> Vec<(LabelFileMeta, Bip329Record)> {
+        let key = (label_type, ref_id.to_string());
         let mut results = Vec::new();
 
-        for file in &self.local_files {
-            for ((t, r), record) in &file.labels {
-                if *t == label_type && r == ref_id {
-                    results.push((file.meta.clone(), record.clone()));
-                }
-            }
-        }
-
-        for file in &self.pack_files {
-            for ((t, r), record) in &file.labels {
-                if *t == label_type && r == ref_id {
-                    results.push((file.meta.clone(), record.clone()));
-                }
+        for file in self.local_files.iter().chain(self.pack_files.iter()) {
+            if let Some(record) = file.labels.get(&key) {
+                results.push((file.meta.clone(), record.clone()));
             }
         }
 
@@ -322,7 +384,10 @@ impl LabelStore {
             )));
         }
 
-        walk_pack_dir(dir, dir, &mut self.pack_files)
+        // Track existing pack IDs to detect collisions.
+        let mut seen_ids: HashSet<String> =
+            self.pack_files.iter().map(|f| f.meta.id.clone()).collect();
+        walk_pack_dir(dir, dir, &mut self.pack_files, &mut seen_ids)
     }
 
     // ========================================================================
@@ -335,6 +400,28 @@ impl LabelStore {
 
     fn find_local_file_by_id(&self, file_id: &str) -> Option<&LabelFile> {
         self.local_files.iter().find(|f| f.meta.id == file_id)
+    }
+
+    /// Flush a local file to disk if persistence is enabled.
+    fn flush_local_file(&self, file_id: &str) -> Result<(), LabelStoreError> {
+        let Some(dir) = &self.label_dir else {
+            return Ok(());
+        };
+        let file = self
+            .find_local_file_by_id(file_id)
+            .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
+        let content = export_map_to_jsonl(&file.labels);
+        let path = dir.join(format!("{}.jsonl", file.meta.name));
+        std::fs::write(&path, content).map_err(CoreError::Io)?;
+        Ok(())
+    }
+
+    /// Remove a local file from disk if persistence is enabled.
+    fn remove_local_file_on_disk(&self, name: &str) {
+        if let Some(dir) = &self.label_dir {
+            let path = dir.join(format!("{name}.jsonl"));
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
 
@@ -378,8 +465,16 @@ pub fn normalize_label_file_id(name: &str) -> String {
 }
 
 fn export_map_to_jsonl(map: &HashMap<LabelKey, Bip329Record>) -> String {
+    // Sort by (type, ref) for deterministic export order.
+    let mut entries: Vec<_> = map.iter().collect();
+    entries.sort_by(|(k1, _), (k2, _)| {
+        k1.0.to_string()
+            .cmp(&k2.0.to_string())
+            .then_with(|| k1.1.cmp(&k2.1))
+    });
+
     let mut lines = Vec::new();
-    for record in map.values() {
+    for (_, record) in entries {
         lines.push(serde_json::to_string(record).expect("valid JSON"));
     }
     if lines.is_empty() {
@@ -391,6 +486,7 @@ fn export_map_to_jsonl(map: &HashMap<LabelKey, Bip329Record>) -> String {
 }
 
 /// Parse JSONL content into a label map, skipping empty lines.
+/// Duplicate entries (same type+ref) are accepted but logged as warnings.
 fn parse_jsonl_records(
     content: &str,
     map: &mut HashMap<LabelKey, Bip329Record>,
@@ -406,6 +502,14 @@ fn parse_jsonl_records(
                 message: e.to_string(),
             })?;
         let key = (record.label_type, record.ref_id.clone());
+        if map.contains_key(&key) {
+            tracing::warn!(
+                line = line_num + 1,
+                label_type = %record.label_type,
+                ref_id = %record.ref_id,
+                "duplicate JSONL entry overwrites previous value"
+            );
+        }
         map.insert(key, record);
     }
     Ok(())
@@ -416,12 +520,17 @@ fn walk_pack_dir(
     base: &Path,
     current: &Path,
     pack_files: &mut Vec<LabelFile>,
+    seen_ids: &mut HashSet<String>,
 ) -> Result<(), CoreError> {
-    for entry in std::fs::read_dir(current)? {
-        let entry = entry?;
+    // Sort directory entries by path for deterministic load order across
+    // platforms and filesystems.
+    let mut entries: Vec<_> = std::fs::read_dir(current)?.collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|e| e.path());
+
+    for entry in entries {
         let path = entry.path();
         if path.is_dir() {
-            walk_pack_dir(base, &path, pack_files)?;
+            walk_pack_dir(base, &path, pack_files, seen_ids)?;
             continue;
         }
 
@@ -450,6 +559,13 @@ fn walk_pack_dir(
         } else {
             format!("pack:{id_core}")
         };
+
+        if !seen_ids.insert(file_id.clone()) {
+            return Err(CoreError::LabelParse {
+                line: 0,
+                message: format!("duplicate pack file ID `{file_id}` from {}", path.display()),
+            });
+        }
 
         pack_files.push(LabelFile {
             meta: LabelFileMeta {

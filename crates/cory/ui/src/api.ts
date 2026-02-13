@@ -96,16 +96,14 @@ async function apiFetch(
     return apiFetch(path, opts, false);
   }
   if (!resp.ok) {
-    const err = (await resp
-      .json()
-      .catch(() => ({ error: resp.statusText }))) as ApiErrorPayload;
+    const err = (await resp.json().catch(() => ({ error: resp.statusText }))) as ApiErrorPayload;
     throw new ApiError(resp.status, err.error || resp.statusText);
   }
   return resp;
 }
 
-export async function fetchGraph(txid: string): Promise<GraphResponse> {
-  const resp = await apiFetch(`/api/v1/graph/tx/${encodeURIComponent(txid)}`);
+export async function fetchGraph(txid: string, signal?: AbortSignal): Promise<GraphResponse> {
+  const resp = await apiFetch(`/api/v1/graph/tx/${encodeURIComponent(txid)}`, { signal });
   return resp.json() as Promise<GraphResponse>;
 }
 
@@ -125,10 +123,7 @@ export async function createLabelFile(name: string): Promise<LabelFileSummary> {
   return resp.json() as Promise<LabelFileSummary>;
 }
 
-export async function importLabelFile(
-  name: string,
-  content: string,
-): Promise<LabelFileSummary> {
+export async function importLabelFile(name: string, content: string): Promise<LabelFileSummary> {
   const resp = await apiFetch("/api/v1/label", {
     method: "POST",
     headers: {
@@ -180,8 +175,6 @@ export async function deleteLabelFile(fileId: string): Promise<void> {
 }
 
 export async function exportLabelFile(fileId: string): Promise<string> {
-  const resp = await apiFetch(
-    `/api/v1/label/${encodeURIComponent(fileId)}/export`,
-  );
+  const resp = await apiFetch(`/api/v1/label/${encodeURIComponent(fileId)}/export`);
   return resp.text();
 }

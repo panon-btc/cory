@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use bitcoin::Txid;
+use futures::future::try_join_all;
 use tokio::sync::Semaphore;
 
 use crate::cache::{Cache, PrevoutInfo};
@@ -24,8 +25,9 @@ use crate::types::{
 /// by `txid`, producing a DAG (not a tree) when multiple inputs converge
 /// on the same parent.
 ///
-/// The `concurrency` parameter controls how many RPC requests can be
-/// in-flight simultaneously via a `tokio::sync::Semaphore`.
+/// Frontier nodes at each BFS level are fetched in parallel, bounded by
+/// the `concurrency` semaphore. This dramatically reduces wall-clock time
+/// on wide graphs compared to sequential per-node fetching.
 pub async fn build_ancestry(
     rpc: &dyn BitcoinRpc,
     cache: &Cache,
@@ -44,66 +46,78 @@ pub async fn build_ancestry(
     let mut queue: VecDeque<(Txid, usize)> = VecDeque::new();
     queue.push_back((root_txid, 0));
 
-    while let Some((txid, depth)) = queue.pop_front() {
-        if visited.contains(&txid) {
-            continue;
-        }
-
-        // Check limits before expanding this node.
-        if nodes.len() >= limits.max_nodes {
-            truncated = true;
-            break;
-        }
-        if depth > limits.max_depth {
-            truncated = true;
-            continue;
-        }
-        if edges.len() >= limits.max_edges {
-            truncated = true;
-            break;
-        }
-
-        visited.insert(txid);
-        if depth > max_depth_reached {
-            max_depth_reached = depth;
-        }
-
-        // Fetch the transaction, preferring the cache.
-        let tx_node = fetch_and_convert(rpc, cache, &semaphore, &txid).await?;
-
-        // Enqueue funding transactions for non-coinbase inputs.
-        if !tx_node.is_coinbase() {
-            // Determine whether adding this node's parent edges would exceed
-            // the configured edge cap. If so, truncate before adding any of
-            // this node's edges to avoid partial-edge expansion.
-            let candidate_edge_count = tx_node
-                .inputs
-                .iter()
-                .filter(|input| input.prevout.is_some())
-                .count();
-            if edges.len() + candidate_edge_count > limits.max_edges {
-                nodes.insert(txid, tx_node);
+    while !queue.is_empty() {
+        // Drain the current frontier: all txids at this BFS level.
+        let mut frontier: Vec<(Txid, usize)> = Vec::new();
+        while let Some((txid, depth)) = queue.pop_front() {
+            if visited.contains(&txid) {
+                continue;
+            }
+            if nodes.len() + frontier.len() >= limits.max_nodes {
                 truncated = true;
                 break;
             }
+            if depth > limits.max_depth {
+                truncated = true;
+                continue;
+            }
+            if edges.len() >= limits.max_edges {
+                truncated = true;
+                break;
+            }
+            visited.insert(txid);
+            frontier.push((txid, depth));
+        }
 
-            for (idx, input) in tx_node.inputs.iter().enumerate() {
-                if let Some(outpoint) = &input.prevout {
-                    edges.push(AncestryEdge {
-                        spending_txid: txid,
-                        input_index: idx as u32,
-                        funding_txid: outpoint.txid,
-                        funding_vout: outpoint.vout,
-                    });
+        if frontier.is_empty() {
+            break;
+        }
 
-                    if !visited.contains(&outpoint.txid) {
-                        queue.push_back((outpoint.txid, depth + 1));
+        // Fetch all frontier nodes in parallel (semaphore limits concurrency).
+        let fetch_futures: Vec<_> = frontier
+            .iter()
+            .map(|(txid, _)| fetch_and_convert(rpc, cache, &semaphore, txid))
+            .collect();
+        let fetched_nodes = try_join_all(fetch_futures).await?;
+
+        // Process fetched nodes: add edges and enqueue next-level parents.
+        for ((txid, depth), tx_node) in frontier.into_iter().zip(fetched_nodes) {
+            if depth > max_depth_reached {
+                max_depth_reached = depth;
+            }
+
+            if !tx_node.is_coinbase() {
+                let candidate_edge_count = tx_node
+                    .inputs
+                    .iter()
+                    .filter(|input| input.prevout.is_some())
+                    .count();
+                if edges.len() + candidate_edge_count > limits.max_edges {
+                    nodes.insert(txid, tx_node);
+                    truncated = true;
+                    // Stop processing this frontier — remaining nodes are
+                    // already visited so they won't be re-queued.
+                    continue;
+                }
+
+                for (idx, input) in tx_node.inputs.iter().enumerate() {
+                    if let Some(outpoint) = &input.prevout {
+                        edges.push(AncestryEdge {
+                            spending_txid: txid,
+                            input_index: idx as u32,
+                            funding_txid: outpoint.txid,
+                            funding_vout: outpoint.vout,
+                        });
+
+                        if !visited.contains(&outpoint.txid) {
+                            queue.push_back((outpoint.txid, depth + 1));
+                        }
                     }
                 }
             }
-        }
 
-        nodes.insert(txid, tx_node);
+            nodes.insert(txid, tx_node);
+        }
     }
 
     // After BFS is complete, many parent transactions are now present in `nodes`.
@@ -238,6 +252,49 @@ async fn convert_raw_tx(
                     error = %e,
                     "batch gettxout failed; inputs will remain unresolved"
                 );
+            }
+        }
+
+        // For inputs still unresolved after gettxout (common for spent outputs),
+        // try fetching the parent transaction directly. This is more expensive
+        // but resolves prevout values that gettxout cannot (spent outputs).
+        let still_unresolved: Vec<usize> = inputs
+            .iter()
+            .enumerate()
+            .filter(|(_, inp)| inp.value.is_none() && inp.prevout.is_some())
+            .map(|(idx, _)| idx)
+            .collect();
+
+        for idx in still_unresolved {
+            let outpoint = inputs[idx]
+                .prevout
+                .expect("filtered for Some prevout above");
+
+            // Only attempt RPC if the parent isn't already cached.
+            if cache
+                .get_prevout(&outpoint.txid, outpoint.vout)
+                .await
+                .is_some()
+            {
+                continue;
+            }
+            if let Ok(parent_tx) = rpc.get_transaction(&outpoint.txid).await {
+                if let Some(output) = parent_tx.outputs.get(outpoint.vout as usize) {
+                    let st = classify_script(output.script_pub_key.as_script());
+                    cache
+                        .insert_prevout(
+                            outpoint.txid,
+                            outpoint.vout,
+                            PrevoutInfo {
+                                value: output.value,
+                                script_pub_key: output.script_pub_key.clone(),
+                                script_type: st,
+                            },
+                        )
+                        .await;
+                    inputs[idx].value = Some(output.value);
+                    inputs[idx].script_type = Some(st);
+                }
             }
         }
     }

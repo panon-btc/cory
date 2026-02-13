@@ -1,5 +1,13 @@
 use clap::Parser;
 
+fn parse_nonzero_usize(s: &str) -> Result<usize, String> {
+    let n: usize = s.parse().map_err(|e| format!("{e}"))?;
+    if n == 0 {
+        return Err("value must be at least 1".to_string());
+    }
+    Ok(n)
+}
+
 /// Cory — local Bitcoin transaction ancestry explorer with BIP-329 label editing.
 #[derive(Parser)]
 #[command(version, about)]
@@ -40,7 +48,22 @@ pub struct Cli {
     #[arg(long, default_value = "2000")]
     pub max_edges: usize,
 
-    /// Maximum concurrent RPC calls.
-    #[arg(long, default_value = "4")]
+    /// Maximum number of transactions to keep in the in-memory cache.
+    /// Older entries are evicted in LRU order.
+    #[arg(long, default_value = "10000")]
+    pub cache_tx_cap: usize,
+
+    /// Maximum number of prevout entries to keep in the in-memory cache.
+    #[arg(long, default_value = "50000")]
+    pub cache_prevout_cap: usize,
+
+    /// Directory to persist local label files to disk. When set, label
+    /// edits are written through to JSONL files in this directory and
+    /// loaded on startup. Without this flag, local labels are ephemeral.
+    #[arg(long)]
+    pub label_dir: Option<std::path::PathBuf>,
+
+    /// Maximum concurrent RPC calls (must be at least 1).
+    #[arg(long, default_value = "4", value_parser = parse_nonzero_usize)]
     pub rpc_concurrency: usize,
 }

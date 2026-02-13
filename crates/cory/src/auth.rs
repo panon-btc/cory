@@ -98,34 +98,26 @@ pub async fn jwt_auth_middleware(
     next: Next,
 ) -> Response {
     let uri = request.uri().to_string();
-    tracing::info!("[JWT] Middleware invoked for: {}", uri);
+    tracing::debug!("[JWT] Middleware invoked for: {}", uri);
 
-    // Attempt to extract the JWT token from the cookie
+    // Attempt to extract the JWT token from the cookie.
     let token = match cookies.get(JWT_COOKIE_NAME) {
         Some(cookie) => {
             let token = cookie.value().to_string();
-            tracing::info!(
-                "[JWT] Cookie '{}' found, token length: {}",
-                JWT_COOKIE_NAME,
-                token.len()
-            );
+            tracing::debug!("[JWT] Cookie found, token length: {}", token.len());
             token
         }
         None => {
-            tracing::warn!(
-                "[JWT] Cookie '{}' NOT FOUND for route: {}",
-                JWT_COOKIE_NAME,
-                uri
-            );
+            tracing::warn!("[JWT] Missing cookie for route: {}", uri);
             return (StatusCode::UNAUTHORIZED, "Missing authentication cookie").into_response();
         }
     };
 
-    // Validate the JWT token
+    // Validate the JWT token.
     match jwt_manager.validate_token(&token) {
         Ok(claims) => {
-            tracing::info!(
-                "[JWT] Token VALID for session: {} on route: {}",
+            tracing::debug!(
+                "[JWT] Token valid for session: {} on route: {}",
                 claims.session_id,
                 uri
             );
@@ -133,7 +125,7 @@ pub async fn jwt_auth_middleware(
             next.run(request).await
         }
         Err(e) => {
-            tracing::warn!("[JWT] Token INVALID for route: {} - Error: {}", uri, e);
+            tracing::warn!("[JWT] Token invalid for route: {} — {}", uri, e);
             (StatusCode::UNAUTHORIZED, "Invalid or expired JWT token").into_response()
         }
     }

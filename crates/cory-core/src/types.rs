@@ -18,6 +18,7 @@ pub enum ScriptType {
     P2wpkh,
     P2wsh,
     P2tr,
+    BareMultisig,
     OpReturn,
     Unknown,
 }
@@ -30,6 +31,7 @@ impl std::fmt::Display for ScriptType {
             Self::P2wpkh => write!(f, "p2wpkh"),
             Self::P2wsh => write!(f, "p2wsh"),
             Self::P2tr => write!(f, "p2tr"),
+            Self::BareMultisig => write!(f, "bare_multisig"),
             Self::OpReturn => write!(f, "op_return"),
             Self::Unknown => write!(f, "unknown"),
         }

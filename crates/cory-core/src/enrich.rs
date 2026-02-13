@@ -22,6 +22,8 @@ pub fn classify_script(script: &Script) -> ScriptType {
         ScriptType::P2wsh
     } else if script.is_p2tr() {
         ScriptType::P2tr
+    } else if script.is_multisig() {
+        ScriptType::BareMultisig
     } else if script.is_op_return() {
         ScriptType::OpReturn
     } else {
