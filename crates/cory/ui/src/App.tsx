@@ -186,7 +186,7 @@ export default function App() {
       labelType: Bip329Type,
       refId: string,
       label: string,
-  ): Promise<void> => {
+    ): Promise<void> => {
       const summary = await setLabelInFile(fileId, labelType, refId, label);
       upsertLabelInState(fileId, summary.name, labelType, refId, label);
       await refreshLabelFiles();
@@ -199,7 +199,7 @@ export default function App() {
       fileId: string,
       labelType: Bip329Type,
       refId: string,
-  ): Promise<void> => {
+    ): Promise<void> => {
       await deleteLabelInFile(fileId, labelType, refId);
       removeLabelFromState(fileId, labelType, refId);
       await refreshLabelFiles();

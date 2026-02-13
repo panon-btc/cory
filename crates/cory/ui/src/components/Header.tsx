@@ -48,7 +48,6 @@ export default function Header({ onSearch }: HeaderProps) {
         />
         <button onClick={handleSearch}>Search</button>
       </div>
-
     </header>
   );
 }

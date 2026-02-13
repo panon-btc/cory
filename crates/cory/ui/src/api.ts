@@ -114,9 +114,7 @@ export async function fetchLabelFiles(): Promise<LabelFileSummary[]> {
   return resp.json() as Promise<LabelFileSummary[]>;
 }
 
-export async function createLabelFile(
-  name: string,
-): Promise<LabelFileSummary> {
+export async function createLabelFile(name: string): Promise<LabelFileSummary> {
   const resp = await apiFetch("/api/v1/label", {
     method: "POST",
     headers: {
