@@ -1,4 +1,4 @@
-.PHONY: build test regtest uitest ui run clean
+.PHONY: build test fmt regtest uitest ui run clean
 
 # Build everything (UI is built automatically via build.rs).
 build:
@@ -7,6 +7,11 @@ build:
 # Run unit tests.
 test:
 	cargo test --workspace --all-targets
+
+# Format all code (Rust + UI).
+fmt:
+	cargo fmt --all
+	cd crates/cory/ui && npm run fmt
 
 # Run regtest end-to-end scripts (requires bitcoind + bitcoin-cli in PATH).
 regtest:

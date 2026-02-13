@@ -1,6 +1,9 @@
-import type { GraphResponse } from './types';
+import type { GraphResponse } from "./types";
 
-async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response> {
+async function apiFetch(
+  path: string,
+  opts: RequestInit = {},
+): Promise<Response> {
   const resp = await fetch(path, opts);
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ error: resp.statusText }));
@@ -19,31 +22,28 @@ export async function setLabel(
   ref: string,
   label: string,
 ): Promise<void> {
-  await apiFetch('/api/v1/labels/set', {
-    method: 'POST',
+  await apiFetch("/api/v1/labels/set", {
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
-      'X-API-Token': token,
+      "Content-Type": "application/json",
+      "X-API-Token": token,
     },
-    body: JSON.stringify({ type: 'tx', ref, label }),
+    body: JSON.stringify({ type: "tx", ref, label }),
   });
 }
 
-export async function importLabels(
-  token: string,
-  body: string,
-): Promise<void> {
-  await apiFetch('/api/v1/labels/import', {
-    method: 'POST',
+export async function importLabels(token: string, body: string): Promise<void> {
+  await apiFetch("/api/v1/labels/import", {
+    method: "POST",
     headers: {
-      'Content-Type': 'text/plain',
-      'X-API-Token': token,
+      "Content-Type": "text/plain",
+      "X-API-Token": token,
     },
     body,
   });
 }
 
 export async function exportLabels(): Promise<string> {
-  const resp = await apiFetch('/api/v1/labels/export');
+  const resp = await apiFetch("/api/v1/labels/export");
   return resp.text();
 }

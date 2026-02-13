@@ -21,6 +21,25 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  ui:
+    name: UI
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: crates/cory/ui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check formatting
+        run: npm run fmt:check
+
+      - name: Build (typecheck + bundle)
+        run: npm run build
+
   clippy:
     name: Clippy
     runs-on: ubuntu-24.04

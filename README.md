@@ -96,6 +96,7 @@ Optional heuristics (must be opt-in and clearly labeled as uncertain):
 |---------|-------------|
 | `make build` | Build everything — UI is compiled automatically via `build.rs` |
 | `make test` | Run unit tests across all crates |
+| `make fmt` | Format all code (Rust + UI) |
 | `make regtest` | Run regtest e2e scripts (requires `bitcoind` in PATH) |
 | `make uitest` | Run manual UI fixture workflow (requires `bitcoind` in PATH) |
 | `make ui` | Start Vite dev server with HMR on `:5173` (for UI development) |

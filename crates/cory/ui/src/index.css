@@ -1,4 +1,4 @@
-@import '@xyflow/react/dist/style.css';
+@import "@xyflow/react/dist/style.css";
 
 :root {
   --bg: #1a1a2e;
@@ -11,7 +11,11 @@
   --mono: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
 }
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
 
 body {
   font-family: var(--mono);
@@ -21,7 +25,8 @@ body {
   line-height: 1.5;
 }
 
-input, button {
+input,
+button {
   font-family: var(--mono);
   font-size: 13px;
   padding: 6px 10px;
@@ -31,14 +36,18 @@ input, button {
   border-radius: 3px;
 }
 
-input:focus { outline: 1px solid var(--accent); }
+input:focus {
+  outline: 1px solid var(--accent);
+}
 
 button {
   cursor: pointer;
   background: var(--accent-dim);
   border-color: var(--accent-dim);
 }
-button:hover { background: var(--accent); }
+button:hover {
+  background: var(--accent);
+}
 
 /* React Flow dark theme overrides */
 .react-flow__background {

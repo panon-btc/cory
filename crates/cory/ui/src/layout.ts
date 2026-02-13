@@ -1,6 +1,9 @@
-import ELK, { type ElkNode, type ElkExtendedEdge } from 'elkjs/lib/elk.bundled.js';
-import type { Node, Edge } from '@xyflow/react';
-import type { GraphResponse } from './types';
+import ELK, {
+  type ElkNode,
+  type ElkExtendedEdge,
+} from "elkjs/lib/elk.bundled.js";
+import type { Node, Edge } from "@xyflow/react";
+import type { GraphResponse } from "./types";
 
 const elk = new ELK();
 
@@ -21,7 +24,7 @@ export interface TxNodeData {
 
 function shortTxid(txid: string): string {
   if (txid.length < 16) return txid;
-  return txid.substring(0, 12) + '\u2026' + txid.substring(txid.length - 4);
+  return txid.substring(0, 12) + "\u2026" + txid.substring(txid.length - 4);
 }
 
 export async function computeLayout(
@@ -46,14 +49,14 @@ export async function computeLayout(
     }));
 
   const graph: ElkNode = {
-    id: 'root',
+    id: "root",
     layoutOptions: {
-      'elk.algorithm': 'layered',
-      'elk.direction': 'RIGHT',
-      'elk.spacing.nodeNode': '30',
-      'elk.spacing.edgeNode': '20',
-      'elk.layered.spacing.nodeNodeBetweenLayers': '60',
-      'elk.edgeRouting': 'ORTHOGONAL',
+      "elk.algorithm": "layered",
+      "elk.direction": "RIGHT",
+      "elk.spacing.nodeNode": "30",
+      "elk.spacing.edgeNode": "20",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "60",
+      "elk.edgeRouting": "ORTHOGONAL",
     },
     children,
     edges: elkEdges,
@@ -82,7 +85,7 @@ export async function computeLayout(
 
     return {
       id: txid,
-      type: 'tx',
+      type: "tx",
       position: { x: n.x ?? 0, y: n.y ?? 0 },
       data,
     };
@@ -94,7 +97,7 @@ export async function computeLayout(
       id: `e-${i}`,
       source: e.funding_txid,
       target: e.spending_txid,
-      type: 'smoothstep',
+      type: "smoothstep",
     }));
 
   return { nodes, edges };

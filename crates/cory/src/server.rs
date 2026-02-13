@@ -267,10 +267,7 @@ async fn static_files(uri: axum::http::Uri) -> Response {
     // SPA fallback: serve index.html for all unmatched routes
     match Assets::get("index.html") {
         Some(content) => (
-            [(
-                axum::http::header::CONTENT_TYPE,
-                "text/html; charset=utf-8",
-            )],
+            [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
             content.data,
         )
             .into_response(),

@@ -1,22 +1,22 @@
-import { useState, useCallback, useRef } from 'react';
-import { ReactFlowProvider } from '@xyflow/react';
-import type { Node, Edge } from '@xyflow/react';
-import type { GraphResponse } from './types';
-import { fetchGraph } from './api';
-import { computeLayout } from './layout';
-import Header from './components/Header';
-import GraphPanel from './components/GraphPanel';
-import LabelPanel from './components/LabelPanel';
+import { useState, useCallback, useRef } from "react";
+import { ReactFlowProvider } from "@xyflow/react";
+import type { Node, Edge } from "@xyflow/react";
+import type { GraphResponse } from "./types";
+import { fetchGraph } from "./api";
+import { computeLayout } from "./layout";
+import Header from "./components/Header";
+import GraphPanel from "./components/GraphPanel";
+import LabelPanel from "./components/LabelPanel";
 
 export default function App() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [graph, setGraph] = useState<GraphResponse | null>(null);
   const [selectedTxid, setSelectedTxid] = useState<string | null>(null);
-  const [apiToken, setApiToken] = useState('');
+  const [apiToken, setApiToken] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const lastSearchRef = useRef('');
+  const lastSearchRef = useRef("");
 
   const doSearch = useCallback(async (txid: string) => {
     lastSearchRef.current = txid;
@@ -51,9 +51,15 @@ export default function App() {
 
   return (
     <ReactFlowProvider>
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-        <Header onSearch={doSearch} apiToken={apiToken} onTokenChange={setApiToken} />
-        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div
+        style={{ display: "flex", flexDirection: "column", height: "100vh" }}
+      >
+        <Header
+          onSearch={doSearch}
+          apiToken={apiToken}
+          onTokenChange={setApiToken}
+        />
+        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
           <GraphPanel
             nodes={nodes}
             edges={edges}

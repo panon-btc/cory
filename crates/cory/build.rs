@@ -67,7 +67,10 @@ fn main() {
         }
         Ok(s) => {
             log!("╔══════════════════════════════════════════════════════╗");
-            log!("║  `npm install` failed (exit code: {:<17}║", format!("{s})"));
+            log!(
+                "║  `npm install` failed (exit code: {:<17}║",
+                format!("{s})")
+            );
             log!("║                                                     ║");
             log!("║  UI will not be embedded. Check ui/package.json     ║");
             log!("║  and your Node.js installation.                     ║");
@@ -98,7 +101,10 @@ fn main() {
         }
         Ok(s) => {
             log!("╔══════════════════════════════════════════════════════╗");
-            log!("║  `npm run build` failed (exit code: {:<15}║", format!("{s})"));
+            log!(
+                "║  `npm run build` failed (exit code: {:<15}║",
+                format!("{s})")
+            );
             log!("║                                                     ║");
             log!("║  UI will not be embedded. Check the TypeScript and  ║");
             log!("║  Vite output above for errors.                      ║");
