@@ -1,12 +1,13 @@
-import { memo, useMemo } from "react";
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
-import type { TxNodeData } from "../layout";
+import type { TxNodeData, TxOutputDisplayRow } from "../layout";
 
 type TxNodeProps = NodeProps & { data: TxNodeData };
 
 const IO_START_TOP = 78;
 const PRIMARY_ROW_HEIGHT = 18;
+const IO_ROW_GAP = 2;
 
 function shortOutpoint(outpoint: string | null): string {
   if (!outpoint) {
@@ -34,6 +35,15 @@ function formatFeerate(value: number): string {
 }
 
 export default memo(function TxNode({ data, selected }: TxNodeProps) {
+  const inputRowRefs = useRef(new Map<number, HTMLDivElement>());
+  const outputRowRefs = useRef(new Map<number, HTMLDivElement>());
+  const [measuredInputHandleTops, setMeasuredInputHandleTops] = useState<Record<number, number>>(
+    {},
+  );
+  const [measuredOutputHandleTops, setMeasuredOutputHandleTops] = useState<Record<number, number>>(
+    {},
+  );
+
   const meta = useMemo(() => {
     const items: string[] = [];
     items.push(data.blockHeight != null ? `${data.blockHeight}` : "unconfirmed");
@@ -51,27 +61,61 @@ export default memo(function TxNode({ data, selected }: TxNodeProps) {
     return items;
   }, [data]);
 
+  const copyText = useCallback((text: string) => {
+    // Clipboard writes require a user gesture; failures are non-fatal in older browsers.
+    void navigator.clipboard?.writeText(text).catch(() => undefined);
+  }, []);
+
   // Compute handle positions with a single prefix-sum pass per side,
   // avoiding the O(n^2) repeated slice+reduce.
   const inputHandleTops = useMemo(() => {
-    const tops: number[] = [];
+    const tops: Record<number, number> = {};
     let offset = 0;
     for (const row of data.inputRows) {
-      tops.push(IO_START_TOP + offset + PRIMARY_ROW_HEIGHT / 2);
+      tops[row.index] = IO_START_TOP + offset + PRIMARY_ROW_HEIGHT / 2;
       offset += row.rowHeight;
     }
     return tops;
   }, [data.inputRows]);
 
   const outputHandleTops = useMemo(() => {
-    const tops: number[] = [];
+    const tops: Record<number, number> = {};
     let offset = 0;
     for (const row of data.outputRows) {
-      tops.push(IO_START_TOP + offset + PRIMARY_ROW_HEIGHT / 2);
+      if (row.kind === "output" && row.connected) {
+        tops[row.index] = IO_START_TOP + offset + PRIMARY_ROW_HEIGHT / 2;
+      }
       offset += row.rowHeight;
+      if (row.kind === "gap") {
+        // When collapsed ranges are shown as `...`, keep connected handles
+        // visually aligned with subsequent rows by accounting for one extra
+        // baseline row step in the compressed section.
+        offset += PRIMARY_ROW_HEIGHT + IO_ROW_GAP;
+      }
     }
     return tops;
   }, [data.outputRows]);
+
+  // Measure rendered row positions so handle anchors align with the actual
+  // DOM rows even when output lists are collapsed with gap placeholders.
+  useLayoutEffect(() => {
+    const nextInput: Record<number, number> = {};
+    for (const row of data.inputRows) {
+      const el = inputRowRefs.current.get(row.index);
+      if (!el) continue;
+      nextInput[row.index] = el.offsetTop + PRIMARY_ROW_HEIGHT / 2;
+    }
+    setMeasuredInputHandleTops(nextInput);
+
+    const nextOutput: Record<number, number> = {};
+    for (const row of data.outputRows) {
+      if (row.kind !== "output" || !row.connected) continue;
+      const el = outputRowRefs.current.get(row.index);
+      if (!el) continue;
+      nextOutput[row.index] = el.offsetTop + PRIMARY_ROW_HEIGHT / 2;
+    }
+    setMeasuredOutputHandleTops(nextOutput);
+  }, [data.inputRows, data.outputRows]);
 
   return (
     <div
@@ -92,32 +136,66 @@ export default memo(function TxNode({ data, selected }: TxNodeProps) {
           id={`in-${row.index}`}
           type="target"
           position={Position.Left}
-          style={{ top: inputHandleTops[index], background: "var(--border)" }}
+          style={{
+            top:
+              measuredInputHandleTops[row.index] ??
+              inputHandleTops[row.index] ??
+              inputHandleTops[index],
+            background: "var(--border)",
+          }}
         />
       ))}
 
-      {data.outputRows.map((row, index) => (
-        <Handle
-          key={`out-${row.index}`}
-          id={`out-${row.index}`}
-          type="source"
-          position={Position.Right}
-          style={{ top: outputHandleTops[index], background: "var(--border)" }}
-        />
-      ))}
+      {data.outputRows
+        .filter(
+          (row): row is Extract<TxOutputDisplayRow, { kind: "output" }> => row.kind === "output",
+        )
+        .filter((row) => row.connected)
+        .map((row) => (
+          <Handle
+            key={`out-${row.index}`}
+            id={`out-${row.index}`}
+            type="source"
+            position={Position.Right}
+            style={{
+              top: measuredOutputHandleTops[row.index] ?? outputHandleTops[row.index],
+              background: "var(--border)",
+            }}
+          />
+        ))}
 
-      <div
-        title={data.txid}
-        style={{
-          color: "var(--accent)",
-          fontWeight: 600,
-          fontSize: 12,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {data.shortTxid}
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <button
+          type="button"
+          className="nodrag nopan"
+          onClick={() => copyText(data.txid)}
+          title={`Copy txid: ${data.txid}`}
+          style={{
+            border: "1px solid var(--border)",
+            background: "transparent",
+            color: "var(--text-muted)",
+            borderRadius: 3,
+            fontSize: 10,
+            lineHeight: 1,
+            padding: "2px 4px",
+            cursor: "pointer",
+          }}
+        >
+          ⧉
+        </button>
+        <div
+          title={data.txid}
+          style={{
+            color: "var(--accent)",
+            fontWeight: 600,
+            fontSize: 12,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {data.shortTxid}
+        </div>
       </div>
 
       {data.txLabels.length > 0 && (
@@ -156,6 +234,13 @@ export default memo(function TxNode({ data, selected }: TxNodeProps) {
             {data.inputRows.map((row) => (
               <div
                 key={`input-row-${row.index}`}
+                ref={(el) => {
+                  if (el) {
+                    inputRowRefs.current.set(row.index, el);
+                  } else {
+                    inputRowRefs.current.delete(row.index);
+                  }
+                }}
                 style={{
                   display: "flex",
                   flexDirection: "column",
@@ -164,7 +249,28 @@ export default memo(function TxNode({ data, selected }: TxNodeProps) {
                 }}
               >
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <span style={{ color: "var(--accent)", minWidth: 24 }}>#{row.index}</span>
+                  <button
+                    type="button"
+                    className="nodrag nopan"
+                    onClick={() => copyText(row.address ?? `${data.txid}:${row.index}`)}
+                    title={
+                      row.address
+                        ? `Copy input address: ${row.address}`
+                        : `Copy input ref: ${data.txid}:${row.index}`
+                    }
+                    style={{
+                      color: "var(--accent)",
+                      minWidth: 24,
+                      border: "none",
+                      background: "transparent",
+                      padding: 0,
+                      textAlign: "left",
+                      font: "inherit",
+                      cursor: "pointer",
+                    }}
+                  >
+                    #{row.index}
+                  </button>
                   <span
                     style={{
                       color: "var(--text)",
@@ -202,71 +308,117 @@ export default memo(function TxNode({ data, selected }: TxNodeProps) {
         <div style={{ minWidth: 0 }}>
           <div style={{ color: "var(--text-muted)", fontSize: 10 }}>Outputs</div>
           <div style={{ display: "grid", gap: 2, marginTop: 3 }}>
-            {data.outputRows.map((row) => (
-              <div
-                key={`output-row-${row.index}`}
-                style={{
-                  display: "flex",
-                  gap: 6,
-                  alignItems: "flex-start",
-                  minHeight: row.rowHeight,
-                }}
-              >
-                <span style={{ color: "var(--accent)", minWidth: 24 }}>#{row.index}</span>
+            {data.outputRows.map((row, rowIndex) =>
+              row.kind === "gap" ? (
                 <div
+                  key={`output-gap-${rowIndex}`}
                   style={{
                     display: "flex",
-                    flexDirection: "column",
-                    minWidth: 0,
+                    gap: 6,
+                    alignItems: "center",
+                    minHeight: row.rowHeight,
+                  }}
+                  title={`${row.hiddenCount} output${row.hiddenCount === 1 ? "" : "s"} hidden`}
+                >
+                  <span style={{ color: "var(--text-muted)", minWidth: 24 }}>...</span>
+                  <span style={{ color: "var(--text-muted)", fontSize: 10 }}>
+                    ... {row.hiddenCount} hidden ...
+                  </span>
+                </div>
+              ) : (
+                <div
+                  key={`output-row-${row.index}`}
+                  ref={(el) => {
+                    if (el) {
+                      outputRowRefs.current.set(row.index, el);
+                    } else {
+                      outputRowRefs.current.delete(row.index);
+                    }
+                  }}
+                  style={{
+                    display: "flex",
+                    gap: 6,
+                    alignItems: "flex-start",
+                    minHeight: row.rowHeight,
                   }}
                 >
-                  <span
-                    style={{
-                      color: row.connected ? "var(--text)" : "var(--text-muted)",
-                      fontWeight: row.connected ? 600 : 400,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
+                  <button
+                    type="button"
+                    className="nodrag nopan"
+                    onClick={() => copyText(row.address ?? `${data.txid}:${row.index}`)}
                     title={
                       row.address
-                        ? `${row.address} (${row.connected ? "connected" : "not connected"})`
-                        : row.connected
-                          ? "Connected in visible graph"
-                          : "Not connected in visible graph"
+                        ? `Copy output address: ${row.address}`
+                        : `Copy output ref: ${data.txid}:${row.index}`
                     }
-                  >
-                    {row.address ? shortAddress(row.address) : row.scriptType}
-                  </span>
-                  <span
                     style={{
-                      color: "var(--text-muted)",
-                      fontSize: 9,
-                      lineHeight: 1.1,
+                      color: "var(--accent)",
+                      minWidth: 24,
+                      border: "none",
+                      background: "transparent",
+                      padding: 0,
+                      textAlign: "left",
+                      font: "inherit",
+                      cursor: "pointer",
                     }}
                   >
-                    {formatSats(row.value)}
-                  </span>
-                  {row.labelLines.map((label, idx) => (
+                    #{row.index}
+                  </button>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      minWidth: 0,
+                    }}
+                  >
                     <span
-                      key={`output-${row.index}-label-${idx}`}
                       style={{
-                        color: "var(--text-muted)",
-                        fontSize: 9,
-                        fontStyle: "italic",
-                        lineHeight: 1.1,
+                        color: row.connected ? "var(--text)" : "var(--text-muted)",
+                        fontWeight: row.connected ? 600 : 400,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
                       }}
-                      title={label}
+                      title={
+                        row.address
+                          ? `${row.address} (${row.connected ? "connected" : "not connected"})`
+                          : row.connected
+                            ? "Connected in visible graph"
+                            : "Not connected in visible graph"
+                      }
                     >
-                      {label}
+                      {row.address ? shortAddress(row.address) : row.scriptType}
                     </span>
-                  ))}
+                    <span
+                      style={{
+                        color: "var(--text-muted)",
+                        fontSize: 9,
+                        lineHeight: 1.1,
+                      }}
+                    >
+                      {formatSats(row.value)}
+                    </span>
+                    {row.labelLines.map((label, idx) => (
+                      <span
+                        key={`output-${row.index}-label-${idx}`}
+                        style={{
+                          color: "var(--text-muted)",
+                          fontSize: 9,
+                          fontStyle: "italic",
+                          lineHeight: 1.1,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                        title={label}
+                      >
+                        {label}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ),
+            )}
           </div>
         </div>
       </div>

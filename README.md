@@ -4,6 +4,10 @@
 
 <p align="center">Local-first Bitcoin transaction ancestry explorer and BIP-329 label editor.</p>
 
+<p align="center">
+  <img src="screenshot.png" alt="Cory screenshot" width="610" />
+</p>
+
 ## What This Is
 
 This project aims to be a privacy-preserving tool that:

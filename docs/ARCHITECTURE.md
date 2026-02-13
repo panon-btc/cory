@@ -316,3 +316,11 @@ RPC traffic for previously unseen block hashes.
 
 Bitcoin Core returns version as a signed integer. The HTTP adapter parses
 it as `i32` directly so negative versions are preserved.
+
+### Output-to-child vertical order may not match `vout`
+
+The UI uses ELK layered layout with crossing minimization. For fan-out
+patterns, ELK may still place child transactions in a vertical order that
+does not match the parent's output index order (`vout 0`, `vout 1`, ...),
+including simple cases. This can produce avoidable-looking crossings even
+when edges are routed to the correct output handles.

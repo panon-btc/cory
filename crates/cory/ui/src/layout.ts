@@ -36,6 +36,18 @@ export interface TxOutputView {
   rowHeight: number;
 }
 
+export interface TxOutputGapView {
+  kind: "gap";
+  hiddenCount: number;
+  rowHeight: number;
+}
+
+export interface TxOutputRowView extends TxOutputView {
+  kind: "output";
+}
+
+export type TxOutputDisplayRow = TxOutputGapView | TxOutputRowView;
+
 export interface TxNodeData {
   txid: string;
   shortTxid: string;
@@ -46,7 +58,7 @@ export interface TxNodeData {
   isCoinbase: boolean;
   txLabels: string[];
   inputRows: TxInputView[];
-  outputRows: TxOutputView[];
+  outputRows: TxOutputDisplayRow[];
   [key: string]: unknown;
 }
 
@@ -62,6 +74,34 @@ function estimateNodeHeight(inputRowsHeight: number, outputRowsHeight: number): 
 
 function formatLabelEntry(entry: LabelEntry): string {
   return `${entry.file_name}/${entry.label}`;
+}
+
+// Build a compact, deterministic output index set:
+// - always include connected outputs
+// - include first/last 3 outputs for boundary context
+// - include one neighbor on each side of connected outputs
+function buildVisibleOutputIndices(outputCount: number, connectedIndices: Set<number>): number[] {
+  const visible = new Set<number>();
+
+  for (let i = 0; i < Math.min(3, outputCount); i += 1) {
+    visible.add(i);
+  }
+
+  for (let i = Math.max(0, outputCount - 3); i < outputCount; i += 1) {
+    visible.add(i);
+  }
+
+  for (const index of connectedIndices) {
+    visible.add(index);
+    if (index > 0) {
+      visible.add(index - 1);
+    }
+    if (index + 1 < outputCount) {
+      visible.add(index + 1);
+    }
+  }
+
+  return [...visible].sort((a, b) => a - b);
 }
 
 function buildConnectedOutputsByTx(
@@ -105,7 +145,7 @@ function buildNodeRenderModel(
   });
 
   const connectedIndices = connectedOutputsByTx.get(txid) ?? new Set<number>();
-  const outputRows: TxOutputView[] = nodeData.outputs.map((output, index) => {
+  const allOutputRows: TxOutputRowView[] = nodeData.outputs.map((output, index) => {
     const outputRef = `${txid}:${index}`;
     const outputLabels = response.labels_by_type.output[outputRef] ?? [];
     const address = response.output_address_refs[outputRef] ?? null;
@@ -113,6 +153,7 @@ function buildNodeRenderModel(
     const labelLines = [...addrLabels.map(formatLabelEntry), ...outputLabels.map(formatLabelEntry)];
 
     return {
+      kind: "output",
       index,
       value: output.value,
       scriptType: output.script_type,
@@ -122,6 +163,23 @@ function buildNodeRenderModel(
       rowHeight: PRIMARY_ROW_HEIGHT + labelLines.length * LABEL_LINE_HEIGHT,
     };
   });
+
+  const visibleOutputIndices = buildVisibleOutputIndices(allOutputRows.length, connectedIndices);
+  const outputRows: TxOutputDisplayRow[] = [];
+  let prevVisibleIndex = -1;
+  for (const visibleIndex of visibleOutputIndices) {
+    const hiddenCount = visibleIndex - prevVisibleIndex - 1;
+    if (hiddenCount > 0) {
+      outputRows.push({
+        kind: "gap",
+        hiddenCount,
+        rowHeight: PRIMARY_ROW_HEIGHT,
+      });
+    }
+
+    outputRows.push(allOutputRows[visibleIndex]!);
+    prevVisibleIndex = visibleIndex;
+  }
 
   const txLabels = (response.labels_by_type.tx[txid] ?? []).map(formatLabelEntry);
   const inputTotalHeight = inputRows.reduce((sum, row) => sum + row.rowHeight, 0);
@@ -174,6 +232,10 @@ export async function computeLayout(
   const nodeIds = new Set(Object.keys(response.nodes));
   const connectedOutputsByTx = buildConnectedOutputsByTx(response, nodeIds);
 
+  const visibleEdges = response.edges.filter(
+    (e) => nodeIds.has(e.funding_txid) && nodeIds.has(e.spending_txid),
+  );
+
   // Build render models once and reuse for both ELK sizing and final nodes,
   // avoiding duplicate computation of node data and heights.
   const renderModels = new Map<string, { data: TxNodeData; nodeHeight: number }>();
@@ -191,13 +253,11 @@ export async function computeLayout(
     };
   });
 
-  const elkEdges: ElkExtendedEdge[] = response.edges
-    .filter((e) => nodeIds.has(e.funding_txid) && nodeIds.has(e.spending_txid))
-    .map((e, i) => ({
-      id: `e-${i}`,
-      sources: [e.funding_txid],
-      targets: [e.spending_txid],
-    }));
+  const elkEdges: ElkExtendedEdge[] = visibleEdges.map((e, i) => ({
+    id: `e-${i}`,
+    sources: [e.funding_txid],
+    targets: [e.spending_txid],
+  }));
 
   const graph: ElkNode = {
     id: "root",
@@ -232,16 +292,14 @@ export async function computeLayout(
     };
   });
 
-  const edges: Edge[] = response.edges
-    .filter((e) => nodeIds.has(e.funding_txid) && nodeIds.has(e.spending_txid))
-    .map((e, i) => ({
-      id: `e-${i}`,
-      source: e.funding_txid,
-      target: e.spending_txid,
-      sourceHandle: `out-${e.funding_vout}`,
-      targetHandle: `in-${e.input_index}`,
-      type: "smoothstep",
-    }));
+  const edges: Edge[] = visibleEdges.map((e, i) => ({
+    id: `e-${i}`,
+    source: e.funding_txid,
+    target: e.spending_txid,
+    sourceHandle: `out-${e.funding_vout}`,
+    targetHandle: `in-${e.input_index}`,
+    type: "smoothstep",
+  }));
 
   return { nodes, edges };
 }
