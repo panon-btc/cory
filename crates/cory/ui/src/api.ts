@@ -1,12 +1,12 @@
 import type { GraphResponse } from "./types";
 
-/// Manages JWT token distribution and validation as well
+// Manages JWT token lifecycle and deduplicates concurrent auth calls.
 class TokenManager {
   private tokenAcquisitionPromise: Promise<void> | null = null;
+  private tokenRefreshPromise: Promise<boolean> | null = null;
 
-  /// Acquire a JWT token by calling the auth endpoint.
+  // Acquire a JWT token by calling the auth endpoint.
   async acquireToken(): Promise<void> {
-    // Prevent concurrent token acquisition attempts
     if (this.tokenAcquisitionPromise) {
       return this.tokenAcquisitionPromise;
     }
@@ -16,6 +16,30 @@ class TokenManager {
       await this.tokenAcquisitionPromise;
     } finally {
       this.tokenAcquisitionPromise = null;
+    }
+  }
+
+  // Attempt to refresh the current JWT cookie. Returns false when refresh is
+  // not possible (for example, no cookie or expired cookie).
+  async refreshToken(): Promise<boolean> {
+    if (this.tokenRefreshPromise) {
+      return this.tokenRefreshPromise;
+    }
+
+    this.tokenRefreshPromise = this.performTokenRefresh();
+    try {
+      return await this.tokenRefreshPromise;
+    } finally {
+      this.tokenRefreshPromise = null;
+    }
+  }
+
+  // Recover auth after a 401. Prefer refresh, then fall back to minting a new
+  // token if refresh is not possible.
+  async recoverAuth(): Promise<void> {
+    const refreshed = await this.refreshToken();
+    if (!refreshed) {
+      await this.acquireToken();
     }
   }
 
@@ -39,11 +63,31 @@ class TokenManager {
     const data = (await resp.json()) as { expires_in: number };
     console.info(`JWT token acquired, expires in ${data.expires_in}s`);
   }
+
+  private async performTokenRefresh(): Promise<boolean> {
+    console.debug("Refreshing JWT token...");
+    const resp = await fetch("/api/v1/auth/refresh", {
+      method: "POST",
+      credentials: "include",
+    });
+
+    if (resp.status === 401) {
+      console.info("JWT refresh unavailable; acquiring a new token");
+      return false;
+    }
+
+    if (!resp.ok) {
+      const error = await resp.text();
+      throw new Error(`Failed to refresh authentication token: ${error}`);
+    }
+
+    const data = (await resp.json()) as { expires_in: number };
+    console.info(`JWT token refreshed, expires in ${data.expires_in}s`);
+    return true;
+  }
 }
 
 const tokenManager = new TokenManager();
-
-/// Initialize the API layer by acquiring an initial JWT token.
 
 export async function initializeAuth(): Promise<void> {
   try {
@@ -59,14 +103,11 @@ export async function initializeAuth(): Promise<void> {
 // API Fetch Helper
 // ==============================================================================
 
-/// Makes authenticated API requests with automatic cookie-based JWT handling.
-/// All requests include credentials: 'include' to send cookies, and the server
-/// automatically validates JWT tokens from the HttpOnly cookie.
 async function apiFetch(
   path: string,
   opts: RequestInit = {},
+  allowAuthRecovery = true,
 ): Promise<Response> {
-  // Ensure we include cookies in requests (for JWT authentication)
   const fetchOpts: RequestInit = {
     ...opts,
     credentials: "include",
@@ -81,12 +122,9 @@ async function apiFetch(
 
   const resp = await fetch(path, fetchOpts);
 
-  // If we get 401, the user is not authenticated
-  if (resp.status === 401) {
-    console.error(`Authentication failed for ${path} - no valid token`);
-    throw new Error(
-      "Authentication required. Please refresh the page to authenticate.",
-    );
+  if (resp.status === 401 && allowAuthRecovery) {
+    await tokenManager.recoverAuth();
+    return apiFetch(path, opts, false);
   }
 
   if (!resp.ok) {
@@ -98,14 +136,7 @@ async function apiFetch(
 }
 
 export async function fetchGraph(txid: string): Promise<GraphResponse> {
-  // Graph queries are public, no authentication required
-  const resp = await fetch(`/api/v1/graph/tx/${encodeURIComponent(txid)}`, {
-    credentials: "include",
-  });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ error: resp.statusText }));
-    throw new Error((err as { error?: string }).error || resp.statusText);
-  }
+  const resp = await apiFetch(`/api/v1/graph/tx/${encodeURIComponent(txid)}`);
   return resp.json() as Promise<GraphResponse>;
 }
 
@@ -132,12 +163,6 @@ export async function importLabels(body: string): Promise<void> {
 }
 
 export async function exportLabels(): Promise<string> {
-  const resp = await fetch("/api/v1/labels/export", {
-    credentials: "include",
-  });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ error: resp.statusText }));
-    throw new Error((err as { error?: string }).error || resp.statusText);
-  }
+  const resp = await apiFetch("/api/v1/labels/export");
   return resp.text();
 }

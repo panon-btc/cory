@@ -62,6 +62,24 @@ async fn regtest_server_endpoints_cover_api_surface() {
     // Initialize authentication - this sets the JWT cookie
     init_auth(&client, &base_url).await;
 
+    // Refresh endpoint should succeed with an authenticated cookie and
+    // re-issue the cookie transparently in the same client.
+    let refresh_url = format!("{base_url}/api/v1/auth/refresh");
+    let refresh_resp = client
+        .post(&refresh_url)
+        .send()
+        .await
+        .expect("refresh request with auth should succeed");
+    assert_eq!(refresh_resp.status(), StatusCode::OK);
+    let refresh_json: Value = refresh_resp
+        .json()
+        .await
+        .expect("refresh response must be valid JSON");
+    assert_eq!(
+        refresh_json.get("message"),
+        Some(&Value::String("JWT token refreshed".into()))
+    );
+
     // Health endpoint (no JWT required).
     let health_url = format!("{base_url}/api/v1/health");
     let health_resp = client
@@ -82,7 +100,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
         .build()
         .expect("no-cookie client must build");
 
-    // Graph endpoint requires auth - test without auth first
+    // Graph endpoint requires auth - test without auth first.
     let graph_url = format!("{base_url}/api/v1/graph/tx/{valid_txid}");
     let graph_no_auth = no_cookie_client
         .get(&graph_url)
@@ -90,6 +108,13 @@ async fn regtest_server_endpoints_cover_api_surface() {
         .await
         .expect("graph request without auth should return response");
     assert_eq!(graph_no_auth.status(), StatusCode::UNAUTHORIZED);
+
+    let refresh_no_auth = no_cookie_client
+        .post(&refresh_url)
+        .send()
+        .await
+        .expect("refresh request without auth should return response");
+    assert_eq!(refresh_no_auth.status(), StatusCode::UNAUTHORIZED);
 
     // Graph endpoint: valid txid payload shape (with auth).
     let graph_resp = client

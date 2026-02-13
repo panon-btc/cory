@@ -2,11 +2,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::StatusCode;
+use axum::middleware::{from_fn_with_state, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{middleware, Json, Router};
+use axum::{Json, Router};
 use rust_embed::Embed;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -55,50 +56,38 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
         .allow_credentials(true);
 
     let shared = Arc::new(state);
+    let jwt_manager = shared.jwt_manager.clone();
 
-    // All routes defined together
-    let routes = Router::new()
-        // Public routes (no authentication required)
+    // Keep auth policy declarative: public API and protected API live in
+    // separate routers, and only the protected subtree gets JWT middleware.
+    let public_api = Router::new()
         .route("/api/v1/health", get(health))
-        .route("/api/v1/auth/token", post(get_or_create_token))
-        // Protected routes (require JWT authentication - enforced by middleware)
+        .route("/api/v1/auth/token", post(get_or_create_token));
+
+    let protected_api = Router::new()
         .route("/api/v1/labels/export", get(export_labels))
         .route("/api/v1/graph/tx/{txid}", get(get_graph))
         .route("/api/v1/labels/import", post(import_labels))
         .route("/api/v1/labels/set", post(set_label))
         .route("/api/v1/auth/refresh", post(refresh_token))
-        .fallback(static_files);
+        .route_layer(from_fn_with_state(jwt_manager, require_jwt_cookie_auth));
 
-    //Adding middleware layer for route specific token verification for a user's session
-    let jwt_manager_for_middleware = shared.jwt_manager.clone();
-    routes
-        .layer(middleware::from_fn(
-            move |cookies: Cookies, request: axum::extract::Request, next: middleware::Next| {
-                let jwt_manager = jwt_manager_for_middleware.clone();
-                async move {
-                    let path = request.uri().path();
-                    // Check if this is a protected route that requires JWT validation
-                    if is_protected_route(path) {
-                        tracing::info!("Protected route accessed: {} - validating JWT", path);
-                        crate::auth::jwt_auth_middleware(jwt_manager, cookies, request, next).await
-                    } else {
-                        tracing::debug!("Public route accessed: {} - no JWT required", path);
-                        next.run(request).await
-                    }
-                }
-            },
-        ))
+    Router::new()
+        .merge(public_api)
+        .merge(protected_api)
+        .fallback(static_files)
         .layer(CookieManagerLayer::new())
         .layer(cors)
         .with_state(shared)
 }
 
-/// Returns true if the given path requires JWT authentication.
-fn is_protected_route(path: &str) -> bool {
-    // Only these routes are public (no authentication required)
-    let public_routes = ["/api/v1/health", "/api/v1/auth/token"];
-
-    path.starts_with("/api/") && !public_routes.contains(&path)
+async fn require_jwt_cookie_auth(
+    State(jwt_manager): State<Arc<crate::auth::JwtManager>>,
+    cookies: Cookies,
+    request: Request,
+    next: Next,
+) -> Response {
+    crate::auth::jwt_auth_middleware(jwt_manager, cookies, request, next).await
 }
 
 // ==============================================================================
