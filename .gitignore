@@ -1,0 +1,11 @@
+target/
+crates/target/
+crates/cory/target/
+crates/cory-core/target/
+tmp/
+__pycache__/
+*.py[cod]
+*.swp
+*.swo
+*~
+.DS_Store
