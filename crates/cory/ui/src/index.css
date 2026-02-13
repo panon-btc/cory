@@ -1,0 +1,77 @@
+@import '@xyflow/react/dist/style.css';
+
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --border: #0f3460;
+  --text: #e0e0e0;
+  --text-muted: #888;
+  --accent: #e94560;
+  --accent-dim: #533483;
+  --mono: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+input, button {
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 3px;
+}
+
+input:focus { outline: 1px solid var(--accent); }
+
+button {
+  cursor: pointer;
+  background: var(--accent-dim);
+  border-color: var(--accent-dim);
+}
+button:hover { background: var(--accent); }
+
+/* React Flow dark theme overrides */
+.react-flow__background {
+  background-color: var(--bg) !important;
+}
+
+.react-flow__minimap {
+  background-color: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 3px;
+}
+
+.react-flow__controls {
+  border: 1px solid var(--border) !important;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.react-flow__controls-button {
+  background: var(--surface) !important;
+  border-bottom: 1px solid var(--border) !important;
+  fill: var(--text) !important;
+}
+
+.react-flow__controls-button:hover {
+  background: var(--accent-dim) !important;
+}
+
+.react-flow__edge-path {
+  stroke: var(--border) !important;
+  stroke-width: 1.5;
+}
+
+.react-flow__attribution {
+  display: none !important;
+}

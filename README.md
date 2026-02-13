@@ -68,8 +68,7 @@ Rust workspace:
   - Axum server, JSON API, static UI serving
 
 UI:
-- Minimal static UI under `ui/` (bundled with the server)
-- Recent history stored in browser storage (localStorage)
+- React + React Flow SPA under `crates/cory/ui/` (built automatically by `build.rs` and embedded into the binary via `rust-embed`)
 
 ## Optional Enrichments
 
@@ -84,16 +83,47 @@ Optional heuristics (must be opt-in and clearly labeled as uncertain):
 
 ## Development
 
-Expected commands:
-- `cargo test`
+### Requirements
+
+- Rust toolchain (stable)
+- Node.js + npm (for the UI; optional — the server compiles without it)
+- Python 3 (for regtest/UI test scripts)
+- `bitcoind` + `bitcoin-cli` in PATH (for regtest and UI tests)
+
+### Make targets
+
+| Command | Description |
+|---------|-------------|
+| `make build` | Build everything — UI is compiled automatically via `build.rs` |
+| `make test` | Run unit tests across all crates |
+| `make regtest` | Run regtest e2e scripts (requires `bitcoind` in PATH) |
+| `make uitest` | Run manual UI fixture workflow (requires `bitcoind` in PATH) |
+| `make ui` | Start Vite dev server with HMR on `:5173` (for UI development) |
+| `make run` | Start the Cory server on `:3080` |
+| `make clean` | Remove all build artifacts (Rust `target/` + UI `node_modules/` and `dist/`) |
+
+### UI development workflow
+
+For fast UI iteration with hot-module reloading:
+
+1. **Terminal 1** — start the Rust server: `make run` (or `cargo run -- [flags]`)
+2. **Terminal 2** — start the Vite dev server: `make ui`
+3. Open `http://localhost:5173` — Vite proxies `/api` to the Rust server
+
+Edit any React file under `crates/cory/ui/src/` for instant hot reload.
+No Rust recompile needed for UI changes.
+
+### Linting
+
 - `cargo fmt --all`
 - `cargo clippy --all-targets --all-features -- -D warnings`
 
-Regtest integration test (local bitcoind + bitcoin-cli required):
-- `python3 scripts/regtest/rpc_e2e.py` (native runner)
-- `python3 scripts/regtest/graph.py` (graph runner; functional + stress scenarios)
-- `python3 scripts/regtest/server_e2e.py` (server API runner; full endpoint coverage)
-- `python3 scripts/ui/manual_fixtures.py` (manual UI fixture workflow; starts live server + prints exploration guide)
+### Regtest scripts
+
+- `python3 scripts/regtest/rpc_e2e.py` — native RPC runner
+- `python3 scripts/regtest/graph.py` — graph runner (functional + stress scenarios)
+- `python3 scripts/regtest/server_e2e.py` — server API runner (full endpoint coverage)
+- `python3 scripts/ui/manual_fixtures.py` — manual UI fixture workflow (starts live server + prints exploration guide)
 
 The script starts a temporary regtest node in `tmp/regtest-it-<timestamp>-<pid>/`, mines
 funding blocks, creates sample transactions, and runs

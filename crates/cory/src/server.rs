@@ -4,9 +4,10 @@ use std::sync::Arc;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use rust_embed::Embed;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -61,7 +62,7 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
         .route("/api/v1/labels/import", post(import_labels))
         .route("/api/v1/labels/export", get(export_labels))
         .route("/api/v1/labels/set", post(set_label))
-        .fallback(static_files)
+        .fallback(get(static_files))
         .layer(cors)
         .with_state(shared)
 }
@@ -244,10 +245,41 @@ async fn set_label(
 // Static File Serving
 // ==============================================================================
 
-/// Serves the embedded single-page UI. Any path that doesn't match an API
-/// route gets the main HTML page, allowing client-side routing.
-async fn static_files() -> Html<&'static str> {
-    Html(include_str!("../../../ui/index.html"))
+#[derive(Embed)]
+#[folder = "ui/dist/"]
+struct Assets;
+
+/// Serves the embedded SPA. Exact file matches are returned with the correct
+/// MIME type; everything else falls back to `index.html` for client-side routing.
+async fn static_files(uri: axum::http::Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    // Serve exact file if it exists
+    if !path.is_empty() {
+        if let Some(content) = Assets::get(path) {
+            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            return (
+                [(axum::http::header::CONTENT_TYPE, mime.as_ref())],
+                content.data,
+            )
+                .into_response();
+        }
+    }
+    // SPA fallback: serve index.html for all unmatched routes
+    match Assets::get("index.html") {
+        Some(content) => (
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "text/html; charset=utf-8",
+            )],
+            content.data,
+        )
+            .into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            "UI not built. Run: cd ui && npm run build",
+        )
+            .into_response(),
+    }
 }
 
 // ==============================================================================
