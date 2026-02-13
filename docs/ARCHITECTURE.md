@@ -167,7 +167,7 @@ Clap derive struct. Notable options:
    `get_blockchain_info()` fails, the process exits with an error.
 4. Create cache and label store.
 5. Load label pack directories.
-7. Build Axum router and start server.
+6. Build Axum router and start server.
 
 ### `server.rs` — HTTP API
 
@@ -180,6 +180,7 @@ Clap derive struct. Notable options:
 | GET | `/api/v1/label` | No | List local label files |
 | POST | `/api/v1/label` | Yes | Create file or import JSONL |
 | POST | `/api/v1/label/{file_id}` | Yes | Upsert label or replace file content |
+| DELETE | `/api/v1/label/{file_id}/entry?type=tx&ref=<txid>` | Yes | Delete one label entry from a local file |
 | DELETE | `/api/v1/label/{file_id}` | Yes | Remove local label file |
 | GET | `/api/v1/label/{file_id}/export` | No | Export one local file |
 | GET | `*` (fallback) | No | Serve embedded UI |
@@ -224,7 +225,8 @@ ui/src/
 - Txid search → interactive DAG visualization with ELK layered layout
 - Click a node to select it → label panel shows details
 - Create/import/remove local label files (POST/DELETE with API token)
-- Edit node labels in a specific local file (POST with API token)
+- Edit node labels inline with autosave (2s debounce) in a specific local file
+- Delete one node label from a local file (DELETE entry endpoint)
 - Export per-file BIP-329 JSONL
 - Drag nodes, zoom, pan, minimap, fit-to-view controls
 
@@ -274,7 +276,8 @@ Graph scenarios are split into two tiers:
 - Stress coverage: deep, wide, and merge-heavy graphs with large
   topologies (default target is 500 transactions per stress scenario).
 - Server coverage: all `server.rs` routes including auth failures,
-  BIP-329 import/export behavior, static fallback, and exact-origin CORS.
+  local label file CRUD, per-entry label delete, static fallback, and
+  exact-origin CORS.
 
 Because Bitcoin UTXO ancestry is acyclic by construction, the stress
 suite uses dense merge and frontier patterns rather than true cycle

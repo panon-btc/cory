@@ -5,22 +5,12 @@ import {
   deleteLabelFile,
   exportLabelFile,
   importLabelFile,
-  replaceLabelFile,
 } from "../api";
 import type { LabelFileSummary } from "../types";
 
 interface LabelPanelProps {
   labelFiles: LabelFileSummary[];
   onLabelsChanged: (opts?: { refreshGraph?: boolean }) => void | Promise<void>;
-}
-
-function normalizeLabelFileId(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .split("-")
-    .filter((segment) => segment.length > 0)
-    .join("-");
 }
 
 function fileNameWithoutJsonl(fileName: string): string {
@@ -45,7 +35,7 @@ export default function LabelPanel({
       await createLabelFile(trimmed);
       setNewFileName("");
       setPanelError(null);
-      onLabelsChanged({ refreshGraph: false });
+      await onLabelsChanged({ refreshGraph: false });
     } catch (err) {
       setPanelError("Create failed: " + (err as Error).message);
     }
@@ -65,24 +55,14 @@ export default function LabelPanel({
         const name = fileNameWithoutJsonl(file.name);
         await importLabelFile(name, content);
         setPanelError(null);
-        onLabelsChanged({ refreshGraph: true });
+        await onLabelsChanged({ refreshGraph: true });
       } catch (err) {
         const apiErr = err as ApiError;
-        const fileId = normalizeLabelFileId(fileNameWithoutJsonl(file.name));
         if (apiErr.status === 409) {
-          const confirmed = window.confirm(
-            `Label file '${fileNameWithoutJsonl(file.name)}' already exists. Replace its content?`,
-          );
-          if (confirmed) {
-            try {
-              const content = await file.text();
-              await replaceLabelFile(fileId, content);
-              setPanelError(null);
-              onLabelsChanged({ refreshGraph: true });
-            } catch (replaceErr) {
-              setPanelError("Replace failed: " + (replaceErr as Error).message);
-            }
-          }
+          const name = fileNameWithoutJsonl(file.name);
+          const message = `Label file '${name}' already exists. Choose a different file name and import again.`;
+          setPanelError(message);
+          window.alert(message);
         } else {
           setPanelError("Import failed: " + (err as Error).message);
         }
@@ -159,7 +139,7 @@ export default function LabelPanel({
       try {
         await deleteLabelFile(file.id);
         setPanelError(null);
-        onLabelsChanged({ refreshGraph: true });
+        await onLabelsChanged({ refreshGraph: true });
       } catch (err) {
         setPanelError("Delete failed: " + (err as Error).message);
       }

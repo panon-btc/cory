@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useEffect } from "react";
+import { useMemo, useCallback, useEffect, useRef } from "react";
 import {
   ReactFlow,
   Controls,
@@ -41,9 +41,11 @@ export default function GraphPanel({
   const nodeTypes = useMemo(() => ({ tx: TxNode }), []);
   const [nodes, setNodes, onNodesChange] = useNodesState([] as Node[]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
+  const syncingFromPropsRef = useRef(false);
 
-  // Sync external nodes/edges into local state for dragging support
-  useMemo(() => {
+  // Keep React Flow internal state aligned with upstream graph updates.
+  useEffect(() => {
+    syncingFromPropsRef.current = true;
     setNodes(inputNodes);
     setEdges(inputEdges);
   }, [inputNodes, inputEdges, setNodes, setEdges]);
@@ -51,8 +53,15 @@ export default function GraphPanel({
   const minimapNodeColor = useCallback(() => "var(--accent-dim)", []);
 
   useEffect(() => {
+    if (syncingFromPropsRef.current) {
+      syncingFromPropsRef.current = false;
+      return;
+    }
+    if (nodes === inputNodes) {
+      return;
+    }
     onNodesUpdate(nodes);
-  }, [nodes, onNodesUpdate]);
+  }, [nodes, inputNodes, onNodesUpdate]);
 
   if (loading) {
     return (

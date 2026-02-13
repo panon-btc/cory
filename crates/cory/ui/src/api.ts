@@ -141,20 +141,6 @@ export async function importLabelFile(
   return resp.json() as Promise<LabelFileSummary>;
 }
 
-export async function replaceLabelFile(
-  fileId: string,
-  content: string,
-): Promise<LabelFileSummary> {
-  const resp = await apiFetch(`/api/v1/label/${encodeURIComponent(fileId)}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ content }),
-  });
-  return resp.json() as Promise<LabelFileSummary>;
-}
-
 export async function setLabelInFile(
   fileId: string,
   ref: string,

@@ -31,11 +31,6 @@
   non-default mempool policy toggles may cause the replacement step to
   fail even though the script correctly signals opt-in RBF.
 
-- **GraphPanel syncs props via `useMemo` side effect**: `GraphPanel.tsx`
-  calls `setNodes`/`setEdges` inside a `useMemo` to sync external props
-  into React Flow's internal state. This works but is an anti-pattern —
-  should use `useEffect` or a key-based remount instead.
-
 - **Vite bundle size warning**: The production JS bundle is ~1.8 MB
   (562 KB gzipped), mostly ELK.js. Could be reduced with dynamic
   `import()` to code-split ELK from the React bundle.
