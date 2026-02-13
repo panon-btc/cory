@@ -289,13 +289,13 @@ async fn get_graph(
                     .or_insert_with(Vec::new)
                     .push(output_ref);
 
-                if !labels_by_type.addr.contains_key(&address_ref) {
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    labels_by_type.addr.entry(address_ref.clone())
+                {
                     let addr_labels =
                         label_store.get_all_labels_for(Bip329Type::Addr, &address_ref);
                     if !addr_labels.is_empty() {
-                        labels_by_type
-                            .addr
-                            .insert(address_ref, to_label_entries(addr_labels));
+                        entry.insert(to_label_entries(addr_labels));
                     }
                 }
             }
