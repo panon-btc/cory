@@ -140,3 +140,44 @@ jobs:
           python3 "${regtest_dir}/rpc_e2e.py"
           python3 "${regtest_dir}/graph.py"
           python3 "${regtest_dir}/server_e2e.py"
+
+  playwright:
+    name: Playwright E2E
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install Bitcoin Core binaries (bitcoind + bitcoin-cli)
+        env:
+          BITCOIN_VERSION: "30.2"
+        run: |
+          set -euo pipefail
+          arch="x86_64-linux-gnu"
+          tarball="bitcoin-${BITCOIN_VERSION}-${arch}.tar.gz"
+          base_url="https://bitcoincore.org/bin/bitcoin-core-${BITCOIN_VERSION}"
+          curl -fsSLO "${base_url}/${tarball}"
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf "${tarball}"
+          install -m 0755 "bitcoin-${BITCOIN_VERSION}/bin/bitcoind" "$HOME/.local/bin/bitcoind"
+          install -m 0755 "bitcoin-${BITCOIN_VERSION}/bin/bitcoin-cli" "$HOME/.local/bin/bitcoin-cli"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install Playwright and Chromium
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Run Playwright E2E tests
+        run: python3 scripts/ui/playwright/label.py

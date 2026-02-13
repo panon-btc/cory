@@ -62,6 +62,25 @@ bundled by Vite and embedded into the Rust binary at compile time.
 - Pin major versions in `package.json` (`^19`, `^12`, etc.) to avoid
   surprise breaking changes.
 
+## Playwright E2E tests
+
+Browser-level tests live in `scripts/ui/playwright/`. They launch a
+real regtest environment (bitcoind + cory) and exercise UI workflows
+through headless Chromium using Python Playwright (sync API).
+
+- `scripts/ui/playwright/label.py` — label file lifecycle (create,
+  import, export, remove) and per-node label editing with autosave.
+- Run locally: `make playwright` (or `python3 scripts/ui/playwright/label.py`).
+- `--headed` shows the browser window; `--slowmo <ms>` adds delay for
+  debugging.
+- CI installs Playwright + Chromium via
+  `pip install playwright && python -m playwright install --with-deps chromium`.
+- Tests run sequentially because each builds on the server state left
+  by the previous one.
+
+When modifying label UI components, run `make playwright` to catch
+regressions in dialog handling, autosave timing, and viewport stability.
+
 ## Graph layout
 
 - ELK.js handles the DAG layout (`src/layout.ts`). Layout options are

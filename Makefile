@@ -1,4 +1,4 @@
-.PHONY: build test fmt regtest uitest ui run clean
+.PHONY: build test fmt regtest uireg playwright ui run clean
 
 # Build everything (UI is built automatically via build.rs).
 build:
@@ -20,8 +20,12 @@ regtest:
 	python3 scripts/regtest/server_e2e.py
 
 # Run manual UI fixture workflow (requires bitcoind + bitcoin-cli in PATH).
-uitest:
+uireg:
 	python3 scripts/ui/manual_fixtures.py
+
+# Run Playwright E2E tests (requires playwright + chromium).
+playwright:
+	python3 scripts/ui/playwright/label.py
 
 # Start the Vite dev server with HMR (run the Rust server separately).
 ui:
