@@ -108,7 +108,7 @@ Pure functions, no I/O:
 - `is_rbf_signaling(TxNode) → bool` (any sequence < 0xFFFFFFFE)
 - `locktime_info(locktime, has_non_final_seq) → LocktimeInfo`
 
-### `labels.rs` — BIP-329 labels and namespaces
+### `labels.rs` — BIP-329 labels and label files
 
 Single file containing types and the label store.
 
@@ -116,22 +116,33 @@ Single file containing types and the label store.
 
 - `Bip329Type` — `Tx`, `Addr`, `Pubkey`, `Input`, `Output`, `Xpub`
 - `Bip329Record` — type + ref + label + optional origin/spendable
-- `Namespace` — `Local(String)` (editable) or `Pack(String)` (read-only)
+- `LabelFileKind` — `Local` (editable) or `Pack` (read-only)
+- `LabelFileMeta` / `LabelFileSummary` — file identity and metadata
 
-**`LabelStore`** — An ordered `Vec<(Namespace, HashMap<LabelKey,
-Bip329Record>)>`. The local namespace is always first (highest
-precedence), followed by packs in load order.
+**`LabelStore`** holds two ordered in-memory collections:
+
+- local label files (created/imported from the Web UI, editable)
+- pack label files (loaded from CLI dirs at startup, read-only)
+
+Labels are resolved in deterministic order: local files first, then
+pack files. This allows user-local overrides while keeping pack labels
+visible.
 
 Key operations:
 
-- `import_bip329(content, namespace)` — parse JSONL into a namespace
-- `export_local_bip329()` — serialize the local namespace to JSONL
-- `get_labels(type, ref_id)` — all matching labels across namespaces
-- `set_label(type, ref_id, label)` — upsert in the local namespace
-- `load_pack_dir(path)` — recursively load `.jsonl` files as packs
+- `list_local_files()` — enumerate editable local files
+- `list_files()` — enumerate local + pack files in resolution order
+- `create_local_file(name)` — create empty local file
+- `import_local_file(name, content)` — create and import JSONL
+- `replace_local_file_content(file_id, content)` — replace full file
+- `set_local_label(file_id, type, ref, label)` — upsert in target file
+- `export_local_file(file_id)` — export one local file as JSONL
+- `remove_local_file(file_id)` — drop local file from memory
+- `load_pack_dir(path)` — recursively load read-only `.jsonl` pack files
+- `get_all_labels_for(type, ref)` — all matching labels with source metadata
 
-The caller (`cory` server) wraps the store in `Arc<RwLock<LabelStore>>`
-for concurrent access.
+The caller (`cory` server) wraps the store in `Arc<RwLock<LabelStore>>` for
+concurrent access.
 
 ### `error.rs` — Error types
 
@@ -145,8 +156,6 @@ for concurrent access.
 Clap derive struct. Notable options:
 
 - `--rpc-url`, `--rpc-user`, `--rpc-pass` (user/pass also via env vars)
-- `--local-labels` — optional path to a JSONL file for label
-  persistence. If omitted, labels live in memory only.
 - `--label-pack-dir` — repeatable, loads read-only label packs
 - `--max-depth`, `--max-nodes`, `--max-edges` — graph limits
 - `--rpc-concurrency` — semaphore permits for parallel RPC calls
@@ -158,9 +167,8 @@ Clap derive struct. Notable options:
 3. Connect to Bitcoin Core RPC. **This is fatal** — if
    `get_blockchain_info()` fails, the process exits with an error.
 4. Create cache and label store.
-5. Load local labels file (if path provided and file exists).
-6. Load label pack directories.
-7. Build Axum router and start server.
+5. Load label pack directories.
+6. Build Axum router and start server.
 
 ### `server.rs` — HTTP API
 
@@ -170,19 +178,25 @@ Clap derive struct. Notable options:
 |--------|------|------|-------------|
 | GET | `/api/v1/health` | No | `{"status": "ok"}` |
 | GET | `/api/v1/graph/tx/{txid}` | No | Build ancestry graph |
-| POST | `/api/v1/labels/import` | Yes | Import JSONL body |
-| GET | `/api/v1/labels/export` | No | Export local labels |
-| POST | `/api/v1/labels/set` | Yes | Set a single label |
+| GET | `/api/v1/label` | No | List local + pack label files |
+| POST | `/api/v1/label` | Yes | Create file or import JSONL |
+| POST | `/api/v1/label/{file_id}` | Yes | Upsert label or replace file content |
+| DELETE | `/api/v1/label/{file_id}/entry?type=tx&ref=<txid>` | Yes | Delete one label entry from a local file |
+| DELETE | `/api/v1/label/{file_id}` | Yes | Remove local label file |
+| GET | `/api/v1/label/{file_id}/export` | No | Export one local file |
 | GET | `*` (fallback) | No | Serve embedded UI |
 
 Auth is via `X-API-Token` header, checked only on mutating endpoints.
 CORS is locked to the exact server origin.
 
 The graph response includes the raw `AncestryGraph` (flattened), plus
-per-node `enrichments` (fee, feerate, RBF, locktime) and `labels`.
+per-node `enrichments` (fee, feerate, RBF, locktime), typed labels in
+`labels_by_type`, and address resolution maps:
+`input_address_refs`, `output_address_refs`, and `address_occurrences`.
 
-Label mutations persist to disk (if `--local-labels` was provided) by
-writing the full local namespace after every change.
+Local label files are in-memory only for the server process lifetime.
+The browser owns disk I/O: import reads local files and sends content to
+the server; export downloads server-provided JSONL.
 
 ## UI
 
@@ -199,23 +213,28 @@ ui/src/
   main.tsx                 React root mount
   App.tsx                  Top-level layout + state orchestration
   types.ts                 API response types (mirrors Rust server)
-  api.ts                   fetch helpers (graph, labels)
+  api.ts                   fetch helpers (graph, label files)
   layout.ts                ELK layout: graph data → React Flow nodes/edges
   index.css                Global styles (dark theme, React Flow overrides)
   components/
     Header.tsx             Brand + search bar + API token input
     GraphPanel.tsx         React Flow wrapper (nodes, edges, controls, minimap)
-    TxNode.tsx             Custom node (txid, fee/feerate meta, labels)
-    LabelPanel.tsx         Right sidebar: label list + edit + import/export
+    TxNode.tsx             Custom node (txid/meta + input/output rows + label subtitles)
+    LabelPanel.tsx         Right sidebar: pack labels, local files, selected tx editor
+    SelectedTxEditor.tsx   Tx/input/output/address label editing for current node
+    TargetLabelEditor.tsx  Reusable target-scoped label editor card
 ```
 
 **Features:**
 
 - Txid search → interactive DAG visualization with ELK layered layout
-- Click a node to select it → label panel shows details
-- Create/edit labels (POST with API token)
-- Import/export BIP-329 JSONL files
-- Drag nodes, zoom, pan, minimap, fit-to-view controls
+- Click a node to select it → sidebar shows selected-transaction editor
+- Create/import/remove local label files (POST/DELETE with API token)
+- Edit `tx`, `input`, `output`, and derived `addr` labels from the selected transaction editor
+- Address labels are shared by address string (reused addresses map to one label target)
+- Delete one label entry from a local file (DELETE entry endpoint)
+- Export per-file BIP-329 JSONL
+- Drag nodes, zoom, pan, minimap, fit-to-view controls, and resize the right sidebar
 
 **Build integration:**
 
@@ -263,7 +282,8 @@ Graph scenarios are split into two tiers:
 - Stress coverage: deep, wide, and merge-heavy graphs with large
   topologies (default target is 500 transactions per stress scenario).
 - Server coverage: all `server.rs` routes including auth failures,
-  BIP-329 import/export behavior, static fallback, and exact-origin CORS.
+  local label file CRUD, per-entry label delete, static fallback, and
+  exact-origin CORS.
 
 Because Bitcoin UTXO ancestry is acyclic by construction, the stress
 suite uses dense merge and frontier patterns rather than true cycle
@@ -271,11 +291,12 @@ fixtures.
 
 ## Known quirks and things that may need fixing
 
-### `TxNode.block_height` is always None
+### Block height resolution costs extra RPCs
 
-Bitcoin Core's `getrawtransaction` (verbosity=1) does not include block
-height. We'd need a separate `getblockheader` call on the block hash to
-populate it. This means `TxNode::confirmations()` always returns `None`.
+When `getrawtransaction` does not include `blockheight`, the HTTP RPC
+adapter resolves it from `blockhash` via `getblockheader` and caches the
+mapping in-memory. Heights are now populated, but this introduces extra
+RPC traffic for previously unseen block hashes.
 
 ### Graph BFS is still sequential per node
 
@@ -289,20 +310,23 @@ do not process multiple BFS frontier nodes concurrently. Spawning tasks
 If a funding transaction is beyond the graph limits (not fetched), and
 the output is already spent (so `gettxout` returns nothing), the input's
 value and script type remain `None`. This is unavoidable without
-fetching the funding tx, but it means fee calculation returns `None` for
-the spending transaction.
+fetching the funding tx. A post-BFS backfill step now recovers many of
+these cases when the funding tx is already present in the in-memory graph,
+but true out-of-graph spent prevouts can still leave fee calculation as
+`None`.
 
-### Label persistence writes the entire file on every change
+### Label edits do not re-run ELK layout
 
-Each `set_label` or `import` call exports the full local namespace and
-overwrites the file. This is fine for small label sets but could be slow
-with thousands of labels. An append-only approach would be more
-efficient.
+Single-label edits update graph label state in place and refresh existing
+node render data without recomputing layout. This preserves zoom/pan and
+manual node positions, but node heights can change without a fresh
+ELK pass until a full graph reload.
 
-### JSONL export has no trailing newline
+### Local labels are ephemeral
 
-`export_local_bip329()` joins lines with `\n` but doesn't append a
-final newline. Some JSONL consumers expect one.
+Server-local label files are in-memory only and are dropped when the
+process exits. Durable persistence is intentionally delegated to manual
+UI export/import workflows.
 
 ### No `txindex` detection
 

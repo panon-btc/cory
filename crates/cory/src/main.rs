@@ -4,10 +4,11 @@ mod server;
 
 use std::sync::Arc;
 
+use bitcoin::Network;
 use clap::Parser;
-use eyre::{eyre, Context};
+use eyre::{eyre, WrapErr};
 
-use cory_core::labels::{LabelStore, Namespace};
+use cory_core::labels::LabelStore;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -51,18 +52,7 @@ async fn main() -> eyre::Result<()> {
 
     // Initialize caches and label store.
     let cache = Arc::new(cory_core::cache::Cache::new());
-    let mut label_store = LabelStore::new("default");
-
-    // Load local labels file if one was provided and exists on disk.
-    if let Some(ref path) = args.local_labels {
-        if path.exists() {
-            let content = std::fs::read_to_string(path).context("read local labels file")?;
-            label_store
-                .import_bip329(&content, Namespace::Local("default".into()))
-                .context("import local labels")?;
-            tracing::info!(path = %path.display(), "loaded local labels");
-        }
-    }
+    let mut label_store = LabelStore::new();
 
     // Load label pack directories.
     for dir in &args.label_pack_dir {
@@ -85,7 +75,7 @@ async fn main() -> eyre::Result<()> {
         jwt_manager: jwt_manager.clone(),
         default_limits: graph_limits,
         rpc_concurrency: args.rpc_concurrency,
-        local_labels_path: args.local_labels.clone(),
+        network: map_chain_to_network(&chain_info.chain),
     };
 
     let bind_addr = format!("{}:{}", args.bind, args.port);
@@ -145,4 +135,14 @@ fn format_rpc_connect_error(rpc_url: &str, source_error: &str) -> String {
     }
 
     lines.join("\n")
+}
+
+fn map_chain_to_network(chain: &str) -> Network {
+    match chain {
+        "main" => Network::Bitcoin,
+        "test" => Network::Testnet,
+        "signet" => Network::Signet,
+        "regtest" => Network::Regtest,
+        _ => Network::Bitcoin,
+    }
 }

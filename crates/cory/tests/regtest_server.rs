@@ -19,8 +19,6 @@ async fn wait_for_server(client: &Client, base_url: &str) {
     panic!("server did not become healthy in time");
 }
 
-/// Initialize authentication by calling /api/v1/auth/token.
-/// This sets the JWT cookie in the client's cookie jar.
 async fn init_auth(client: &Client, base_url: &str) {
     let token_url = format!("{base_url}/api/v1/auth/token");
     let resp = client
@@ -50,37 +48,20 @@ async fn regtest_server_endpoints_cover_api_surface() {
     let valid_txid =
         env::var("CORY_TEST_SERVER_VALID_TXID").expect("CORY_TEST_SERVER_VALID_TXID must be set");
 
-    // Create client with cookie jar for automatic cookie handling
     let client = Client::builder()
-        .cookie_store(true) // Enable automatic cookie management
+        .cookie_store(true)
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .expect("reqwest client must build");
+    let no_cookie_client = Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("no-cookie client must build");
 
     wait_for_server(&client, &base_url).await;
-
-    // Initialize authentication - this sets the JWT cookie
     init_auth(&client, &base_url).await;
 
-    // Refresh endpoint should succeed with an authenticated cookie and
-    // re-issue the cookie transparently in the same client.
-    let refresh_url = format!("{base_url}/api/v1/auth/refresh");
-    let refresh_resp = client
-        .post(&refresh_url)
-        .send()
-        .await
-        .expect("refresh request with auth should succeed");
-    assert_eq!(refresh_resp.status(), StatusCode::OK);
-    let refresh_json: Value = refresh_resp
-        .json()
-        .await
-        .expect("refresh response must be valid JSON");
-    assert_eq!(
-        refresh_json.get("message"),
-        Some(&Value::String("JWT token refreshed".into()))
-    );
-
-    // Health endpoint (no JWT required).
+    // Health endpoint.
     let health_url = format!("{base_url}/api/v1/health");
     let health_resp = client
         .get(&health_url)
@@ -94,13 +75,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
         .expect("health response must be valid JSON");
     assert_eq!(health_json.get("status"), Some(&Value::String("ok".into())));
 
-    // Create a client WITHOUT cookies for testing unauthorized access
-    let no_cookie_client = Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .expect("no-cookie client must build");
-
-    // Graph endpoint requires auth - test without auth first.
+    // Graph endpoint: valid txid payload shape.
     let graph_url = format!("{base_url}/api/v1/graph/tx/{valid_txid}");
     let graph_no_auth = no_cookie_client
         .get(&graph_url)
@@ -109,14 +84,6 @@ async fn regtest_server_endpoints_cover_api_surface() {
         .expect("graph request without auth should return response");
     assert_eq!(graph_no_auth.status(), StatusCode::UNAUTHORIZED);
 
-    let refresh_no_auth = no_cookie_client
-        .post(&refresh_url)
-        .send()
-        .await
-        .expect("refresh request without auth should return response");
-    assert_eq!(refresh_no_auth.status(), StatusCode::UNAUTHORIZED);
-
-    // Graph endpoint: valid txid payload shape (with auth).
     let graph_resp = client
         .get(&graph_url)
         .send()
@@ -134,7 +101,10 @@ async fn regtest_server_endpoints_cover_api_surface() {
         "truncated",
         "stats",
         "enrichments",
-        "labels",
+        "labels_by_type",
+        "input_address_refs",
+        "output_address_refs",
+        "address_occurrences",
     ] {
         assert!(
             graph_json.get(key).is_some(),
@@ -142,7 +112,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
         );
     }
 
-    // Graph endpoint: invalid txid returns client error (with auth).
+    // Graph endpoint: invalid txid returns client error.
     let invalid_graph_url = format!("{base_url}/api/v1/graph/tx/not-a-txid");
     let invalid_graph_resp = client
         .get(&invalid_graph_url)
@@ -163,82 +133,68 @@ async fn regtest_server_endpoints_cover_api_surface() {
         "invalid txid error should mention invalid txid, got: {invalid_graph_error}"
     );
 
-    // Labels auth checks for set endpoint.
-    let set_url = format!("{base_url}/api/v1/labels/set");
-    let set_payload = serde_json::json!({
-        "type": "tx",
-        "ref": &valid_txid,
-        "label": "runner-set-label"
-    });
+    let label_url = format!("{base_url}/api/v1/label");
 
-    // Test missing auth using the client WITHOUT cookies
-    let set_missing_auth = no_cookie_client
-        .post(&set_url)
-        .json(&set_payload)
+    // Local file create auth checks.
+    let create_payload = serde_json::json!({ "name": "runner-file" });
+    let create_missing_auth = no_cookie_client
+        .post(&label_url)
+        .json(&create_payload)
         .send()
         .await
-        .expect("set label without auth should return response");
-    assert_eq!(set_missing_auth.status(), StatusCode::UNAUTHORIZED);
+        .expect("create label file without auth should return response");
+    assert_eq!(create_missing_auth.status(), StatusCode::UNAUTHORIZED);
 
-    // With valid cookie (already set via init_auth), the request succeeds
-    let set_ok = client
-        .post(&set_url)
-        .json(&set_payload)
+    let create_ok = client
+        .post(&label_url)
+        .json(&create_payload)
         .send()
         .await
-        .expect("set label with valid auth should succeed");
-    assert_eq!(set_ok.status(), StatusCode::OK);
-    let set_ok_json: Value = set_ok
+        .expect("create label file with valid auth should succeed");
+    assert_eq!(create_ok.status(), StatusCode::OK);
+    let create_ok_json: Value = create_ok
         .json()
         .await
-        .expect("set label success response must be JSON");
-    assert_eq!(set_ok_json.get("status"), Some(&Value::String("ok".into())));
-
-    // Set label malformed payloads return client errors.
-    let set_bad_json = client
-        .post(&set_url)
-        .header("Content-Type", "application/json")
-        .body("{\"type\":\"tx\",\"ref\":\"abc\",\"label\":}")
-        .send()
-        .await
-        .expect("set label malformed JSON should return a response");
-    assert_eq!(set_bad_json.status(), StatusCode::BAD_REQUEST);
-
-    let set_invalid_type = client
-        .post(&set_url)
-        .json(&serde_json::json!({
-            "type": "not-a-valid-type",
-            "ref": valid_txid,
-            "label": "x"
-        }))
-        .send()
-        .await
-        .expect("set label invalid type should return a response");
-    assert_eq!(set_invalid_type.status(), StatusCode::BAD_REQUEST);
-
-    // Label import/export flow.
-    let import_url = format!("{base_url}/api/v1/labels/import");
-    let import_valid_body = format!(
-        "{}\n{}",
-        serde_json::json!({"type":"tx","ref":&valid_txid,"label":"runner-import-label"}),
-        serde_json::json!({"type":"addr","ref":"bcrt1qexampleimport0000000000000000000000000","label":"runner-addr-label"})
+        .expect("create label file response must be JSON");
+    let file_id = create_ok_json
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        !file_id.is_empty(),
+        "create response should include file id"
     );
 
-    // Test missing auth using the client WITHOUT cookies
+    let duplicate_create = client
+        .post(&label_url)
+        .json(&create_payload)
+        .send()
+        .await
+        .expect("duplicate create should return response");
+    assert_eq!(duplicate_create.status(), StatusCode::CONFLICT);
+
+    // Import as new file.
+    let import_payload = serde_json::json!({
+        "name": "runner-import-file",
+        "content": format!(
+            "{}\n{}",
+            serde_json::json!({"type":"tx","ref":&valid_txid,"label":"runner-import-label"}),
+            serde_json::json!({"type":"addr","ref":"bcrt1qexampleimport0000000000000000000000000","label":"runner-addr-label"})
+        )
+    });
+
     let import_missing_auth = no_cookie_client
-        .post(&import_url)
-        .header("Content-Type", "text/plain; charset=utf-8")
-        .body(import_valid_body.clone())
+        .post(&label_url)
+        .json(&import_payload)
         .send()
         .await
         .expect("import without auth should return response");
     assert_eq!(import_missing_auth.status(), StatusCode::UNAUTHORIZED);
 
-    // With valid cookie (from init_auth), import succeeds
     let import_ok = client
-        .post(&import_url)
-        .header("Content-Type", "text/plain; charset=utf-8")
-        .body(import_valid_body)
+        .post(&label_url)
+        .json(&import_payload)
         .send()
         .await
         .expect("import with valid auth should succeed");
@@ -246,49 +202,116 @@ async fn regtest_server_endpoints_cover_api_surface() {
     let import_ok_json: Value = import_ok
         .json()
         .await
-        .expect("import success response must be JSON");
-    assert_eq!(
-        import_ok_json.get("status"),
-        Some(&Value::String("imported".into()))
+        .expect("import response must be JSON");
+    let import_file_id = import_ok_json
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        !import_file_id.is_empty(),
+        "import response should include file id"
     );
 
-    let malformed_import = client
-        .post(&import_url)
-        .header("Content-Type", "text/plain; charset=utf-8")
-        .body("{\"type\":\"tx\",\"ref\":\"x\",\"label\":}\n")
+    // Upsert label in created file.
+    let upsert_url = format!("{base_url}/api/v1/label/{file_id}");
+    let upsert_payload = serde_json::json!({
+        "type": "tx",
+        "ref": &valid_txid,
+        "label": "runner-set-label"
+    });
+
+    let upsert_missing_auth = no_cookie_client
+        .post(&upsert_url)
+        .json(&upsert_payload)
         .send()
         .await
-        .expect("malformed import should return response");
-    assert_eq!(malformed_import.status(), StatusCode::BAD_REQUEST);
-    let malformed_json: Value = malformed_import
+        .expect("upsert without auth should return response");
+    assert_eq!(upsert_missing_auth.status(), StatusCode::UNAUTHORIZED);
+
+    let upsert_ok = client
+        .post(&upsert_url)
+        .json(&upsert_payload)
+        .send()
+        .await
+        .expect("upsert with valid auth should succeed");
+    assert_eq!(upsert_ok.status(), StatusCode::OK);
+
+    let upsert_bad_json = client
+        .post(&upsert_url)
+        .header("Content-Type", "application/json")
+        .body("{\"type\":\"tx\",\"ref\":\"abc\",\"label\":}")
+        .send()
+        .await
+        .expect("upsert malformed JSON should return a response");
+    assert_eq!(upsert_bad_json.status(), StatusCode::BAD_REQUEST);
+
+    let upsert_invalid_type = client
+        .post(&upsert_url)
+        .json(&serde_json::json!({
+            "type": "not-a-valid-type",
+            "ref": valid_txid,
+            "label": "x"
+        }))
+        .send()
+        .await
+        .expect("upsert invalid type should return a response");
+    assert_eq!(upsert_invalid_type.status(), StatusCode::BAD_REQUEST);
+
+    // Replace content for created file.
+    let replace_ok = client
+        .post(&upsert_url)
+        .json(&serde_json::json!({
+            "content": serde_json::json!({"type":"tx","ref":&valid_txid,"label":"runner-replaced"}).to_string()
+        }))
+        .send()
+        .await
+        .expect("replace content should return response");
+    assert_eq!(replace_ok.status(), StatusCode::OK);
+
+    let replace_malformed = client
+        .post(&upsert_url)
+        .json(&serde_json::json!({
+            "content": "{\"type\":\"tx\",\"ref\":\"x\",\"label\":}\n"
+        }))
+        .send()
+        .await
+        .expect("malformed replace should return response");
+    assert_eq!(replace_malformed.status(), StatusCode::BAD_REQUEST);
+
+    // List files should include both created files.
+    let list_resp = client
+        .get(&label_url)
+        .send()
+        .await
+        .expect("list label files should return response");
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let listed_files: Value = list_resp
         .json()
         .await
-        .expect("malformed import error response must be JSON");
-    let malformed_error = malformed_json
-        .get("error")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+        .expect("list label files response must be JSON");
+    let listed_ids: HashSet<String> = listed_files
+        .as_array()
+        .unwrap_or(&Vec::new())
+        .iter()
+        .filter_map(|v| v.get("id").and_then(Value::as_str).map(str::to_string))
+        .collect();
     assert!(
-        malformed_error.contains("label parse error"),
-        "malformed import error should mention label parse error, got: {malformed_error}"
+        listed_ids.contains(&file_id),
+        "list should include created file"
+    );
+    assert!(
+        listed_ids.contains(&import_file_id),
+        "list should include imported file"
     );
 
-    let export_url = format!("{base_url}/api/v1/labels/export");
-
-    // Test export without auth
-    let export_no_auth = no_cookie_client
-        .get(&export_url)
-        .send()
-        .await
-        .expect("export without auth should return response");
-    assert_eq!(export_no_auth.status(), StatusCode::UNAUTHORIZED);
-
-    // Test export with valid auth
+    // Export imported file.
+    let export_url = format!("{base_url}/api/v1/label/{import_file_id}/export");
     let export_resp = client
         .get(&export_url)
         .send()
         .await
-        .expect("export labels request must succeed");
+        .expect("export label file request must succeed");
     assert_eq!(export_resp.status(), StatusCode::OK);
     let export_headers = export_resp.headers().clone();
     let export_content_type = export_headers
@@ -331,7 +354,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
             valid_txid.clone(),
             "runner-import-label".to_string()
         )),
-        "export must include imported tx label"
+        "export should include imported tx label"
     );
     assert!(
         seen.contains(&(
@@ -339,8 +362,23 @@ async fn regtest_server_endpoints_cover_api_surface() {
             "bcrt1qexampleimport0000000000000000000000000".to_string(),
             "runner-addr-label".to_string()
         )),
-        "export must include imported addr label"
+        "export should include imported addr label"
     );
+
+    // Delete imported file.
+    let delete_missing_auth = no_cookie_client
+        .delete(format!("{base_url}/api/v1/label/{import_file_id}"))
+        .send()
+        .await
+        .expect("delete without auth should return response");
+    assert_eq!(delete_missing_auth.status(), StatusCode::UNAUTHORIZED);
+
+    let delete_ok = client
+        .delete(format!("{base_url}/api/v1/label/{import_file_id}"))
+        .send()
+        .await
+        .expect("delete with auth should return response");
+    assert_eq!(delete_ok.status(), StatusCode::OK);
 
     // Fallback static UI endpoint.
     let root_resp = client
@@ -419,7 +457,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
 
     // CORS preflight checks.
     let preflight_allowed = client
-        .request(Method::OPTIONS, &set_url)
+        .request(Method::OPTIONS, &label_url)
         .header(
             ORIGIN,
             HeaderValue::from_str(&allowed_origin).expect("allowed origin must parse"),
@@ -455,10 +493,9 @@ async fn regtest_server_endpoints_cover_api_surface() {
         preflight_allow_headers.contains("content-type"),
         "preflight allow-headers should include content-type"
     );
-    // Note: Cookies are handled automatically by browser, not via CORS headers
 
     let preflight_disallowed = client
-        .request(Method::OPTIONS, &set_url)
+        .request(Method::OPTIONS, &label_url)
         .header(ORIGIN, HeaderValue::from_static(disallowed_origin))
         .header("Access-Control-Request-Method", "POST")
         .header("Access-Control-Request-Headers", "content-type")

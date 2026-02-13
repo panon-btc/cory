@@ -5,7 +5,19 @@ export interface GraphResponse {
   truncated: boolean;
   stats: { node_count: number; edge_count: number; max_depth_reached: number };
   enrichments: Record<string, TxEnrichment>;
-  labels: Record<string, LabelEntry[]>;
+  labels_by_type: LabelsByType;
+  input_address_refs: Record<string, string>;
+  output_address_refs: Record<string, string>;
+  address_occurrences: Record<string, string[]>;
+}
+
+export type Bip329Type = "tx" | "addr" | "pubkey" | "input" | "output" | "xpub";
+
+export interface LabelsByType {
+  tx: Record<string, LabelEntry[]>;
+  input: Record<string, LabelEntry[]>;
+  output: Record<string, LabelEntry[]>;
+  addr: Record<string, LabelEntry[]>;
 }
 
 export interface TxNode {
@@ -50,6 +62,17 @@ export interface TxEnrichment {
 }
 
 export interface LabelEntry {
-  namespace: string;
+  file_id: string;
+  file_name: string;
+  file_kind: "local" | "pack";
+  editable: boolean;
   label: string;
+}
+
+export interface LabelFileSummary {
+  id: string;
+  name: string;
+  kind: "local" | "pack";
+  editable: boolean;
+  record_count: number;
 }

@@ -10,16 +10,13 @@
   check for `txindex=1`, so some RPC failures can still appear late and
   be less actionable than they should be.
 
-- **No block height enrichment on transactions**: `TxNode.block_height`
-  remains `None` because we do not call `getblockheader` to map
-  `blockhash -> height`.
+- **Architecture docs are stale vs implementation**: `docs/ARCHITECTURE.md`
+  still describes tx-only graph labels, old UI inline label editing, and
+  old graph response fields (`labels`) that were replaced by typed maps
+  and address-ref maps.
 
 - **No disk cache yet**: Caching is in-memory only; optional persistent
   cache by chain/network remains unimplemented.
-
-- **Label import API namespace behavior is limited**:
-  `/api/v1/labels/import` imports into local namespace only; there is no
-  API path for caller-selected namespace imports.
 
 - **Cycle scenarios are not representable for ancestry graphs**:
   Bitcoin's UTXO model is acyclic, so integration stress coverage should
@@ -35,11 +32,6 @@
   non-default mempool policy toggles may cause the replacement step to
   fail even though the script correctly signals opt-in RBF.
 
-- **GraphPanel syncs props via `useMemo` side effect**: `GraphPanel.tsx`
-  calls `setNodes`/`setEdges` inside a `useMemo` to sync external props
-  into React Flow's internal state. This works but is an anti-pattern —
-  should use `useEffect` or a key-based remount instead.
-
 - **Vite bundle size warning**: The production JS bundle is ~1.8 MB
   (562 KB gzipped), mostly ELK.js. Could be reduced with dynamic
   `import()` to code-split ELK from the React bundle.
@@ -52,3 +44,32 @@
   re-trigger the build script even when no UI files changed, because
   `npm install` can touch `package-lock.json` timestamps. A hash-based
   check could avoid this.
+
+- **ELK node height is fixed while label editors are variable-height**:
+  `layout.ts` uses static `NODE_HEIGHT`, so transactions with many label
+  rows in-node may visually overlap nearby edges/nodes until dynamic
+  sizing or post-render relayout is added.
+
+- **Node render model is duplicated in `layout.ts`**: Height estimation and
+  per-node data construction are now spread across multiple passes; this
+  raises maintenance risk and should be consolidated behind one builder.
+
+- **Node handle positioning is O(n^2) per node render**: `TxNode.tsx` computes
+  cumulative row offsets via repeated `slice(...).reduce(...)`; should be
+  replaced with a single prefix-sum pass for large rows.
+
+- **In-place node refresh skips relayout after label growth**: Preserving
+  zoom/pan and node positions avoids jarring resets, but tall label growth
+  can still cause local overlaps because ELK is not rerun on label updates.
+
+- **Right sidebar width is session-local only**: Drag-resize is implemented
+  in memory and resets on reload; width persistence (e.g. localStorage) is
+  still missing.
+
+- **Address-label warning copy is easy to misread**: The warning says updates
+  are matched \"across all addresses\", but behavior is per-address-ref across
+  occurrences; wording should be tightened to avoid user confusion.
+
+- **Very small label subtitle typography harms readability**: Node subtitles
+  now use tiny font sizes (7-9px) to fit density; needs a UX pass for
+  accessibility and legibility balance.

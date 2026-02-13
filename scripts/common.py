@@ -217,7 +217,6 @@ def start_cory(
     rpc_pass: str,
     bind: str,
     port: int,
-    local_labels: Path,
     log_path: Path,
 ) -> tuple[subprocess.Popen[str], Any, str, str]:
     cmd = [
@@ -236,8 +235,6 @@ def start_cory(
         bind,
         "--port",
         str(port),
-        "--local-labels",
-        str(local_labels),
     ]
     log(f"starting cory server, log={log_path}")
     log_file = log_path.open("w", encoding="utf-8")

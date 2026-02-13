@@ -106,6 +106,11 @@ pub async fn build_ancestry(
         nodes.insert(txid, tx_node);
     }
 
+    // After BFS is complete, many parent transactions are now present in `nodes`.
+    // Backfill any still-unresolved input values from these in-graph parents so
+    // fee computation works even when `gettxout` could not resolve spent outputs.
+    backfill_inputs_from_graph(&mut nodes);
+
     Ok(AncestryGraph {
         stats: GraphStats {
             node_count: nodes.len(),
@@ -315,6 +320,43 @@ async fn resolve_prevout_without_rpc(
 
     // Could not resolve from local data; caller may try batched RPC.
     None
+}
+
+/// Fill unresolved input value/script metadata using parent transactions that are
+/// already part of the built graph. This is intentionally post-build so children
+/// fetched before their parents can still be enriched once the full BFS pass ends.
+fn backfill_inputs_from_graph(nodes: &mut HashMap<Txid, TxNode>) {
+    // Snapshot parent output data so we can mutate `nodes` safely afterwards.
+    let funding_outputs: HashMap<Txid, Vec<(bitcoin::Amount, ScriptType)>> = nodes
+        .iter()
+        .map(|(txid, node)| {
+            let outputs = node
+                .outputs
+                .iter()
+                .map(|output| (output.value, output.script_type))
+                .collect::<Vec<_>>();
+            (*txid, outputs)
+        })
+        .collect();
+
+    for node in nodes.values_mut() {
+        for input in &mut node.inputs {
+            if input.value.is_some() {
+                continue;
+            }
+            let Some(outpoint) = input.prevout else {
+                continue;
+            };
+            let Some(outputs) = funding_outputs.get(&outpoint.txid) else {
+                continue;
+            };
+            let Some((value, script_type)) = outputs.get(outpoint.vout as usize) else {
+                continue;
+            };
+            input.value = Some(*value);
+            input.script_type = Some(*script_type);
+        }
+    }
 }
 
 // ==============================================================================

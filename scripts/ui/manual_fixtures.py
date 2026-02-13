@@ -476,7 +476,6 @@ def main() -> int:
     cfg = make_config(root_dir)
 
     port = args.port or pick_free_port()
-    local_labels = Path(cfg.tmp_dir / f"ui_manual_labels-{cfg.run_id}.jsonl")
     cory_log = Path(cfg.tmp_dir / f"ui_manual_cory-{cfg.run_id}.log")
     fixture_file = (
         Path(args.fixture_file)
@@ -518,7 +517,6 @@ def main() -> int:
             rpc_pass=cfg.rpc_pass,
             bind=args.bind,
             port=port,
-            local_labels=local_labels,
             log_path=cory_log,
         )
         wait_for_health(server_url)

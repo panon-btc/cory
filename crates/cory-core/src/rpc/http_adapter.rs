@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use bitcoin::{Amount, BlockHash, OutPoint, ScriptBuf, Txid};
 use reqwest::header;
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 use tracing::{debug, trace};
 
 use crate::error::CoreError;
@@ -24,6 +25,7 @@ pub struct HttpRpcClient {
     url: String,
     auth: Option<(String, String)>,
     next_id: AtomicU64,
+    block_height_cache: RwLock<HashMap<BlockHash, u32>>,
 }
 
 impl HttpRpcClient {
@@ -46,6 +48,7 @@ impl HttpRpcClient {
             url: url.to_owned(),
             auth,
             next_id: AtomicU64::new(initial_request_id()),
+            block_height_cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -182,6 +185,36 @@ impl HttpRpcClient {
 
         Ok(ordered)
     }
+
+    async fn get_block_height(&self, block_hash: BlockHash) -> Result<Option<u32>, CoreError> {
+        if let Some(height) = self
+            .block_height_cache
+            .read()
+            .await
+            .get(&block_hash)
+            .copied()
+        {
+            return Ok(Some(height));
+        }
+
+        let raw = self
+            .rpc_call(
+                "getblockheader",
+                vec![
+                    serde_json::json!(block_hash.to_string()),
+                    serde_json::json!(true),
+                ],
+            )
+            .await?;
+        let height = parse_opt_u32(raw.get("height"));
+        if let Some(height) = height {
+            self.block_height_cache
+                .write()
+                .await
+                .insert(block_hash, height);
+        }
+        Ok(height)
+    }
 }
 
 #[async_trait]
@@ -201,8 +234,17 @@ impl BitcoinRpc for HttpRpcClient {
         let vsize = parse_u64(raw.get("vsize"), "vsize")?;
         let weight = parse_u64(raw.get("weight"), "weight")?;
         let block_hash = parse_opt_block_hash(raw.get("blockhash"))?;
+        let mut block_height = parse_opt_u32(raw.get("blockheight"));
         let confirmations = parse_opt_u64(raw.get("confirmations"));
         let block_time = parse_opt_u64(raw.get("blocktime"));
+
+        if block_height.is_none() {
+            if let Some(block_hash) = block_hash {
+                if confirmations.unwrap_or(0) > 0 {
+                    block_height = self.get_block_height(block_hash).await?;
+                }
+            }
+        }
 
         let vin = raw
             .get("vin")
@@ -224,7 +266,7 @@ impl BitcoinRpc for HttpRpcClient {
             vsize,
             weight,
             block_hash,
-            block_height: None,
+            block_height,
             block_time,
             confirmations,
             inputs,
@@ -390,6 +432,12 @@ fn parse_i32(value: Option<&serde_json::Value>, field: &str) -> Result<i32, Core
 
 fn parse_opt_u64(value: Option<&serde_json::Value>) -> Option<u64> {
     value.and_then(serde_json::Value::as_u64)
+}
+
+fn parse_opt_u32(value: Option<&serde_json::Value>) -> Option<u32> {
+    value
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|n| u32::try_from(n).ok())
 }
 
 fn parse_vin(vin: &[serde_json::Value]) -> Result<Vec<RawInputInfo>, CoreError> {

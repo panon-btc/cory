@@ -9,7 +9,7 @@
 This project aims to be a privacy-preserving tool that:
 - Connects to a local Bitcoin Core node over RPC.
 - Builds a transaction spending ancestry graph (DAG with merges) starting from a user-provided `txid`.
-- Lets you import/export labels in BIP-329 (JSONL) and maintain a local editable label set.
+- Lets you create/import/export in-memory local label files in BIP-329 (JSONL) from the Web UI.
 - Lets you load additional read-only "label packs" (e.g. exchanges, hacks) from folders and apply them as annotations in the graph.
 
 ## Requirements
@@ -37,16 +37,17 @@ Install a local binary and run by command name:
 ## Labels
 
 - Import/export format: BIP-329 JSONL.
-- Local labels: editable, intended for the user's private bookkeeping.
+- Local label files: editable and in-memory for the current server process.
+  Import/export is browser-managed (import reads from disk in browser, export downloads JSONL from server).
+- Pack label files: read-only, loaded from CLI `--label-pack-dir` folders.
 
-Label precedence:
-1. Local user edits
-2. User-imported custom packs
-3. Default/global packs
+Label resolution order:
+1. Local files
+2. Pack files
 
-If multiple labels apply at the same precedence, the UI displays all matches.
+If multiple labels apply, the UI displays all matches.
 
-A label pack is a folder containing one or more BIP-329 JSONL files.
+A label pack is a folder containing one or more read-only BIP-329 JSONL files.
 
 Example:
 - `labels/exchanges/binance.jsonl`
@@ -143,7 +144,8 @@ The server runner provisions a regtest fixture transaction, starts a live
 `cory` process bound to localhost, writes a server fixture to
 `tmp/regtest_server_fixture-<timestamp>-<pid>.json`, and executes
 `crates/cory/tests/regtest_server.rs` to validate every HTTP endpoint
-(health, graph, labels import/export/set auth paths, static fallback, and CORS).
+(health, graph, label file CRUD, per-file export, per-entry upsert/delete auth paths,
+static fallback, and CORS).
 
 The manual UI fixture runner generates in-the-wild-like ancestry patterns
 (chains, merges, fan-in/out, RBF replacement, OP_RETURN, and truncation-depth
