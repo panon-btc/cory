@@ -34,3 +34,21 @@
   The UI manual fixture workflow assumes BIP125 replacement acceptance;
   non-default mempool policy toggles may cause the replacement step to
   fail even though the script correctly signals opt-in RBF.
+
+- **GraphPanel syncs props via `useMemo` side effect**: `GraphPanel.tsx`
+  calls `setNodes`/`setEdges` inside a `useMemo` to sync external props
+  into React Flow's internal state. This works but is an anti-pattern —
+  should use `useEffect` or a key-based remount instead.
+
+- **Vite bundle size warning**: The production JS bundle is ~1.8 MB
+  (562 KB gzipped), mostly ELK.js. Could be reduced with dynamic
+  `import()` to code-split ELK from the React bundle.
+
+- **No Prettier config file**: Prettier uses defaults (double quotes,
+  no trailing commas config, etc.). A `.prettierrc` may be needed if
+  the default style diverges from preferences.
+
+- **`build.rs` re-runs npm on some no-op rebuilds**: Cargo may
+  re-trigger the build script even when no UI files changed, because
+  `npm install` can touch `package-lock.json` timestamps. A hash-based
+  check could avoid this.

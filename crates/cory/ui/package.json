@@ -1,0 +1,27 @@
+{
+  "name": "cory-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "fmt": "prettier --write src/",
+    "fmt:check": "prettier --check src/",
+    "clean": "rm -rf dist node_modules"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12",
+    "elkjs": "^0.10",
+    "react": "^19",
+    "react-dom": "^19"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4",
+    "prettier": "^3.8.1",
+    "typescript": "^5",
+    "vite": "^6"
+  }
+}

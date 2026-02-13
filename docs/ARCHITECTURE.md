@@ -10,8 +10,8 @@ spending ancestry DAGs, and serves a localhost web UI.
 crates/
   cory-core/     Business logic (graph, labels, RPC, cache, enrichment)
   cory/          CLI + Axum web server
-ui/
-  index.html     Single-page vanilla JS UI (embedded at compile time)
+    ui/          React + React Flow SPA (built by build.rs, embedded via rust-embed)
+    build.rs     Runs npm install + build during cargo build
 ```
 
 `cory-core` has no knowledge of HTTP or CLI concerns. `cory` depends on
@@ -186,18 +186,54 @@ writing the full local namespace after every change.
 
 ## UI
 
-`ui/index.html` — single file, no external dependencies. Vanilla JS
-with inline CSS. Dark theme with monospace font.
+React + React Flow SPA in `crates/cory/ui/`. Built with Vite, strict
+TypeScript, and ELK.js for DAG layout. Dark theme with monospace font.
+No external CDN or font dependencies — fully offline.
 
-Features:
+**Stack:** React 19, @xyflow/react 12, ELK.js 0.10, Vite 6, Prettier.
 
-- Txid search bar
-- Text-based DAG rendering (indented tree with "(see above)" for merges)
-- Click a tx to see/edit its labels
+**Key files:**
+
+```
+ui/src/
+  main.tsx                 React root mount
+  App.tsx                  Top-level layout + state orchestration
+  types.ts                 API response types (mirrors Rust server)
+  api.ts                   fetch helpers (graph, labels)
+  layout.ts                ELK layout: graph data → React Flow nodes/edges
+  index.css                Global styles (dark theme, React Flow overrides)
+  components/
+    Header.tsx             Brand + search bar + API token input
+    GraphPanel.tsx         React Flow wrapper (nodes, edges, controls, minimap)
+    TxNode.tsx             Custom node (txid, fee/feerate meta, labels)
+    LabelPanel.tsx         Right sidebar: label list + edit + import/export
+```
+
+**Features:**
+
+- Txid search → interactive DAG visualization with ELK layered layout
+- Click a node to select it → label panel shows details
+- Create/edit labels (POST with API token)
 - Import/export BIP-329 JSONL files
-- API token input (user pastes from terminal)
+- Drag nodes, zoom, pan, minimap, fit-to-view controls
 
-The UI is embedded into the binary at compile time via `include_str!`.
+**Build integration:**
+
+- `crates/cory/build.rs` runs `npm install && npm run build` during
+  `cargo build`, with `[ui]`-prefixed status logging.
+- If npm is unavailable, the build succeeds and the server returns
+  "UI not built" at runtime.
+- `rust-embed` embeds `ui/dist/` into the binary. In debug builds,
+  files are read from the filesystem; in release builds, they are
+  baked in.
+- `mime_guess` sets correct `Content-Type` headers for each asset.
+- SPA fallback: unmatched paths serve `index.html`.
+
+**Dev workflow:**
+
+1. Terminal 1: `cargo run` (Rust server on `:3080`)
+2. Terminal 2: `cd crates/cory/ui && npm run dev` (Vite HMR on `:5173`)
+3. Vite proxies `/api` to the Rust server.
 
 ## Regtest integration flows
 
