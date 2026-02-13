@@ -16,22 +16,50 @@ This project aims to be a privacy-preserving tool that:
 
 - Rust toolchain (stable)
 - A local Bitcoin Core node with RPC enabled (`txindex=1`)
+- Node.js + npm (required to build the embedded UI from source, won't be needed by end users once we have releases)
 
 ## Quick Start
 
-Run directly from source:
-- `cargo run --bin cory -- --rpc-url http://127.0.0.1:8332 --rpc-user <user> --rpc-pass <pass>`
+1. Start your Bitcoin Core node with RPC and `txindex=1`.
+2. Run Cory from source:
+   - `cargo run --bin cory -- --rpc-url http://127.0.0.1:8332 --rpc-user <user> --rpc-pass <pass>`
+3. Open `http://127.0.0.1:3080`.
 
-Install a local binary and run by command name:
-- `cargo install --path crates/cory`
-- `cory --rpc-url http://127.0.0.1:8332 --rpc-user <user> --rpc-pass <pass>`
+Install a local binary instead:
+1. `cargo install --path crates/cory`
+2. `cory --rpc-url http://127.0.0.1:8332 --rpc-user <user> --rpc-pass <pass>`
+
+Notes:
+- On first build (or when UI files change), `build.rs` runs `npm` in `crates/cory/ui/` to compile the embedded frontend.
+- If `node`/`npm` are missing, server builds that require a UI rebuild will fail.
+
+## Regtest Quick Try (UI Fixtures)
+
+Use this when you want realistic sample data and a guided UI exploration flow.
+
+Requirements:
+- Rust + Cargo
+- Node.js + npm
+- Python 3
+- `bitcoind` + `bitcoin-cli` in `PATH`
+
+Run:
+- `python3 scripts/ui/manual_fixtures.py`
+
+What it does:
+- starts `bitcoind` in regtest mode
+- starts a local `cory` server
+- creates multiple fixture scenarios
+- writes a catalog file under `tmp/ui_manual_fixture-<timestamp>-<pid>.json`
+- prints a manual test guide in the terminal
 
 ## Privacy Model
 
 - Designed to run fully offline against your own node.
 - The local web server binds to `127.0.0.1` by default.
 - The UI serves local static assets only (no CDNs).
-- Mutating API calls require a per-run API token (printed on startup) to reduce localhost CSRF risk.
+- Mutating API calls require JWT cookie authentication to reduce localhost CSRF risk.
+  A session token is automatically acquired by the UI on page load.
 
 
 ## Labels
@@ -87,7 +115,7 @@ Optional heuristics (must be opt-in and clearly labeled as uncertain):
 ### Requirements
 
 - Rust toolchain (stable)
-- Node.js + npm (for the UI; optional — the server compiles without it)
+- Node.js + npm (required for UI builds from source)
 - Python 3 (for regtest/UI test scripts)
 - `bitcoind` + `bitcoin-cli` in PATH (for regtest and UI tests)
 
@@ -99,7 +127,8 @@ Optional heuristics (must be opt-in and clearly labeled as uncertain):
 | `make test` | Run unit tests across all crates |
 | `make fmt` | Format all code (Rust + UI) |
 | `make regtest` | Run regtest e2e scripts (requires `bitcoind` in PATH) |
-| `make uitest` | Run manual UI fixture workflow (requires `bitcoind` in PATH) |
+| `make uireg` | Run manual UI fixture workflow (requires `bitcoind` in PATH) |
+| `make playwright` | Run Playwright E2E tests (requires `playwright` + Chromium) |
 | `make ui` | Start Vite dev server with HMR on `:5173` (for UI development) |
 | `make run` | Start the Cory server on `:3080` |
 | `make clean` | Remove all build artifacts (Rust `target/` + UI `node_modules/` and `dist/`) |

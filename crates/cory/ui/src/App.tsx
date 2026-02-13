@@ -41,9 +41,18 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [labelFiles, setLabelFiles] = useState<LabelFileSummary[]>([]);
-  const [sidebarWidth, setSidebarWidth] = useState(390);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const stored = localStorage.getItem("cory:sidebarWidth");
+    if (stored) {
+      const n = parseInt(stored, 10);
+      if (!isNaN(n) && n >= SIDEBAR_MIN_WIDTH && n <= SIDEBAR_MAX_WIDTH) return n;
+    }
+    return 390;
+  });
   const lastSearchRef = useRef("");
   const labelFilesRef = useRef<LabelFileSummary[]>([]);
+  const searchAbortRef = useRef<AbortController | null>(null);
+  const searchIdRef = useRef(0);
 
   useEffect(() => {
     labelFilesRef.current = labelFiles;
@@ -56,13 +65,7 @@ export default function App() {
   }, []);
 
   const upsertLabelInState = useCallback(
-    (
-      fileId: string,
-      fileName: string,
-      labelType: Bip329Type,
-      refId: string,
-      label: string,
-    ) => {
+    (fileId: string, fileName: string, labelType: Bip329Type, refId: string, label: string) => {
       setGraph((prev) => {
         if (!prev) return prev;
         const next = {
@@ -129,9 +132,7 @@ export default function App() {
     [],
   );
 
-  const refreshLabelFiles = useCallback(async (): Promise<
-    LabelFileSummary[]
-  > => {
+  const refreshLabelFiles = useCallback(async (): Promise<LabelFileSummary[]> => {
     try {
       const files = await fetchLabelFiles();
       setLabelFiles(files);
@@ -150,23 +151,36 @@ export default function App() {
         quietErrors?: boolean;
       },
     ) => {
+      // Abort any in-flight search request so we don't apply stale results.
+      searchAbortRef.current?.abort();
+      const controller = new AbortController();
+      searchAbortRef.current = controller;
+      const thisSearchId = ++searchIdRef.current;
+
       lastSearchRef.current = txid;
       setLoading(true);
       setError(null);
       try {
-        const resp = await fetchGraph(txid);
+        const resp = await fetchGraph(txid, controller.signal);
         const { nodes: n, edges: e } = await computeLayout(resp);
+
+        // Guard: if another search was started while we were awaiting,
+        // discard these results silently.
+        if (searchIdRef.current !== thisSearchId) return;
+
         const preservedTxid = opts?.preserveSelectedTxid;
         const nextSelectedTxid =
-          preservedTxid && resp.nodes[preservedTxid]
-            ? preservedTxid
-            : resp.root_txid;
+          preservedTxid && resp.nodes[preservedTxid] ? preservedTxid : resp.root_txid;
 
         setGraph(resp);
         setNodes(n);
         setEdges(e);
         setSelectedTxid(nextSelectedTxid);
       } catch (e) {
+        // Aborted requests are not errors — just ignore them.
+        if ((e as Error).name === "AbortError") return;
+        if (searchIdRef.current !== thisSearchId) return;
+
         if (!opts?.quietErrors) {
           setError((e as Error).message);
           setGraph(null);
@@ -174,19 +188,16 @@ export default function App() {
           setEdges([]);
         }
       } finally {
-        setLoading(false);
+        if (searchIdRef.current === thisSearchId) {
+          setLoading(false);
+        }
       }
     },
     [],
   );
 
   const handleSaveLabel = useCallback(
-    async (
-      fileId: string,
-      labelType: Bip329Type,
-      refId: string,
-      label: string,
-    ): Promise<void> => {
+    async (fileId: string, labelType: Bip329Type, refId: string, label: string): Promise<void> => {
       const summary = await setLabelInFile(fileId, labelType, refId, label);
       upsertLabelInState(fileId, summary.name, labelType, refId, label);
       await refreshLabelFiles();
@@ -195,11 +206,7 @@ export default function App() {
   );
 
   const handleDeleteLabel = useCallback(
-    async (
-      fileId: string,
-      labelType: Bip329Type,
-      refId: string,
-    ): Promise<void> => {
+    async (fileId: string, labelType: Bip329Type, refId: string): Promise<void> => {
       await deleteLabelInFile(fileId, labelType, refId);
       removeLabelFromState(fileId, labelType, refId);
       await refreshLabelFiles();
@@ -239,7 +246,29 @@ export default function App() {
     if (!graph) {
       return;
     }
-    setNodes((prevNodes) => refreshNodesFromGraph(graph, prevNodes));
+    setNodes((prevNodes) => {
+      const nextNodes = refreshNodesFromGraph(graph, prevNodes);
+
+      // If any node height changed (e.g. from label edits), rerun ELK
+      // layout so nodes don't overlap. We compare heights from the
+      // previous render to detect growth/shrinkage.
+      const heightChanged = nextNodes.some((node, i) => {
+        const prev = prevNodes[i];
+        if (!prev || prev.id !== node.id) return true;
+        const prevH = (prev.style?.height as number | undefined) ?? 0;
+        const nextH = (node.style?.height as number | undefined) ?? 0;
+        return prevH !== nextH;
+      });
+
+      if (heightChanged) {
+        void computeLayout(graph).then(({ nodes: n, edges: e }) => {
+          setNodes(n);
+          setEdges(e);
+        });
+      }
+
+      return nextNodes;
+    });
   }, [graph]);
 
   const handleSidebarResizeStart = useCallback(
@@ -250,16 +279,18 @@ export default function App() {
 
       const onMouseMove = (moveEvent: MouseEvent) => {
         const deltaX = moveEvent.clientX - startX;
-        const next = Math.min(
-          SIDEBAR_MAX_WIDTH,
-          Math.max(SIDEBAR_MIN_WIDTH, startWidth - deltaX),
-        );
+        const next = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, startWidth - deltaX));
         setSidebarWidth(next);
       };
 
-      const onMouseUp = () => {
+      const onMouseUp = (upEvent: MouseEvent) => {
         window.removeEventListener("mousemove", onMouseMove);
         window.removeEventListener("mouseup", onMouseUp);
+        const finalWidth = Math.min(
+          SIDEBAR_MAX_WIDTH,
+          Math.max(SIDEBAR_MIN_WIDTH, startWidth - (upEvent.clientX - startX)),
+        );
+        localStorage.setItem("cory:sidebarWidth", String(finalWidth));
       };
 
       window.addEventListener("mousemove", onMouseMove);
@@ -270,9 +301,7 @@ export default function App() {
 
   return (
     <ReactFlowProvider>
-      <div
-        style={{ display: "flex", flexDirection: "column", height: "100vh" }}
-      >
+      <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
         <Header onSearch={doSearch} />
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
           <GraphPanel

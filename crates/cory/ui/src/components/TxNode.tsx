@@ -36,9 +36,7 @@ function formatFeerate(value: number): string {
 export default memo(function TxNode({ data, selected }: TxNodeProps) {
   const meta = useMemo(() => {
     const items: string[] = [];
-    items.push(
-      data.blockHeight != null ? `${data.blockHeight}` : "unconfirmed",
-    );
+    items.push(data.blockHeight != null ? `${data.blockHeight}` : "unconfirmed");
     if (data.feeSats != null) {
       const feeText =
         data.feerateSatVb != null
@@ -53,19 +51,27 @@ export default memo(function TxNode({ data, selected }: TxNodeProps) {
     return items;
   }, [data]);
 
-  const inputHandleTops = data.inputRows.map((_, index) => {
-    const topOffset = data.inputRows
-      .slice(0, index)
-      .reduce((sum, row) => sum + row.rowHeight, 0);
-    return IO_START_TOP + topOffset + PRIMARY_ROW_HEIGHT / 2;
-  });
+  // Compute handle positions with a single prefix-sum pass per side,
+  // avoiding the O(n^2) repeated slice+reduce.
+  const inputHandleTops = useMemo(() => {
+    const tops: number[] = [];
+    let offset = 0;
+    for (const row of data.inputRows) {
+      tops.push(IO_START_TOP + offset + PRIMARY_ROW_HEIGHT / 2);
+      offset += row.rowHeight;
+    }
+    return tops;
+  }, [data.inputRows]);
 
-  const outputHandleTops = data.outputRows.map((_, index) => {
-    const topOffset = data.outputRows
-      .slice(0, index)
-      .reduce((sum, row) => sum + row.rowHeight, 0);
-    return IO_START_TOP + topOffset + PRIMARY_ROW_HEIGHT / 2;
-  });
+  const outputHandleTops = useMemo(() => {
+    const tops: number[] = [];
+    let offset = 0;
+    for (const row of data.outputRows) {
+      tops.push(IO_START_TOP + offset + PRIMARY_ROW_HEIGHT / 2);
+      offset += row.rowHeight;
+    }
+    return tops;
+  }, [data.outputRows]);
 
   return (
     <div
@@ -158,9 +164,7 @@ export default memo(function TxNode({ data, selected }: TxNodeProps) {
                 }}
               >
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <span style={{ color: "var(--accent)", minWidth: 24 }}>
-                    #{row.index}
-                  </span>
+                  <span style={{ color: "var(--accent)", minWidth: 24 }}>#{row.index}</span>
                   <span
                     style={{
                       color: "var(--text)",
@@ -168,9 +172,7 @@ export default memo(function TxNode({ data, selected }: TxNodeProps) {
                       textOverflow: "ellipsis",
                     }}
                   >
-                    {row.address
-                      ? shortAddress(row.address)
-                      : shortOutpoint(row.prevout)}
+                    {row.address ? shortAddress(row.address) : shortOutpoint(row.prevout)}
                   </span>
                 </div>
                 {row.labelLines.map((label, idx) => (
@@ -179,7 +181,7 @@ export default memo(function TxNode({ data, selected }: TxNodeProps) {
                     style={{
                       marginLeft: 30,
                       color: "var(--text-muted)",
-                      fontSize: 8,
+                      fontSize: 9,
                       fontStyle: "italic",
                       lineHeight: 1.1,
                       overflow: "hidden",
@@ -198,9 +200,7 @@ export default memo(function TxNode({ data, selected }: TxNodeProps) {
         </div>
 
         <div style={{ minWidth: 0 }}>
-          <div style={{ color: "var(--text-muted)", fontSize: 10 }}>
-            Outputs
-          </div>
+          <div style={{ color: "var(--text-muted)", fontSize: 10 }}>Outputs</div>
           <div style={{ display: "grid", gap: 2, marginTop: 3 }}>
             {data.outputRows.map((row) => (
               <div
@@ -212,9 +212,7 @@ export default memo(function TxNode({ data, selected }: TxNodeProps) {
                   minHeight: row.rowHeight,
                 }}
               >
-                <span style={{ color: "var(--accent)", minWidth: 24 }}>
-                  #{row.index}
-                </span>
+                <span style={{ color: "var(--accent)", minWidth: 24 }}>#{row.index}</span>
                 <div
                   style={{
                     display: "flex",
@@ -224,9 +222,7 @@ export default memo(function TxNode({ data, selected }: TxNodeProps) {
                 >
                   <span
                     style={{
-                      color: row.connected
-                        ? "var(--text)"
-                        : "var(--text-muted)",
+                      color: row.connected ? "var(--text)" : "var(--text-muted)",
                       fontWeight: row.connected ? 600 : 400,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
@@ -245,7 +241,7 @@ export default memo(function TxNode({ data, selected }: TxNodeProps) {
                   <span
                     style={{
                       color: "var(--text-muted)",
-                      fontSize: 7,
+                      fontSize: 9,
                       lineHeight: 1.1,
                     }}
                   >
@@ -256,7 +252,7 @@ export default memo(function TxNode({ data, selected }: TxNodeProps) {
                       key={`output-${row.index}-label-${idx}`}
                       style={{
                         color: "var(--text-muted)",
-                        fontSize: 8,
+                        fontSize: 9,
                         fontStyle: "italic",
                         lineHeight: 1.1,
                         overflow: "hidden",

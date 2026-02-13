@@ -1,11 +1,16 @@
-import ELK, {
-  type ElkNode,
-  type ElkExtendedEdge,
-} from "elkjs/lib/elk.bundled.js";
+import type { ElkNode, ElkExtendedEdge } from "elkjs/lib/elk.bundled.js";
 import type { Node, Edge } from "@xyflow/react";
 import type { GraphResponse, LabelEntry } from "./types";
 
-const elk = new ELK();
+// Lazily import ELK so Vite can code-split the ~1MB WASM bundle into a
+// separate chunk, keeping the initial page load fast.
+let elkPromise: Promise<typeof import("elkjs/lib/elk.bundled.js")> | null = null;
+function getElk() {
+  if (!elkPromise) {
+    elkPromise = import("elkjs/lib/elk.bundled.js");
+  }
+  return elkPromise;
+}
 
 const NODE_WIDTH = 360;
 const NODE_MIN_HEIGHT = 140;
@@ -50,10 +55,7 @@ function shortTxid(txid: string): string {
   return txid.substring(0, 18) + "\u2026" + txid.substring(txid.length - 18);
 }
 
-function estimateNodeHeight(
-  inputRowsHeight: number,
-  outputRowsHeight: number,
-): number {
+function estimateNodeHeight(inputRowsHeight: number, outputRowsHeight: number): number {
   const rowsHeight = Math.max(inputRowsHeight, outputRowsHeight);
   return Math.max(NODE_MIN_HEIGHT, NODE_BASE_HEIGHT + rowsHeight);
 }
@@ -71,8 +73,7 @@ function buildConnectedOutputsByTx(
     if (!nodeIds.has(edge.funding_txid) || !nodeIds.has(edge.spending_txid)) {
       continue;
     }
-    const existing =
-      connectedOutputsByTx.get(edge.funding_txid) ?? new Set<number>();
+    const existing = connectedOutputsByTx.get(edge.funding_txid) ?? new Set<number>();
     existing.add(edge.funding_vout);
     connectedOutputsByTx.set(edge.funding_txid, existing);
   }
@@ -86,20 +87,14 @@ function buildNodeRenderModel(
 ): { data: TxNodeData; nodeHeight: number } {
   const nodeData = response.nodes[txid]!;
   const enrichment = response.enrichments[txid];
-  const isCoinbase =
-    nodeData.inputs.length === 1 && nodeData.inputs[0]?.prevout === null;
+  const isCoinbase = nodeData.inputs.length === 1 && nodeData.inputs[0]?.prevout === null;
 
   const inputRows: TxInputView[] = nodeData.inputs.map((input, index) => {
     const inputRef = `${txid}:${index}`;
     const inputLabels = response.labels_by_type.input[inputRef] ?? [];
     const address = response.input_address_refs[inputRef] ?? null;
-    const addrLabels = address
-      ? (response.labels_by_type.addr[address] ?? [])
-      : [];
-    const labelLines = [
-      ...addrLabels.map(formatLabelEntry),
-      ...inputLabels.map(formatLabelEntry),
-    ];
+    const addrLabels = address ? (response.labels_by_type.addr[address] ?? []) : [];
+    const labelLines = [...addrLabels.map(formatLabelEntry), ...inputLabels.map(formatLabelEntry)];
     return {
       index,
       prevout: input.prevout,
@@ -114,13 +109,8 @@ function buildNodeRenderModel(
     const outputRef = `${txid}:${index}`;
     const outputLabels = response.labels_by_type.output[outputRef] ?? [];
     const address = response.output_address_refs[outputRef] ?? null;
-    const addrLabels = address
-      ? (response.labels_by_type.addr[address] ?? [])
-      : [];
-    const labelLines = [
-      ...addrLabels.map(formatLabelEntry),
-      ...outputLabels.map(formatLabelEntry),
-    ];
+    const addrLabels = address ? (response.labels_by_type.addr[address] ?? []) : [];
+    const labelLines = [...addrLabels.map(formatLabelEntry), ...outputLabels.map(formatLabelEntry)];
 
     return {
       index,
@@ -133,17 +123,9 @@ function buildNodeRenderModel(
     };
   });
 
-  const txLabels = (response.labels_by_type.tx[txid] ?? []).map(
-    formatLabelEntry,
-  );
-  const inputTotalHeight = inputRows.reduce(
-    (sum, row) => sum + row.rowHeight,
-    0,
-  );
-  const outputTotalHeight = outputRows.reduce(
-    (sum, row) => sum + row.rowHeight,
-    0,
-  );
+  const txLabels = (response.labels_by_type.tx[txid] ?? []).map(formatLabelEntry);
+  const inputTotalHeight = inputRows.reduce((sum, row) => sum + row.rowHeight, 0);
+  const outputTotalHeight = outputRows.reduce((sum, row) => sum + row.rowHeight, 0);
 
   const data: TxNodeData = {
     txid,
@@ -164,10 +146,7 @@ function buildNodeRenderModel(
   };
 }
 
-export function refreshNodesFromGraph(
-  response: GraphResponse,
-  nodes: Node[],
-): Node[] {
+export function refreshNodesFromGraph(response: GraphResponse, nodes: Node[]): Node[] {
   const nodeIds = new Set(Object.keys(response.nodes));
   const connectedOutputsByTx = buildConnectedOutputsByTx(response, nodeIds);
 
@@ -176,11 +155,7 @@ export function refreshNodesFromGraph(
       return node;
     }
 
-    const { data, nodeHeight } = buildNodeRenderModel(
-      response,
-      node.id,
-      connectedOutputsByTx,
-    );
+    const { data, nodeHeight } = buildNodeRenderModel(response, node.id, connectedOutputsByTx);
 
     return {
       ...node,
@@ -199,20 +174,22 @@ export async function computeLayout(
   const nodeIds = new Set(Object.keys(response.nodes));
   const connectedOutputsByTx = buildConnectedOutputsByTx(response, nodeIds);
 
-  const children: ElkNode[] = Object.keys(response.nodes)
-    .sort()
-    .map((txid) => {
-      const { nodeHeight } = buildNodeRenderModel(
-        response,
-        txid,
-        connectedOutputsByTx,
-      );
-      return {
-        id: txid,
-        width: NODE_WIDTH,
-        height: nodeHeight,
-      };
-    });
+  // Build render models once and reuse for both ELK sizing and final nodes,
+  // avoiding duplicate computation of node data and heights.
+  const renderModels = new Map<string, { data: TxNodeData; nodeHeight: number }>();
+  const sortedTxids = Object.keys(response.nodes).sort();
+  for (const txid of sortedTxids) {
+    renderModels.set(txid, buildNodeRenderModel(response, txid, connectedOutputsByTx));
+  }
+
+  const children: ElkNode[] = sortedTxids.map((txid) => {
+    const model = renderModels.get(txid)!;
+    return {
+      id: txid,
+      width: NODE_WIDTH,
+      height: model.nodeHeight,
+    };
+  });
 
   const elkEdges: ElkExtendedEdge[] = response.edges
     .filter((e) => nodeIds.has(e.funding_txid) && nodeIds.has(e.spending_txid))
@@ -236,24 +213,22 @@ export async function computeLayout(
     edges: elkEdges,
   };
 
+  const ELK = (await getElk()).default;
+  const elk = new ELK();
   const laid = await elk.layout(graph);
 
-  const nodes: Node[] = (laid.children ?? []).map((n) => {
+  const nodes: Node[] = (laid.children ?? []).map((n: ElkNode) => {
     const txid = n.id;
-    const { data, nodeHeight } = buildNodeRenderModel(
-      response,
-      txid,
-      connectedOutputsByTx,
-    );
+    const model = renderModels.get(txid)!;
 
     return {
       id: txid,
       type: "tx",
       position: { x: n.x ?? 0, y: n.y ?? 0 },
       style: {
-        height: nodeHeight,
+        height: model.nodeHeight,
       },
-      data,
+      data: model.data,
     };
   });
 

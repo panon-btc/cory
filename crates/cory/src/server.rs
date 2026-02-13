@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Query, Request, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{from_fn_with_state, Next};
 use axum::response::{IntoResponse, Response};
@@ -32,6 +32,9 @@ pub struct AppState {
     pub default_limits: GraphLimits,
     pub rpc_concurrency: usize,
     pub network: bitcoin::Network,
+    /// Whether to set the `Secure` attribute on cookies (true when served
+    /// over HTTPS, i.e. not bound to localhost).
+    pub secure_cookies: bool,
 }
 
 type SharedState = Arc<AppState>;
@@ -41,10 +44,15 @@ type SharedState = Arc<AppState>;
 // ==============================================================================
 
 pub fn build_router(state: AppState, origin: &str) -> Router {
+    // Only reflect the allowed origin when the request's Origin header
+    // actually matches. Otherwise, omit the header entirely so browsers
+    // get a clean CORS rejection instead of a mismatched origin value.
+    let allowed: axum::http::HeaderValue = origin.parse().expect("valid origin header value");
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::exact(
-            origin.parse().expect("valid origin header value"),
-        ))
+        .allow_origin(AllowOrigin::predicate({
+            let allowed = allowed.clone();
+            move |request_origin: &axum::http::HeaderValue, _| *request_origin == allowed
+        }))
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,
@@ -61,8 +69,11 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
         .route("/api/v1/health", get(health))
         .route("/api/v1/auth/token", post(get_or_create_token));
 
-    let protected_api = Router::new()
-        .route("/api/v1/graph/tx/{txid}", get(get_graph))
+    // Label mutation routes get a 2 MB body limit to prevent abuse via
+    // oversized import payloads. Graph and other routes use Axum's default.
+    const LABEL_BODY_LIMIT: usize = 2 * 1024 * 1024;
+
+    let label_routes = Router::new()
         .route(
             "/api/v1/label",
             get(list_local_label_files).post(create_or_import_local_label_file),
@@ -78,7 +89,12 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
         .route(
             "/api/v1/label/{file_id}/export",
             get(export_local_label_file),
-        );
+        )
+        .layer(DefaultBodyLimit::max(LABEL_BODY_LIMIT));
+
+    let protected_api = Router::new()
+        .route("/api/v1/graph/tx/{txid}", get(get_graph))
+        .merge(label_routes);
 
     Router::new()
         .merge(public_api)
@@ -103,11 +119,35 @@ async fn require_jwt_cookie_auth(
 }
 
 // ==============================================================================
+// Hard Ceilings for Graph Queries
+// ==============================================================================
+//
+// These prevent clients from requesting arbitrarily large graphs that would
+// exhaust server resources, regardless of what the CLI defaults are.
+
+const MAX_GRAPH_DEPTH: usize = 200;
+const MAX_GRAPH_NODES: usize = 5_000;
+const MAX_GRAPH_EDGES: usize = 20_000;
+
+// ==============================================================================
 // Handlers
 // ==============================================================================
 
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "ok" }))
+}
+
+/// Builds a JWT cookie with consistent security attributes.
+fn build_jwt_cookie(token: String, secure: bool) -> Cookie<'static> {
+    let mut cookie = Cookie::new(JWT_COOKIE_NAME, token);
+    cookie.set_http_only(true);
+    cookie.set_path("/");
+    cookie.set_same_site(tower_cookies::cookie::SameSite::Strict);
+    cookie.set_max_age(tower_cookies::cookie::time::Duration::seconds(86400));
+    if secure {
+        cookie.set_secure(true);
+    }
+    cookie
 }
 
 async fn get_or_create_token(
@@ -120,12 +160,7 @@ async fn get_or_create_token(
         .generate_token(session_id.clone())
         .map_err(|e| AppError::Internal(format!("failed to generate token: {e}")))?;
 
-    let mut cookie = Cookie::new(JWT_COOKIE_NAME, token);
-    cookie.set_http_only(true);
-    cookie.set_path("/");
-    cookie.set_same_site(tower_cookies::cookie::SameSite::Strict);
-    cookie.set_max_age(tower_cookies::cookie::time::Duration::seconds(86400));
-    cookies.add(cookie);
+    cookies.add(build_jwt_cookie(token, state.secure_cookies));
 
     Ok(Json(serde_json::json!({
         "session_id": session_id,
@@ -144,12 +179,7 @@ async fn refresh_token(
         .generate_token(claims.session_id)
         .map_err(|e| AppError::Internal(format!("failed to generate token: {e}")))?;
 
-    let mut cookie = Cookie::new(JWT_COOKIE_NAME, new_token);
-    cookie.set_http_only(true);
-    cookie.set_path("/");
-    cookie.set_same_site(tower_cookies::cookie::SameSite::Strict);
-    cookie.set_max_age(tower_cookies::cookie::time::Duration::seconds(86400));
-    cookies.add(cookie);
+    cookies.add(build_jwt_cookie(new_token, state.secure_cookies));
 
     Ok(Json(serde_json::json!({
         "expires_in": 86400,
@@ -214,9 +244,18 @@ async fn get_graph(
         .map_err(|e| AppError::BadRequest(format!("invalid txid: {e}")))?;
 
     let limits = GraphLimits {
-        max_depth: query.max_depth.unwrap_or(state.default_limits.max_depth),
-        max_nodes: query.max_nodes.unwrap_or(state.default_limits.max_nodes),
-        max_edges: query.max_edges.unwrap_or(state.default_limits.max_edges),
+        max_depth: query
+            .max_depth
+            .unwrap_or(state.default_limits.max_depth)
+            .min(MAX_GRAPH_DEPTH),
+        max_nodes: query
+            .max_nodes
+            .unwrap_or(state.default_limits.max_nodes)
+            .min(MAX_GRAPH_NODES),
+        max_edges: query
+            .max_edges
+            .unwrap_or(state.default_limits.max_edges)
+            .min(MAX_GRAPH_EDGES),
     };
 
     let graph = cory_core::graph::build_ancestry(
@@ -560,7 +599,9 @@ fn map_label_store_error(err: LabelStoreError) -> AppError {
         LabelStoreError::LocalFileNotFound(file_id) => {
             AppError::NotFound(format!("local label file not found: {file_id}"))
         }
-        LabelStoreError::EmptyFileName => AppError::BadRequest(err.to_string()),
+        LabelStoreError::EmptyFileName
+        | LabelStoreError::EmptyRef
+        | LabelStoreError::EmptyLabel => AppError::BadRequest(err.to_string()),
         LabelStoreError::Core(core) => AppError::BadRequest(core.to_string()),
     }
 }

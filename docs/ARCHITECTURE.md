@@ -39,8 +39,8 @@ Core data structures independent of any RPC library:
   the RPC response and the domain types. Owned by cory-core, not the
   RPC library.
 - **`ScriptType`** — Enum: `P2pkh`, `P2sh`, `P2wpkh`, `P2wsh`, `P2tr`,
-  `OpReturn`, `Unknown`. Classification delegates to the `bitcoin`
-  crate's `Script::is_p2pkh()` etc. — no manual opcode matching.
+  `BareMultisig`, `OpReturn`, `Unknown`. Classification delegates to the
+  `bitcoin` crate's `Script::is_p2pkh()` etc. — no manual opcode matching.
 
 ### `rpc/` — Bitcoin Core RPC
 
@@ -69,24 +69,29 @@ RawTxInfo>` of canned transactions. Used by graph and cache tests.
 
 ### `cache.rs` — In-memory caches
 
-Two `tokio::sync::RwLock<HashMap<...>>` maps:
+Two `tokio::sync::RwLock<LruCache<...>>` maps with configurable capacity
+(CLI flags `--cache-tx-cap` and `--cache-prevout-cap`):
 
 - **Transaction cache**: `Txid → TxNode` (fully converted, enriched)
 - **Prevout cache**: `(Txid, u32) → PrevoutInfo` (value + script)
 
+Entries are evicted in least-recently-used order when the cache is full.
 Shared via `Arc<Cache>` between graph builder and server.
 
 ### `graph.rs` — Ancestry DAG builder
 
-`build_ancestry(rpc, cache, root_txid, limits, concurrency)` does a BFS
-from the root transaction:
+`build_ancestry(rpc, cache, root_txid, limits, concurrency)` does a
+parallel BFS from the root transaction:
 
-1. Pop txid from a `VecDeque<(Txid, depth)>`.
-2. Skip if visited or if any limit is hit (set `truncated = true`).
-3. Fetch via cache-or-RPC (semaphore-gated).
-4. Convert `RawTxInfo` → `TxNode`, resolving prevout values/scripts.
+1. Collect the current BFS frontier: all txids at the current depth.
+2. Skip visited txids or if any limit is hit (set `truncated = true`).
+3. Fetch the entire frontier in parallel via `try_join_all`, with
+   concurrency gated by a semaphore.
+4. Convert each `RawTxInfo` → `TxNode`, resolving prevout values/scripts.
 5. For each non-coinbase input, enqueue the funding txid at `depth + 1`.
 6. Record `AncestryEdge` for each input→funding relationship.
+7. For spent prevouts from out-of-graph parents, attempt a fallback
+   `getrawtransaction` to resolve the value and script type.
 
 Deduplication is by `HashSet<Txid>` — if two inputs reference the same
 parent tx, it appears once in the graph with two edges pointing to it.
@@ -157,16 +162,20 @@ Clap derive struct. Notable options:
 
 - `--rpc-url`, `--rpc-user`, `--rpc-pass` (user/pass also via env vars)
 - `--label-pack-dir` — repeatable, loads read-only label packs
+- `--label-dir` — optional directory for persistent local label files
 - `--max-depth`, `--max-nodes`, `--max-edges` — graph limits
-- `--rpc-concurrency` — semaphore permits for parallel RPC calls
+- `--cache-tx-cap`, `--cache-prevout-cap` — LRU cache sizes
+- `--rpc-concurrency` — semaphore permits for parallel RPC calls (≥1)
 
 ### `main.rs` — Startup
 
 1. Parse CLI, init tracing.
-2. Generate random 32-char hex API token.
+2. Generate a random JWT signing secret.
 3. Connect to Bitcoin Core RPC. **This is fatal** — if
    `get_blockchain_info()` fails, the process exits with an error.
-4. Create cache and label store.
+   A best-effort `txindex` probe runs immediately after.
+4. Create LRU caches and label store (with optional `--label-dir`
+   persistence).
 5. Load label pack directories.
 6. Build Axum router and start server.
 
@@ -186,17 +195,21 @@ Clap derive struct. Notable options:
 | GET | `/api/v1/label/{file_id}/export` | No | Export one local file |
 | GET | `*` (fallback) | No | Serve embedded UI |
 
-Auth is via `X-API-Token` header, checked only on mutating endpoints.
-CORS is locked to the exact server origin.
+Auth is via JWT cookies (HttpOnly, SameSite=Strict, conditionally
+Secure). The UI acquires a token on page load via `POST /api/v1/auth/token`
+and refreshes it via `POST /api/v1/auth/refresh`. Mutating endpoints
+require a valid JWT cookie. CORS allows only the exact server origin.
 
 The graph response includes the raw `AncestryGraph` (flattened), plus
 per-node `enrichments` (fee, feerate, RBF, locktime), typed labels in
 `labels_by_type`, and address resolution maps:
 `input_address_refs`, `output_address_refs`, and `address_occurrences`.
 
-Local label files are in-memory only for the server process lifetime.
-The browser owns disk I/O: import reads local files and sends content to
-the server; export downloads server-provided JSONL.
+Local label files are in-memory by default. When `--label-dir` is set,
+edits are written through to JSONL files on disk and loaded on startup,
+providing durable persistence across restarts. Without the flag, labels
+are ephemeral for the server process lifetime. Import/export is also
+available from the browser UI.
 
 ## UI
 
@@ -217,7 +230,7 @@ ui/src/
   layout.ts                ELK layout: graph data → React Flow nodes/edges
   index.css                Global styles (dark theme, React Flow overrides)
   components/
-    Header.tsx             Brand + search bar + API token input
+    Header.tsx             Brand + search bar
     GraphPanel.tsx         React Flow wrapper (nodes, edges, controls, minimap)
     TxNode.tsx             Custom node (txid/meta + input/output rows + label subtitles)
     LabelPanel.tsx         Right sidebar: pack labels, local files, selected tx editor
@@ -229,7 +242,7 @@ ui/src/
 
 - Txid search → interactive DAG visualization with ELK layered layout
 - Click a node to select it → sidebar shows selected-transaction editor
-- Create/import/remove local label files (POST/DELETE with API token)
+- Create/import/remove local label files (POST/DELETE with JWT cookie auth)
 - Edit `tx`, `input`, `output`, and derived `addr` labels from the selected transaction editor
 - Address labels are shared by address string (reused addresses map to one label target)
 - Delete one label entry from a local file (DELETE entry endpoint)
@@ -238,8 +251,9 @@ ui/src/
 
 **Build integration:**
 
-- `crates/cory/build.rs` runs `npm install && npm run build` during
-  `cargo build`, with `[ui]`-prefixed status logging.
+- `crates/cory/build.rs` runs `npm ci && npm run build` during
+  `cargo build`, with `[ui]`-prefixed status logging and hash-based
+  skip to avoid unnecessary rebuilds.
 - If npm is unavailable, the build succeeds and the server returns
   "UI not built" at runtime.
 - `rust-embed` embeds `ui/dist/` into the binary. In debug builds,
@@ -272,7 +286,7 @@ default and are driven by Python runners under `scripts/`.
 - `scripts/ui/manual_fixtures.py` is a manual UI workflow (not an automated
   test): it builds richer scenario catalogs for human exploration, starts
   `bitcoind` + `cory`, and writes `tmp/ui_manual_fixture-*.json` containing
-  `schema_version`, `run_id`, `server_url`, `api_token`, and scenario records
+  `schema_version`, `run_id`, `server_url`, and scenario records
   (`name`, `description`, `root_txid`, `related_txids`, `suggested_ui_checks`).
 
 Graph scenarios are split into two tiers:
@@ -289,7 +303,7 @@ Because Bitcoin UTXO ancestry is acyclic by construction, the stress
 suite uses dense merge and frontier patterns rather than true cycle
 fixtures.
 
-## Known quirks and things that may need fixing
+## Known quirks and remaining limitations
 
 ### Block height resolution costs extra RPCs
 
@@ -297,54 +311,6 @@ When `getrawtransaction` does not include `blockheight`, the HTTP RPC
 adapter resolves it from `blockhash` via `getblockheader` and caches the
 mapping in-memory. Heights are now populated, but this introduces extra
 RPC traffic for previously unseen block hashes.
-
-### Graph BFS is still sequential per node
-
-Traversal remains sequential at the node-processing level. We do batch
-`gettxout` requests for unresolved prevouts within a node, but we still
-do not process multiple BFS frontier nodes concurrently. Spawning tasks
-(e.g. via `JoinSet`) per level would improve wide-graph latency.
-
-### Prevout resolution gaps
-
-If a funding transaction is beyond the graph limits (not fetched), and
-the output is already spent (so `gettxout` returns nothing), the input's
-value and script type remain `None`. This is unavoidable without
-fetching the funding tx. A post-BFS backfill step now recovers many of
-these cases when the funding tx is already present in the in-memory graph,
-but true out-of-graph spent prevouts can still leave fee calculation as
-`None`.
-
-### Label edits do not re-run ELK layout
-
-Single-label edits update graph label state in place and refresh existing
-node render data without recomputing layout. This preserves zoom/pan and
-manual node positions, but node heights can change without a fresh
-ELK pass until a full graph reload.
-
-### Local labels are ephemeral
-
-Server-local label files are in-memory only and are dropped when the
-process exits. Durable persistence is intentionally delegated to manual
-UI export/import workflows.
-
-### No `txindex` detection
-
-The CLI does not check whether the node has `txindex=1`. Without it,
-`getrawtransaction` fails for transactions not in the mempool unless a
-block hash is provided. The user gets an opaque RPC error.
-
-### `ScriptType` doesn't cover multisig or bare scripts
-
-Scripts that aren't one of the standard types (p2pkh, p2sh, p2wpkh,
-p2wsh, p2tr, op_return) are classified as `Unknown`. This includes bare
-multisig and non-standard scripts.
-
-### No cache eviction
-
-The in-memory caches grow without bound. For long-running sessions
-exploring many transactions, this could consume significant memory.
-There is no LRU eviction or size limit.
 
 ### `version` field compatibility
 

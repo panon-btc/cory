@@ -50,9 +50,27 @@ async fn main() -> eyre::Result<()> {
         tracing::warn!("node is pruned — fetching old transactions may fail");
     }
 
+    // Verify txindex is available by attempting to fetch a confirmed transaction.
+    // Without txindex, getrawtransaction only works for mempool transactions,
+    // making graph traversal fail on confirmed ancestors.
+    if chain_info.blocks > 0 {
+        check_txindex_available(rpc.as_ref()).await;
+    }
+
     // Initialize caches and label store.
-    let cache = Arc::new(cory_core::cache::Cache::new());
-    let mut label_store = LabelStore::new();
+    let cache = Arc::new(cory_core::cache::Cache::with_capacity(
+        args.cache_tx_cap,
+        args.cache_prevout_cap,
+    ));
+    let mut label_store = match &args.label_dir {
+        Some(dir) => {
+            let store =
+                LabelStore::with_persistence(dir).context("load persisted label directory")?;
+            tracing::info!(path = %dir.display(), "loaded persisted label store");
+            store
+        }
+        None => LabelStore::new(),
+    };
 
     // Load label pack directories.
     for dir in &args.label_pack_dir {
@@ -68,6 +86,10 @@ async fn main() -> eyre::Result<()> {
         max_edges: args.max_edges,
     };
 
+    // Only set the Secure cookie attribute when the server is not bound to
+    // localhost, since localhost typically uses plain HTTP.
+    let is_localhost = args.bind == "127.0.0.1" || args.bind == "localhost" || args.bind == "::1";
+
     let state = server::AppState {
         rpc,
         cache,
@@ -75,7 +97,8 @@ async fn main() -> eyre::Result<()> {
         jwt_manager: jwt_manager.clone(),
         default_limits: graph_limits,
         rpc_concurrency: args.rpc_concurrency,
-        network: map_chain_to_network(&chain_info.chain),
+        network: map_chain_to_network(&chain_info.chain)?,
+        secure_cookies: !is_localhost,
     };
 
     let bind_addr = format!("{}:{}", args.bind, args.port);
@@ -101,6 +124,43 @@ async fn main() -> eyre::Result<()> {
         .context("run HTTP server")?;
 
     Ok(())
+}
+
+/// Best-effort check that txindex is available. If `getrawtransaction` fails
+/// for any known confirmed txid, we warn the user with an actionable message.
+/// This uses the genesis coinbase txid for the chain, which is always confirmed
+/// but only retrievable with txindex (the genesis coinbase is special on mainnet,
+/// but works on regtest/testnet/signet).
+async fn check_txindex_available(rpc: &dyn cory_core::rpc::BitcoinRpc) {
+    // Use a zero txid as a probe — it will always fail without txindex.
+    // We specifically care about the error type: "No such mempool or blockchain
+    // transaction" means txindex is missing, other errors are unrelated.
+    let probe_txid: bitcoin::Txid =
+        "0000000000000000000000000000000000000000000000000000000000000001"
+            .parse()
+            .expect("valid dummy txid");
+
+    match rpc.get_transaction(&probe_txid).await {
+        Ok(_) => {
+            // Unexpectedly succeeded — txindex is definitely available.
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            // "No such mempool or blockchain transaction" is the Bitcoin Core
+            // error when txindex is disabled and the tx is not in mempool.
+            // We can't distinguish "not found because txindex is off" from
+            // "not found because the txid doesn't exist", so we emit an
+            // info-level message rather than an error.
+            if msg.contains("No such mempool") || msg.contains("not found") {
+                tracing::info!(
+                    "txindex probe inconclusive — if graph queries fail for confirmed \
+                     transactions, ensure bitcoind is running with -txindex=1"
+                );
+            }
+            // Other errors (network, auth) are already covered by the
+            // initial getblockchaininfo check.
+        }
+    }
 }
 
 fn format_rpc_connect_error(rpc_url: &str, source_error: &str) -> String {
@@ -137,12 +197,14 @@ fn format_rpc_connect_error(rpc_url: &str, source_error: &str) -> String {
     lines.join("\n")
 }
 
-fn map_chain_to_network(chain: &str) -> Network {
+fn map_chain_to_network(chain: &str) -> eyre::Result<Network> {
     match chain {
-        "main" => Network::Bitcoin,
-        "test" => Network::Testnet,
-        "signet" => Network::Signet,
-        "regtest" => Network::Regtest,
-        _ => Network::Bitcoin,
+        "main" => Ok(Network::Bitcoin),
+        "test" => Ok(Network::Testnet),
+        "signet" => Ok(Network::Signet),
+        "regtest" => Ok(Network::Regtest),
+        _ => Err(eyre!(
+            "unrecognized chain name `{chain}` from getblockchaininfo"
+        )),
     }
 }

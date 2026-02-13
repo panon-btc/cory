@@ -119,6 +119,15 @@ def start_bitcoind(cfg: RegtestConfig) -> RegtestHandle:
     log(f"run_id={cfg.run_id}")
     log(f"datadir={cfg.datadir}")
     if cfg.datadir.exists():
+        # Safety guard: only remove datadirs that live under the project's
+        # tmp/ directory to prevent accidental deletion of real data.
+        resolved = cfg.datadir.resolve()
+        allowed_parent = cfg.tmp_dir.resolve()
+        if not str(resolved).startswith(str(allowed_parent) + os.sep):
+            raise RuntimeError(
+                f"refusing to rmtree datadir outside tmp/: {resolved} "
+                f"(allowed parent: {allowed_parent})"
+            )
         shutil.rmtree(cfg.datadir)
     cfg.datadir.mkdir(parents=True, exist_ok=True)
 

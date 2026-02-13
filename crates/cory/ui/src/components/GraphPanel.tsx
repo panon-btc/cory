@@ -72,11 +72,7 @@ export default function GraphPanel({
   }
 
   if (error) {
-    return (
-      <div style={{ flex: 1, padding: 20, color: "var(--accent)" }}>
-        Error: {error}
-      </div>
-    );
+    return <div style={{ flex: 1, padding: 20, color: "var(--accent)" }}>Error: {error}</div>;
   }
 
   if (!hasGraph) {
@@ -103,9 +99,7 @@ export default function GraphPanel({
         >
           {stats.node_count} transactions, {stats.edge_count} edges, max depth{" "}
           {stats.max_depth_reached}
-          {truncated && (
-            <span style={{ color: "#f0a500", marginLeft: 8 }}>(truncated)</span>
-          )}
+          {truncated && <span style={{ color: "#f0a500", marginLeft: 8 }}>(truncated)</span>}
         </div>
       )}
       <ReactFlow
@@ -123,12 +117,7 @@ export default function GraphPanel({
       >
         <Controls />
         <MiniMap nodeColor={minimapNodeColor} maskColor="rgba(0, 0, 0, 0.6)" />
-        <Background
-          variant={BackgroundVariant.Dots}
-          gap={20}
-          size={1}
-          color="var(--border)"
-        />
+        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--border)" />
       </ReactFlow>
     </div>
   );

@@ -7,6 +7,8 @@
 // still succeeds — the server will show a clear "UI not built" message
 // at runtime instead.
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::process::Command;
 
@@ -20,6 +22,11 @@ macro_rules! log {
 }
 
 fn main() {
+    // When CORY_REQUIRE_UI=1 (set in CI), npm/vite failures abort the build
+    // instead of falling back to the "UI not built" runtime message.
+    let require_ui = std::env::var("CORY_REQUIRE_UI").unwrap_or_default() == "1";
+    println!("cargo:rerun-if-env-changed=CORY_REQUIRE_UI");
+
     let ui_dir = Path::new("ui");
 
     // Tell Cargo when to re-run this script: only when UI source files
@@ -31,6 +38,21 @@ fn main() {
     // when npm is unavailable or the build is skipped.
     let dist = ui_dir.join("dist");
     std::fs::create_dir_all(&dist).expect("create ui/dist directory");
+
+    // Skip the npm build if UI source files haven't changed since the last
+    // successful build. We hash all watched files and compare against a
+    // cached marker in target/.
+    let hash_marker =
+        Path::new(&std::env::var("OUT_DIR").unwrap_or_default()).join("ui-build-hash");
+    let current_hash = hash_ui_sources(ui_dir);
+    if dist.join("index.html").exists() {
+        if let Ok(cached) = std::fs::read_to_string(&hash_marker) {
+            if cached.trim() == current_hash {
+                log!("UI sources unchanged — skipping npm build");
+                return;
+            }
+        }
+    }
 
     // Check if npm is available at all.
     let npm_version = Command::new("npm").arg("--version").output();
@@ -48,40 +70,46 @@ fn main() {
             log!("║                                                     ║");
             log!("║  Install Node.js + npm and rebuild to get the UI.   ║");
             log!("╚══════════════════════════════════════════════════════╝");
+            if require_ui {
+                std::process::exit(1);
+            }
             return;
         }
     }
 
-    // --- npm install --------------------------------------------------------
+    // --- npm ci (deterministic install) ------------------------------------
+    //
+    // Use `npm ci` instead of `npm install` for reproducible builds: it
+    // installs from the lockfile exactly, never modifying package-lock.json.
 
-    log!("running `npm install`...");
+    log!("running `npm ci`...");
 
-    let install = Command::new("npm")
-        .arg("install")
-        .current_dir(ui_dir)
-        .status();
+    let install = Command::new("npm").arg("ci").current_dir(ui_dir).status();
 
     match install {
         Ok(s) if s.success() => {
-            log!("`npm install` done");
+            log!("`npm ci` done");
         }
         Ok(s) => {
             log!("╔══════════════════════════════════════════════════════╗");
-            log!(
-                "║  `npm install` failed (exit code: {:<17}║",
-                format!("{s})")
-            );
+            log!("║  `npm ci` failed (exit code: {:<22}║", format!("{s})"));
             log!("║                                                     ║");
             log!("║  UI will not be embedded. Check ui/package.json     ║");
             log!("║  and your Node.js installation.                     ║");
             log!("╚══════════════════════════════════════════════════════╝");
+            if require_ui {
+                std::process::exit(1);
+            }
             return;
         }
         Err(e) => {
             log!("╔══════════════════════════════════════════════════════╗");
-            log!("║  `npm install` could not be executed:               ║");
+            log!("║  `npm ci` could not be executed:                    ║");
             log!("║  {:<52}║", e);
             log!("╚══════════════════════════════════════════════════════╝");
+            if require_ui {
+                std::process::exit(1);
+            }
             return;
         }
     }
@@ -98,6 +126,8 @@ fn main() {
     match build {
         Ok(s) if s.success() => {
             log!("`npm run build` done — UI assets ready in ui/dist/");
+            // Write the hash marker so subsequent builds can skip npm.
+            let _ = std::fs::write(&hash_marker, &current_hash);
         }
         Ok(s) => {
             log!("╔══════════════════════════════════════════════════════╗");
@@ -109,12 +139,18 @@ fn main() {
             log!("║  UI will not be embedded. Check the TypeScript and  ║");
             log!("║  Vite output above for errors.                      ║");
             log!("╚══════════════════════════════════════════════════════╝");
+            if require_ui {
+                std::process::exit(1);
+            }
         }
         Err(e) => {
             log!("╔══════════════════════════════════════════════════════╗");
             log!("║  `npm run build` could not be executed:             ║");
             log!("║  {:<52}║", e);
             log!("╚══════════════════════════════════════════════════════╝");
+            if require_ui {
+                std::process::exit(1);
+            }
         }
     }
 }
@@ -149,6 +185,60 @@ fn emit_rerun_directives(ui_dir: &Path) -> usize {
     }
 
     count
+}
+
+/// Compute a hash of all UI source and config files for change detection.
+/// Uses file modification times rather than content for speed.
+fn hash_ui_sources(ui_dir: &Path) -> String {
+    let mut hasher = DefaultHasher::new();
+
+    // Hash config files.
+    for name in [
+        "package.json",
+        "package-lock.json",
+        "index.html",
+        "vite.config.ts",
+        "tsconfig.json",
+        "tsconfig.app.json",
+        "tsconfig.node.json",
+    ] {
+        let path = ui_dir.join(name);
+        if let Ok(meta) = std::fs::metadata(&path) {
+            path.display().to_string().hash(&mut hasher);
+            if let Ok(modified) = meta.modified() {
+                modified.hash(&mut hasher);
+            }
+            meta.len().hash(&mut hasher);
+        }
+    }
+
+    // Hash all source files under ui/src/.
+    let src = ui_dir.join("src");
+    if src.exists() {
+        hash_dir(&src, &mut hasher);
+    }
+
+    format!("{:016x}", hasher.finish())
+}
+
+fn hash_dir(dir: &Path, hasher: &mut DefaultHasher) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
+    paths.sort();
+
+    for path in paths {
+        if path.is_dir() {
+            hash_dir(&path, hasher);
+        } else if let Ok(meta) = std::fs::metadata(&path) {
+            path.display().to_string().hash(hasher);
+            if let Ok(modified) = meta.modified() {
+                modified.hash(hasher);
+            }
+            meta.len().hash(hasher);
+        }
+    }
 }
 
 /// Recursively emits `cargo:rerun-if-changed` for every file and directory

@@ -1,9 +1,4 @@
-import type {
-  Bip329Type,
-  GraphResponse,
-  LabelEntry,
-  LabelFileSummary,
-} from "../types";
+import type { Bip329Type, GraphResponse, LabelEntry, LabelFileSummary } from "../types";
 import TargetLabelEditor from "./TargetLabelEditor";
 
 interface SelectedTxEditorProps {
@@ -16,11 +11,7 @@ interface SelectedTxEditorProps {
     refId: string,
     label: string,
   ) => Promise<void>;
-  onDeleteLabel: (
-    fileId: string,
-    labelType: Bip329Type,
-    refId: string,
-  ) => Promise<void>;
+  onDeleteLabel: (fileId: string, labelType: Bip329Type, refId: string) => Promise<void>;
 }
 
 function labelsFor(
@@ -61,9 +52,9 @@ export default function SelectedTxEditor({
           fontWeight: 700,
         }}
       >
-        Any update for an address label is matched across all addresses for a
-        file, be careful to not mix labels to addresses and labels to
-        inputs/outputs.
+        Address labels apply to a single address and are shared wherever that same address appears
+        in the graph. They are stored separately from input/output labels — avoid duplicating
+        information between the two.
       </div>
 
       <TargetLabelEditor
@@ -86,9 +77,7 @@ export default function SelectedTxEditor({
         }}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ color: "var(--accent)", fontSize: 11, marginTop: 2 }}>
-            Inputs
-          </div>
+          <div style={{ color: "var(--accent)", fontSize: 11, marginTop: 2 }}>Inputs</div>
           {tx.inputs.map((_, inputIndex) => {
             const inputRef = `${selectedTxid}:${inputIndex}`;
             const inputAddress = graph.input_address_refs[inputRef] ?? null;
@@ -141,15 +130,11 @@ export default function SelectedTxEditor({
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ color: "var(--accent)", fontSize: 11, marginTop: 2 }}>
-            Outputs
-          </div>
+          <div style={{ color: "var(--accent)", fontSize: 11, marginTop: 2 }}>Outputs</div>
           {tx.outputs.map((_, outputIndex) => {
             const outputRef = `${selectedTxid}:${outputIndex}`;
             const addressRef = graph.output_address_refs[outputRef] ?? null;
-            const occurrences = addressRef
-              ? (graph.address_occurrences[addressRef] ?? [])
-              : [];
+            const occurrences = addressRef ? (graph.address_occurrences[addressRef] ?? []) : [];
             const addressNote =
               addressRef && occurrences.length > 1
                 ? `Reused address (${occurrences.length} outputs in current graph). Address labels are shared for this address.`
@@ -184,9 +169,7 @@ export default function SelectedTxEditor({
                   subtitle={addressRef ?? undefined}
                   labelType="addr"
                   refId={addressRef ?? ""}
-                  labels={
-                    addressRef ? labelsFor(graph, "addr", addressRef) : []
-                  }
+                  labels={addressRef ? labelsFor(graph, "addr", addressRef) : []}
                   localFiles={localFiles}
                   onSaveLabel={onSaveLabel}
                   onDeleteLabel={onDeleteLabel}

@@ -1,10 +1,4 @@
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Bip329Type, LabelEntry, LabelFileSummary } from "../types";
 
 type SaveState = "saved" | "dirty" | "saving" | "error";
@@ -22,11 +16,7 @@ interface TargetLabelEditorProps {
     refId: string,
     label: string,
   ) => Promise<void>;
-  onDeleteLabel: (
-    fileId: string,
-    labelType: Bip329Type,
-    refId: string,
-  ) => Promise<void>;
+  onDeleteLabel: (fileId: string, labelType: Bip329Type, refId: string) => Promise<void>;
   disabled?: boolean;
   disabledMessage?: string;
   note?: string;
@@ -53,15 +43,9 @@ export default function TargetLabelEditor({
   const [newLabelState, setNewLabelState] = useState<SaveState>("saved");
   const [editorError, setEditorError] = useState<string | null>(null);
 
-  const editableEntries = useMemo(
-    () => labels.filter((entry) => entry.editable),
-    [labels],
-  );
+  const editableEntries = useMemo(() => labels.filter((entry) => entry.editable), [labels]);
 
-  const readonlyEntries = useMemo(
-    () => labels.filter((entry) => !entry.editable),
-    [labels],
-  );
+  const readonlyEntries = useMemo(() => labels.filter((entry) => !entry.editable), [labels]);
 
   const editableFileIds = useMemo(
     () => new Set(editableEntries.map((entry) => entry.file_id)),
@@ -89,9 +73,7 @@ export default function TargetLabelEditor({
   }, [editableEntries, refId, labelType]);
 
   useEffect(() => {
-    const hasCurrentSelection = addableFiles.some(
-      (file) => file.id === newFileId,
-    );
+    const hasCurrentSelection = addableFiles.some((file) => file.id === newFileId);
     if (hasCurrentSelection) {
       return;
     }
@@ -111,12 +93,18 @@ export default function TargetLabelEditor({
     [labelType, onDeleteLabel, refId],
   );
 
+  // Debounce autosave: reset a 2s timeout each time drafts or states change,
+  // so we only save after the user stops typing for 2 seconds.
+  const savingRef = useRef(false);
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      const dirtyFileIds = Object.entries(states)
-        .filter(([, state]) => state === "dirty")
-        .map(([fileId]) => fileId);
+    const dirtyFileIds = Object.entries(states)
+      .filter(([, state]) => state === "dirty")
+      .map(([fileId]) => fileId);
 
+    if (dirtyFileIds.length === 0 || savingRef.current) return;
+
+    const timer = window.setTimeout(() => {
+      savingRef.current = true;
       for (const fileId of dirtyFileIds) {
         const next = drafts[fileId]?.trim();
         if (!next) continue;
@@ -130,11 +118,14 @@ export default function TargetLabelEditor({
           .catch((err) => {
             setEditorError((err as Error).message);
             setStates((prev) => ({ ...prev, [fileId]: "error" }));
+          })
+          .finally(() => {
+            savingRef.current = false;
           });
       }
     }, 2000);
 
-    return () => window.clearInterval(timer);
+    return () => window.clearTimeout(timer);
   }, [states, drafts, labelType, onSaveLabel, refId]);
 
   useEffect(() => {
@@ -161,15 +152,7 @@ export default function TargetLabelEditor({
     }, 2000);
 
     return () => window.clearTimeout(timer);
-  }, [
-    isAdding,
-    labelType,
-    newFileId,
-    newLabel,
-    newLabelState,
-    onSaveLabel,
-    refId,
-  ]);
+  }, [isAdding, labelType, newFileId, newLabel, newLabelState, onSaveLabel, refId]);
 
   function stateColor(state: SaveState): string {
     if (state === "saved") return "var(--ok)";
@@ -205,9 +188,7 @@ export default function TargetLabelEditor({
         </div>
       </div>
 
-      {note && (
-        <div style={{ color: "var(--text-muted)", fontSize: 10 }}>{note}</div>
-      )}
+      {note && <div style={{ color: "var(--text-muted)", fontSize: 10 }}>{note}</div>}
 
       {disabled ? (
         <div style={{ color: "var(--text-muted)", fontSize: 10 }}>
@@ -339,24 +320,15 @@ export default function TargetLabelEditor({
           {readonlyEntries.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
               {readonlyEntries.map((entry) => (
-                <div
-                  key={`${entry.file_id}:${entry.label}`}
-                  style={{ fontSize: 10 }}
-                >
-                  <span style={{ color: "var(--text-muted)" }}>
-                    [{entry.file_name}]{" "}
-                  </span>
+                <div key={`${entry.file_id}:${entry.label}`} style={{ fontSize: 10 }}>
+                  <span style={{ color: "var(--text-muted)" }}>[{entry.file_name}] </span>
                   <span style={{ color: "var(--text)" }}>{entry.label}</span>
                 </div>
               ))}
             </div>
           )}
 
-          {editorError && (
-            <div style={{ color: "var(--accent)", fontSize: 10 }}>
-              {editorError}
-            </div>
-          )}
+          {editorError && <div style={{ color: "var(--accent)", fontSize: 10 }}>{editorError}</div>}
         </>
       )}
     </div>

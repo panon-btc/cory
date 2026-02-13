@@ -365,7 +365,7 @@ struct JsonRpcResponseOwned {
 
 #[derive(Deserialize)]
 struct TxOutResponse {
-    value: f64,
+    value: serde_json::Value,
     #[serde(rename = "scriptPubKey")]
     script_pubkey: serde_json::Value,
     confirmations: u64,
@@ -380,8 +380,7 @@ fn parse_gettxout_result(raw: serde_json::Value) -> Result<Option<TxOutInfo>, Co
     let response: TxOutResponse = serde_json::from_value(raw)
         .map_err(|e| CoreError::InvalidTxData(format!("invalid gettxout result: {e}")))?;
 
-    let value = Amount::from_btc(response.value)
-        .map_err(|e| CoreError::InvalidTxData(format!("invalid BTC amount: {e}")))?;
+    let value = parse_btc_amount(&response.value)?;
     let script_pub_key = parse_script_pubkey_from_json(&response.script_pubkey)?;
 
     Ok(Some(TxOutInfo {
@@ -457,8 +456,7 @@ fn parse_vin(vin: &[serde_json::Value]) -> Result<Vec<RawInputInfo>, CoreError> 
             let prevout_value = input
                 .get("prevout")
                 .and_then(|p| p.get("value"))
-                .and_then(serde_json::Value::as_f64)
-                .and_then(|btc| Amount::from_btc(btc).ok());
+                .and_then(|v| parse_btc_amount(v).ok());
 
             let prevout_script = input
                 .get("prevout")
@@ -480,12 +478,11 @@ fn parse_vin(vin: &[serde_json::Value]) -> Result<Vec<RawInputInfo>, CoreError> 
 fn parse_vout(vout: &[serde_json::Value]) -> Result<Vec<RawOutputInfo>, CoreError> {
     vout.iter()
         .map(|output| {
-            let value_btc = output
-                .get("value")
-                .and_then(serde_json::Value::as_f64)
-                .ok_or_else(|| CoreError::InvalidTxData("missing value in vout".into()))?;
-            let value = Amount::from_btc(value_btc)
-                .map_err(|e| CoreError::InvalidTxData(format!("invalid vout amount: {e}")))?;
+            let value = parse_btc_amount(
+                output
+                    .get("value")
+                    .ok_or_else(|| CoreError::InvalidTxData("missing value in vout".into()))?,
+            )?;
 
             let n = parse_u32(output.get("n"), "vout.n")?;
             let script =
@@ -513,6 +510,35 @@ fn parse_script_pubkey_from_json(spk: &serde_json::Value) -> Result<ScriptBuf, C
 fn script_from_hex(hex_str: &str) -> Result<ScriptBuf, CoreError> {
     ScriptBuf::from_hex(hex_str)
         .map_err(|e| CoreError::InvalidTxData(format!("invalid scriptPubKey hex: {e}")))
+}
+
+/// Parse a BTC amount from a JSON value without intermediate f64 precision loss.
+///
+/// Bitcoin Core returns amounts as JSON numbers like `1.23456789`. We convert
+/// the raw JSON representation to a string first and parse via the `bitcoin`
+/// crate's `Amount::from_str_in`, which avoids the precision hazards of
+/// `f64 * 1e8`. Falls back to the f64 path for robustness.
+fn parse_btc_amount(value: &serde_json::Value) -> Result<Amount, CoreError> {
+    // Try the string path first for maximum precision.
+    let s = match value {
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::String(s) => s.clone(),
+        _ => {
+            return Err(CoreError::InvalidTxData(format!(
+                "expected numeric BTC amount, got: {value}"
+            )))
+        }
+    };
+
+    Amount::from_str_in(&s, bitcoin::Denomination::Bitcoin).or_else(|_| {
+        // Fallback: parse as f64 for edge cases (scientific notation, etc.).
+        s.parse::<f64>()
+            .map_err(|e| CoreError::InvalidTxData(format!("invalid BTC amount `{s}`: {e}")))
+            .and_then(|f| {
+                Amount::from_btc(f)
+                    .map_err(|e| CoreError::InvalidTxData(format!("invalid BTC amount `{s}`: {e}")))
+            })
+    })
 }
 
 fn parse_batch_id(id: &serde_json::Value) -> Result<u64, CoreError> {

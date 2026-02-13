@@ -21,17 +21,11 @@ interface LabelPanelProps {
     refId: string,
     label: string,
   ) => Promise<void>;
-  onDeleteLabel: (
-    fileId: string,
-    labelType: Bip329Type,
-    refId: string,
-  ) => Promise<void>;
+  onDeleteLabel: (fileId: string, labelType: Bip329Type, refId: string) => Promise<void>;
 }
 
 function fileNameWithoutJsonl(fileName: string): string {
-  return fileName.toLowerCase().endsWith(".jsonl")
-    ? fileName.slice(0, -6)
-    : fileName;
+  return fileName.toLowerCase().endsWith(".jsonl") ? fileName.slice(0, -6) : fileName;
 }
 
 export default function LabelPanel({
@@ -154,7 +148,9 @@ export default function LabelPanel({
       anchor.href = URL.createObjectURL(blob);
       anchor.download = finalName;
       anchor.click();
-      URL.revokeObjectURL(anchor.href);
+      // Delay revocation so the browser has time to start the download.
+      // Revoking immediately can cause the download to fail in some browsers.
+      setTimeout(() => URL.revokeObjectURL(anchor.href), 60_000);
     } catch (err) {
       if ((err as Error).name === "AbortError") {
         return;
@@ -165,9 +161,7 @@ export default function LabelPanel({
 
   const handleDelete = useCallback(
     async (file: LabelFileSummary) => {
-      const confirmed = window.confirm(
-        `Remove label file '${file.name}' from server memory?`,
-      );
+      const confirmed = window.confirm(`Remove label file '${file.name}' from server memory?`);
       if (!confirmed) return;
 
       try {
@@ -218,9 +212,7 @@ export default function LabelPanel({
               ))}
             </ul>
           ) : (
-            <p style={{ color: "var(--text-muted)", fontSize: 11 }}>
-              No pack label files loaded.
-            </p>
+            <p style={{ color: "var(--text-muted)", fontSize: 11 }}>No pack label files loaded.</p>
           )}
         </div>
       </details>
@@ -246,8 +238,8 @@ export default function LabelPanel({
               fontWeight: 700,
             }}
           >
-            All label files are stored in memory, if you forget to export before
-            closing the server, changes will be lost.
+            All label files are stored in memory, if you forget to export before closing the server,
+            changes will be lost.
           </div>
 
           <div style={{ display: "flex", gap: 6 }}>
@@ -269,10 +261,7 @@ export default function LabelPanel({
           </div>
 
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <button
-              onClick={handleImportClick}
-              style={{ fontSize: 11, padding: "4px 8px" }}
-            >
+            <button onClick={handleImportClick} style={{ fontSize: 11, padding: "4px 8px" }}>
               Import JSONL
             </button>
           </div>
@@ -329,9 +318,7 @@ export default function LabelPanel({
               ))}
             </ul>
           ) : (
-            <p style={{ color: "var(--text-muted)", fontSize: 11 }}>
-              No local label files loaded.
-            </p>
+            <p style={{ color: "var(--text-muted)", fontSize: 11 }}>No local label files loaded.</p>
           )}
         </div>
       </details>
@@ -349,9 +336,7 @@ export default function LabelPanel({
         </div>
       </details>
 
-      {panelError && (
-        <p style={{ color: "var(--accent)", fontSize: 11 }}>{panelError}</p>
-      )}
+      {panelError && <p style={{ color: "var(--accent)", fontSize: 11 }}>{panelError}</p>}
     </div>
   );
 }

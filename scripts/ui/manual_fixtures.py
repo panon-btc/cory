@@ -294,31 +294,47 @@ def build_scenarios(
         outputs={rbf_addr_1: sat_to_btc(rbf_input["value_sat"] - 5_000)},
         sequence=0xFFFFFFFD,
     )
-    rbf_txid_2 = send_raw_with_outputs(
-        cli,
-        cli_json,
-        wallet=wallet_graph,
-        inputs=[rbf_input],
-        outputs={rbf_addr_2: sat_to_btc(rbf_input["value_sat"] - 25_000)},
-        sequence=0xFFFFFFFD,
-    )
-    # TODO: expose a `--rbf-policy` fallback mode if users run regtest nodes
-    # with non-default replacement policies that reject BIP125 replacement.
-    mine_to_wallet(cli, wallet=wallet_miner, blocks=1)
-    scenarios.append(
-        {
-            "name": "rbf_replacement",
-            "description": "RBF-signaling transaction replaced by a higher-fee spend.",
-            "root_txid": rbf_txid_2,
-            "related_txids": [rbf_txid_1, rbf_txid_2],
-            "suggested_ui_checks": [
-                "Replacement tx appears as current spend of the same outpoint.",
-                "RBF signaling metadata is visible on the replacement path.",
-            ],
-            "why_interesting": "Validates replaceability and mempool replacement behavior.",
-            "ui_focus": "Inspect sequence-based signaling and tx history context.",
-        }
-    )
+    try:
+        rbf_txid_2 = send_raw_with_outputs(
+            cli,
+            cli_json,
+            wallet=wallet_graph,
+            inputs=[rbf_input],
+            outputs={rbf_addr_2: sat_to_btc(rbf_input["value_sat"] - 25_000)},
+            sequence=0xFFFFFFFD,
+        )
+        mine_to_wallet(cli, wallet=wallet_miner, blocks=1)
+        scenarios.append(
+            {
+                "name": "rbf_replacement",
+                "description": "RBF-signaling transaction replaced by a higher-fee spend.",
+                "root_txid": rbf_txid_2,
+                "related_txids": [rbf_txid_1, rbf_txid_2],
+                "suggested_ui_checks": [
+                    "Replacement tx appears as current spend of the same outpoint.",
+                    "RBF signaling metadata is visible on the replacement path.",
+                ],
+                "why_interesting": "Validates replaceability and mempool replacement behavior.",
+                "ui_focus": "Inspect sequence-based signaling and tx history context.",
+            }
+        )
+    except Exception as exc:
+        log(f"WARNING: RBF replacement failed (mempool policy may reject BIP125): {exc}")
+        log("Skipping rbf_replacement scenario — mine original tx instead.")
+        mine_to_wallet(cli, wallet=wallet_miner, blocks=1)
+        scenarios.append(
+            {
+                "name": "rbf_original_only",
+                "description": "RBF-signaling transaction (replacement was rejected by mempool policy).",
+                "root_txid": rbf_txid_1,
+                "related_txids": [rbf_txid_1],
+                "suggested_ui_checks": [
+                    "RBF signaling metadata is visible on the original tx.",
+                ],
+                "why_interesting": "Shows RBF signaling even when replacement is unavailable.",
+                "ui_focus": "Inspect sequence-based signaling.",
+            }
+        )
 
     # 8) OP_RETURN-carrying transaction.
     opret_input = take_utxo()
@@ -416,10 +432,17 @@ def print_examples(server_url: str, scenarios: list[dict[str, Any]]) -> None:
     print(f"   # First, get a token (sets cookie)")
     print(f"   curl -s -X POST -c cookies.txt \"{server_url}/api/v1/auth/token\"")
     print()
-    print("   # Then use the cookie for authenticated requests")
+    print("   # Create a label file, then upsert a label into it:")
+    print(
+        "   FILE_ID=$(curl -s -X POST "
+        f"\"{server_url}/api/v1/label\" "
+        "-H \"content-type: application/json\" "
+        "-b cookies.txt "
+        "-d '{\"name\":\"manual\"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)[\"id\"])')"
+    )
     print(
         "   curl -s -X POST "
-        f"\"{server_url}/api/v1/labels/set\" "
+        f"\"{server_url}/api/v1/label/$FILE_ID\" "
         "-H \"content-type: application/json\" "
         "-b cookies.txt "
         f"-d '{{\"type\":\"tx\",\"ref\":\"{deep['root_txid']}\",\"label\":\"manual-fixture\"}}'"
@@ -510,7 +533,7 @@ def main() -> int:
         )
 
         rpc_url = f"http://127.0.0.1:{cfg.rpc_port}"
-        cory_proc, cory_log_file, server_url, jwt_token = start_cory(
+        cory_proc, cory_log_file, server_url, _token = start_cory(
             root_dir=root_dir,
             rpc_url=rpc_url,
             rpc_user=cfg.rpc_user,
@@ -522,10 +545,9 @@ def main() -> int:
         wait_for_health(server_url)
 
         fixture = {
-            "schema_version": 1,
+            "schema_version": 2,
             "run_id": cfg.run_id,
             "server_url": server_url,
-            "jwt_token": jwt_token,
             "scenarios": [
                 {
                     "name": s["name"],
