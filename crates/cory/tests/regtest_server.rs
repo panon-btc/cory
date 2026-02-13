@@ -76,8 +76,22 @@ async fn regtest_server_endpoints_cover_api_surface() {
         .expect("health response must be valid JSON");
     assert_eq!(health_json.get("status"), Some(&Value::String("ok".into())));
 
-    // Graph endpoint: valid txid payload shape.
+    // Create a client WITHOUT cookies for testing unauthorized access
+    let no_cookie_client = Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("no-cookie client must build");
+
+    // Graph endpoint requires auth - test without auth first
     let graph_url = format!("{base_url}/api/v1/graph/tx/{valid_txid}");
+    let graph_no_auth = no_cookie_client
+        .get(&graph_url)
+        .send()
+        .await
+        .expect("graph request without auth should return response");
+    assert_eq!(graph_no_auth.status(), StatusCode::UNAUTHORIZED);
+
+    // Graph endpoint: valid txid payload shape (with auth).
     let graph_resp = client
         .get(&graph_url)
         .send()
@@ -103,7 +117,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
         );
     }
 
-    // Graph endpoint: invalid txid returns client error.
+    // Graph endpoint: invalid txid returns client error (with auth).
     let invalid_graph_url = format!("{base_url}/api/v1/graph/tx/not-a-txid");
     let invalid_graph_resp = client
         .get(&invalid_graph_url)
@@ -132,7 +146,8 @@ async fn regtest_server_endpoints_cover_api_surface() {
         "label": "runner-set-label"
     });
 
-    let set_missing_auth = client
+    // Test missing auth using the client WITHOUT cookies
+    let set_missing_auth = no_cookie_client
         .post(&set_url)
         .json(&set_payload)
         .send()
@@ -184,7 +199,8 @@ async fn regtest_server_endpoints_cover_api_surface() {
         serde_json::json!({"type":"addr","ref":"bcrt1qexampleimport0000000000000000000000000","label":"runner-addr-label"})
     );
 
-    let import_missing_auth = client
+    // Test missing auth using the client WITHOUT cookies
+    let import_missing_auth = no_cookie_client
         .post(&import_url)
         .header("Content-Type", "text/plain; charset=utf-8")
         .body(import_valid_body.clone())
@@ -233,6 +249,16 @@ async fn regtest_server_endpoints_cover_api_surface() {
     );
 
     let export_url = format!("{base_url}/api/v1/labels/export");
+
+    // Test export without auth
+    let export_no_auth = no_cookie_client
+        .get(&export_url)
+        .send()
+        .await
+        .expect("export without auth should return response");
+    assert_eq!(export_no_auth.status(), StatusCode::UNAUTHORIZED);
+
+    // Test export with valid auth
     let export_resp = client
         .get(&export_url)
         .send()
