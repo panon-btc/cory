@@ -450,8 +450,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
         "disallowed origin must not be granted via matching access-control-allow-origin"
     );
     assert_eq!(
-        disallowed_cors,
-        None,
+        disallowed_cors, None,
         "server should omit access-control-allow-origin for disallowed origins"
     );
 
