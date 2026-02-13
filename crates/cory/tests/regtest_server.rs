@@ -451,8 +451,8 @@ async fn regtest_server_endpoints_cover_api_surface() {
     );
     assert_eq!(
         disallowed_cors,
-        Some(allowed_origin.as_str()),
-        "server should keep returning only the configured exact origin"
+        None,
+        "server should omit access-control-allow-origin for disallowed origins"
     );
 
     // CORS preflight checks.

@@ -374,7 +374,7 @@ def build_fixture_scenarios(
                         "funding_vout": parent_out[0]["vout"],
                     }
                 ],
-                "expected_unresolved_input_count": 1,
+                "expected_unresolved_input_count": 0,
             }
         )
 
