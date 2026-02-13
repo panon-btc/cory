@@ -1,3 +1,4 @@
+mod auth;
 mod cli;
 mod server;
 
@@ -17,14 +18,14 @@ async fn main() -> eyre::Result<()> {
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
+        .with_file(true)
+        .with_line_number(true)
+        .with_level(true)
         .init();
 
-    // Generate a random 32-character hex API token for this session.
-    let api_token = {
-        use rand::Rng;
-        let bytes: [u8; 16] = rand::thread_rng().gen();
-        hex_encode(bytes)
-    };
+    // Generate a secret for JWT signing.
+    let jwt_secret = auth::generate_jwt_secret();
+    let jwt_manager = Arc::new(auth::JwtManager::new(jwt_secret));
 
     // Connect to Bitcoin Core RPC and verify the connection succeeds
     // before starting the server.
@@ -81,7 +82,7 @@ async fn main() -> eyre::Result<()> {
         rpc,
         cache,
         labels: Arc::new(tokio::sync::RwLock::new(label_store)),
-        api_token: api_token.clone(),
+        jwt_manager: jwt_manager.clone(),
         default_limits: graph_limits,
         rpc_concurrency: args.rpc_concurrency,
         local_labels_path: args.local_labels.clone(),
@@ -97,8 +98,7 @@ async fn main() -> eyre::Result<()> {
 
     println!();
     println!("  Cory is running:");
-    println!("    URL:       http://{bind_addr}");
-    println!("    API token: {api_token}");
+    println!("    URL: http://{bind_addr}");
     println!();
 
     let listener = tokio::net::TcpListener::bind(&bind_addr)
@@ -111,11 +111,6 @@ async fn main() -> eyre::Result<()> {
         .context("run HTTP server")?;
 
     Ok(())
-}
-
-/// Tiny hex-encoding helper to avoid adding a `hex` crate dependency.
-fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
-    bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn format_rpc_connect_error(rpc_url: &str, source_error: &str) -> String {

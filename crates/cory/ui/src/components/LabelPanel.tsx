@@ -5,14 +5,12 @@ import { setLabel, importLabels, exportLabels } from "../api";
 interface LabelPanelProps {
   graph: GraphResponse | null;
   selectedTxid: string | null;
-  apiToken: string;
   onRefresh: () => void;
 }
 
 export default function LabelPanel({
   graph,
   selectedTxid,
-  apiToken,
   onRefresh,
 }: LabelPanelProps) {
   const [labelText, setLabelText] = useState("");
@@ -22,18 +20,14 @@ export default function LabelPanel({
 
   const handleSave = useCallback(async () => {
     if (!selectedTxid || !labelText.trim()) return;
-    if (!apiToken) {
-      alert("Please enter an API token first.");
-      return;
-    }
     try {
-      await setLabel(apiToken, selectedTxid, labelText.trim());
+      await setLabel(selectedTxid, labelText.trim());
       setLabelText("");
       onRefresh();
     } catch (e) {
       alert("Error saving label: " + (e as Error).message);
     }
-  }, [selectedTxid, labelText, apiToken, onRefresh]);
+  }, [selectedTxid, labelText, onRefresh]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -50,13 +44,9 @@ export default function LabelPanel({
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      if (!apiToken) {
-        alert("Please enter an API token first.");
-        return;
-      }
       try {
         const text = await file.text();
-        await importLabels(apiToken, text);
+        await importLabels(text);
         alert("Labels imported successfully.");
         onRefresh();
       } catch (err) {
@@ -64,7 +54,7 @@ export default function LabelPanel({
       }
       e.target.value = "";
     },
-    [apiToken, onRefresh],
+    [onRefresh],
   );
 
   const handleExport = useCallback(async () => {

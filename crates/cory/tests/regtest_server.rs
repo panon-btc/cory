@@ -19,6 +19,18 @@ async fn wait_for_server(client: &Client, base_url: &str) {
     panic!("server did not become healthy in time");
 }
 
+/// Initialize authentication by calling /api/v1/auth/token.
+/// This sets the JWT cookie in the client's cookie jar.
+async fn init_auth(client: &Client, base_url: &str) {
+    let token_url = format!("{base_url}/api/v1/auth/token");
+    let resp = client
+        .post(&token_url)
+        .send()
+        .await
+        .expect("auth token request must succeed");
+    assert_eq!(resp.status(), StatusCode::OK, "auth initialization failed");
+}
+
 fn assert_no_wildcard_cors(headers: &HeaderMap) {
     let allow_origin = headers
         .get("access-control-allow-origin")
@@ -35,19 +47,40 @@ fn assert_no_wildcard_cors(headers: &HeaderMap) {
 async fn regtest_server_endpoints_cover_api_surface() {
     let base_url =
         env::var("CORY_TEST_SERVER_BASE_URL").expect("CORY_TEST_SERVER_BASE_URL must be set");
-    let api_token =
-        env::var("CORY_TEST_SERVER_API_TOKEN").expect("CORY_TEST_SERVER_API_TOKEN must be set");
     let valid_txid =
         env::var("CORY_TEST_SERVER_VALID_TXID").expect("CORY_TEST_SERVER_VALID_TXID must be set");
 
+    // Create client with cookie jar for automatic cookie handling
     let client = Client::builder()
+        .cookie_store(true) // Enable automatic cookie management
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .expect("reqwest client must build");
 
     wait_for_server(&client, &base_url).await;
 
-    // Health endpoint.
+    // Initialize authentication - this sets the JWT cookie
+    init_auth(&client, &base_url).await;
+
+    // Refresh endpoint should succeed with an authenticated cookie and
+    // re-issue the cookie transparently in the same client.
+    let refresh_url = format!("{base_url}/api/v1/auth/refresh");
+    let refresh_resp = client
+        .post(&refresh_url)
+        .send()
+        .await
+        .expect("refresh request with auth should succeed");
+    assert_eq!(refresh_resp.status(), StatusCode::OK);
+    let refresh_json: Value = refresh_resp
+        .json()
+        .await
+        .expect("refresh response must be valid JSON");
+    assert_eq!(
+        refresh_json.get("message"),
+        Some(&Value::String("JWT token refreshed".into()))
+    );
+
+    // Health endpoint (no JWT required).
     let health_url = format!("{base_url}/api/v1/health");
     let health_resp = client
         .get(&health_url)
@@ -61,8 +94,29 @@ async fn regtest_server_endpoints_cover_api_surface() {
         .expect("health response must be valid JSON");
     assert_eq!(health_json.get("status"), Some(&Value::String("ok".into())));
 
-    // Graph endpoint: valid txid payload shape.
+    // Create a client WITHOUT cookies for testing unauthorized access
+    let no_cookie_client = Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("no-cookie client must build");
+
+    // Graph endpoint requires auth - test without auth first.
     let graph_url = format!("{base_url}/api/v1/graph/tx/{valid_txid}");
+    let graph_no_auth = no_cookie_client
+        .get(&graph_url)
+        .send()
+        .await
+        .expect("graph request without auth should return response");
+    assert_eq!(graph_no_auth.status(), StatusCode::UNAUTHORIZED);
+
+    let refresh_no_auth = no_cookie_client
+        .post(&refresh_url)
+        .send()
+        .await
+        .expect("refresh request without auth should return response");
+    assert_eq!(refresh_no_auth.status(), StatusCode::UNAUTHORIZED);
+
+    // Graph endpoint: valid txid payload shape (with auth).
     let graph_resp = client
         .get(&graph_url)
         .send()
@@ -88,7 +142,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
         );
     }
 
-    // Graph endpoint: invalid txid returns client error.
+    // Graph endpoint: invalid txid returns client error (with auth).
     let invalid_graph_url = format!("{base_url}/api/v1/graph/tx/not-a-txid");
     let invalid_graph_resp = client
         .get(&invalid_graph_url)
@@ -117,7 +171,8 @@ async fn regtest_server_endpoints_cover_api_surface() {
         "label": "runner-set-label"
     });
 
-    let set_missing_auth = client
+    // Test missing auth using the client WITHOUT cookies
+    let set_missing_auth = no_cookie_client
         .post(&set_url)
         .json(&set_payload)
         .send()
@@ -125,18 +180,9 @@ async fn regtest_server_endpoints_cover_api_surface() {
         .expect("set label without auth should return response");
     assert_eq!(set_missing_auth.status(), StatusCode::UNAUTHORIZED);
 
-    let set_wrong_auth = client
-        .post(&set_url)
-        .header("X-API-Token", "wrong-token")
-        .json(&set_payload)
-        .send()
-        .await
-        .expect("set label with wrong auth should return response");
-    assert_eq!(set_wrong_auth.status(), StatusCode::UNAUTHORIZED);
-
+    // With valid cookie (already set via init_auth), the request succeeds
     let set_ok = client
         .post(&set_url)
-        .header("X-API-Token", &api_token)
         .json(&set_payload)
         .send()
         .await
@@ -151,7 +197,6 @@ async fn regtest_server_endpoints_cover_api_surface() {
     // Set label malformed payloads return client errors.
     let set_bad_json = client
         .post(&set_url)
-        .header("X-API-Token", &api_token)
         .header("Content-Type", "application/json")
         .body("{\"type\":\"tx\",\"ref\":\"abc\",\"label\":}")
         .send()
@@ -161,7 +206,6 @@ async fn regtest_server_endpoints_cover_api_surface() {
 
     let set_invalid_type = client
         .post(&set_url)
-        .header("X-API-Token", &api_token)
         .json(&serde_json::json!({
             "type": "not-a-valid-type",
             "ref": valid_txid,
@@ -180,7 +224,8 @@ async fn regtest_server_endpoints_cover_api_surface() {
         serde_json::json!({"type":"addr","ref":"bcrt1qexampleimport0000000000000000000000000","label":"runner-addr-label"})
     );
 
-    let import_missing_auth = client
+    // Test missing auth using the client WITHOUT cookies
+    let import_missing_auth = no_cookie_client
         .post(&import_url)
         .header("Content-Type", "text/plain; charset=utf-8")
         .body(import_valid_body.clone())
@@ -189,20 +234,10 @@ async fn regtest_server_endpoints_cover_api_surface() {
         .expect("import without auth should return response");
     assert_eq!(import_missing_auth.status(), StatusCode::UNAUTHORIZED);
 
-    let import_wrong_auth = client
-        .post(&import_url)
-        .header("Content-Type", "text/plain; charset=utf-8")
-        .header("X-API-Token", "wrong-token")
-        .body(import_valid_body.clone())
-        .send()
-        .await
-        .expect("import with wrong auth should return response");
-    assert_eq!(import_wrong_auth.status(), StatusCode::UNAUTHORIZED);
-
+    // With valid cookie (from init_auth), import succeeds
     let import_ok = client
         .post(&import_url)
         .header("Content-Type", "text/plain; charset=utf-8")
-        .header("X-API-Token", &api_token)
         .body(import_valid_body)
         .send()
         .await
@@ -220,7 +255,6 @@ async fn regtest_server_endpoints_cover_api_surface() {
     let malformed_import = client
         .post(&import_url)
         .header("Content-Type", "text/plain; charset=utf-8")
-        .header("X-API-Token", &api_token)
         .body("{\"type\":\"tx\",\"ref\":\"x\",\"label\":}\n")
         .send()
         .await
@@ -240,6 +274,16 @@ async fn regtest_server_endpoints_cover_api_surface() {
     );
 
     let export_url = format!("{base_url}/api/v1/labels/export");
+
+    // Test export without auth
+    let export_no_auth = no_cookie_client
+        .get(&export_url)
+        .send()
+        .await
+        .expect("export without auth should return response");
+    assert_eq!(export_no_auth.status(), StatusCode::UNAUTHORIZED);
+
+    // Test export with valid auth
     let export_resp = client
         .get(&export_url)
         .send()
@@ -381,7 +425,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
             HeaderValue::from_str(&allowed_origin).expect("allowed origin must parse"),
         )
         .header("Access-Control-Request-Method", "POST")
-        .header("Access-Control-Request-Headers", "x-api-token,content-type")
+        .header("Access-Control-Request-Headers", "content-type")
         .send()
         .await
         .expect("allowed preflight request must return response");
@@ -408,19 +452,16 @@ async fn regtest_server_endpoints_cover_api_surface() {
         .unwrap_or_default()
         .to_ascii_lowercase();
     assert!(
-        preflight_allow_headers.contains("x-api-token"),
-        "preflight allow-headers should include x-api-token"
-    );
-    assert!(
         preflight_allow_headers.contains("content-type"),
         "preflight allow-headers should include content-type"
     );
+    // Note: Cookies are handled automatically by browser, not via CORS headers
 
     let preflight_disallowed = client
         .request(Method::OPTIONS, &set_url)
         .header(ORIGIN, HeaderValue::from_static(disallowed_origin))
         .header("Access-Control-Request-Method", "POST")
-        .header("Access-Control-Request-Headers", "x-api-token,content-type")
+        .header("Access-Control-Request-Headers", "content-type")
         .send()
         .await
         .expect("disallowed preflight request must return response");

@@ -1,8 +1,8 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import type { Node, Edge } from "@xyflow/react";
 import type { GraphResponse } from "./types";
-import { fetchGraph } from "./api";
+import { fetchGraph, initializeAuth } from "./api";
 import { computeLayout } from "./layout";
 import Header from "./components/Header";
 import GraphPanel from "./components/GraphPanel";
@@ -13,10 +13,16 @@ export default function App() {
   const [edges, setEdges] = useState<Edge[]>([]);
   const [graph, setGraph] = useState<GraphResponse | null>(null);
   const [selectedTxid, setSelectedTxid] = useState<string | null>(null);
-  const [apiToken, setApiToken] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const lastSearchRef = useRef("");
+
+  // Initialize authentication on app mount
+  useEffect(() => {
+    initializeAuth().catch((err) => {
+      console.error("Authentication initialization failed:", err);
+    });
+  }, []);
 
   const doSearch = useCallback(async (txid: string) => {
     lastSearchRef.current = txid;
@@ -54,11 +60,7 @@ export default function App() {
       <div
         style={{ display: "flex", flexDirection: "column", height: "100vh" }}
       >
-        <Header
-          onSearch={doSearch}
-          apiToken={apiToken}
-          onTokenChange={setApiToken}
-        />
+        <Header onSearch={doSearch} />
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
           <GraphPanel
             nodes={nodes}
@@ -73,7 +75,6 @@ export default function App() {
           <LabelPanel
             graph={graph}
             selectedTxid={selectedTxid}
-            apiToken={apiToken}
             onRefresh={handleRefresh}
           />
         </div>

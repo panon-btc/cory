@@ -2,15 +2,9 @@ import { useState, useCallback } from "react";
 
 interface HeaderProps {
   onSearch: (txid: string) => void;
-  apiToken: string;
-  onTokenChange: (token: string) => void;
 }
 
-export default function Header({
-  onSearch,
-  apiToken,
-  onTokenChange,
-}: HeaderProps) {
+export default function Header({ onSearch }: HeaderProps) {
   const [txid, setTxid] = useState("");
 
   const handleSearch = useCallback(() => {
@@ -53,19 +47,6 @@ export default function Header({
           style={{ flex: 1, fontFamily: "var(--mono)" }}
         />
         <button onClick={handleSearch}>Search</button>
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <label style={{ color: "var(--text-muted)", fontSize: 11 }}>
-          API Token:
-        </label>
-        <input
-          type="password"
-          value={apiToken}
-          onChange={(e) => onTokenChange(e.target.value)}
-          placeholder="paste token from terminal"
-          style={{ width: 240, fontSize: 11, fontFamily: "var(--mono)" }}
-        />
       </div>
     </header>
   );

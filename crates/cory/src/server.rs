@@ -2,16 +2,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::extract::{Path, Query, Request, State};
+use axum::http::StatusCode;
+use axum::middleware::{from_fn_with_state, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use rust_embed::Embed;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+use tower_cookies::{Cookie, CookieManagerLayer, Cookies};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
+use crate::auth::{AuthenticatedUser, JWT_COOKIE_NAME};
 use cory_core::cache::Cache;
 use cory_core::enrich;
 use cory_core::labels::{Bip329Type, LabelStore};
@@ -26,7 +29,7 @@ pub struct AppState {
     pub rpc: Arc<dyn BitcoinRpc>,
     pub cache: Arc<Cache>,
     pub labels: Arc<RwLock<LabelStore>>,
-    pub api_token: String,
+    pub jwt_manager: Arc<crate::auth::JwtManager>,
     pub default_limits: GraphLimits,
     pub rpc_concurrency: usize,
     /// If set, local labels are persisted to this file on every mutation.
@@ -49,22 +52,42 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
             axum::http::Method::POST,
             axum::http::Method::OPTIONS,
         ])
-        .allow_headers([
-            axum::http::header::CONTENT_TYPE,
-            axum::http::header::HeaderName::from_static("x-api-token"),
-        ]);
+        .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::COOKIE])
+        .allow_credentials(true);
 
     let shared = Arc::new(state);
+    let jwt_manager = shared.jwt_manager.clone();
 
-    Router::new()
+    // Keep auth policy declarative: public API and protected API live in
+    // separate routers, and only the protected subtree gets JWT middleware.
+    let public_api = Router::new()
         .route("/api/v1/health", get(health))
+        .route("/api/v1/auth/token", post(get_or_create_token));
+
+    let protected_api = Router::new()
+        .route("/api/v1/labels/export", get(export_labels))
         .route("/api/v1/graph/tx/{txid}", get(get_graph))
         .route("/api/v1/labels/import", post(import_labels))
-        .route("/api/v1/labels/export", get(export_labels))
         .route("/api/v1/labels/set", post(set_label))
-        .fallback(get(static_files))
+        .route("/api/v1/auth/refresh", post(refresh_token))
+        .route_layer(from_fn_with_state(jwt_manager, require_jwt_cookie_auth));
+
+    Router::new()
+        .merge(public_api)
+        .merge(protected_api)
+        .fallback(static_files)
+        .layer(CookieManagerLayer::new())
         .layer(cors)
         .with_state(shared)
+}
+
+async fn require_jwt_cookie_auth(
+    State(jwt_manager): State<Arc<crate::auth::JwtManager>>,
+    cookies: Cookies,
+    request: Request,
+    next: Next,
+) -> Response {
+    crate::auth::jwt_auth_middleware(jwt_manager, cookies, request, next).await
 }
 
 // ==============================================================================
@@ -73,6 +96,63 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
 
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "ok" }))
+}
+/// Get or create a JWT token and set it as an HttpOnly cookie.
+async fn get_or_create_token(
+    State(state): State<SharedState>,
+    cookies: Cookies,
+) -> Result<Json<serde_json::Value>, AppError> {
+    // Generate a new session ID and JWT token
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let token = state
+        .jwt_manager
+        .generate_token(session_id.clone())
+        .map_err(|e| AppError::Internal(format!("failed to generate token: {}", e)))?;
+
+    // Set the JWT token as an HttpOnly cookie for security
+    let mut cookie = Cookie::new(JWT_COOKIE_NAME, token);
+    cookie.set_http_only(true);
+    cookie.set_path("/");
+    cookie.set_same_site(tower_cookies::cookie::SameSite::Strict);
+    // Cookie expires in 24 hours (matching JWT expiration)
+    cookie.set_max_age(tower_cookies::cookie::time::Duration::seconds(86400));
+
+    cookies.add(cookie);
+
+    Ok(Json(serde_json::json!({
+        "session_id": session_id,
+        "expires_in": 86400,
+        "message": "JWT token set in cookie"
+    })))
+}
+
+/// Refresh an existing JWT token.
+async fn refresh_token(
+    State(state): State<SharedState>,
+    AuthenticatedUser(claims): AuthenticatedUser,
+    cookies: Cookies,
+) -> Result<Json<serde_json::Value>, AppError> {
+    tracing::info!(session_id = %claims.session_id, "Refreshing JWT token");
+
+    // Generate a new token with the same session ID but updated timestamps
+    let new_token = state
+        .jwt_manager
+        .generate_token(claims.session_id)
+        .map_err(|e| AppError::Internal(format!("failed to generate token: {}", e)))?;
+
+    // Update the cookie with the new token
+    let mut cookie = Cookie::new(JWT_COOKIE_NAME, new_token);
+    cookie.set_http_only(true);
+    cookie.set_path("/");
+    cookie.set_same_site(tower_cookies::cookie::SameSite::Strict);
+    cookie.set_max_age(tower_cookies::cookie::time::Duration::seconds(86400));
+
+    cookies.add(cookie);
+
+    Ok(Json(serde_json::json!({
+        "expires_in": 86400,
+        "message": "JWT token refreshed"
+    })))
 }
 
 // -- Graph --------------------------------------------------------------------
@@ -179,10 +259,14 @@ async fn get_graph(
 
 async fn import_labels(
     State(state): State<SharedState>,
-    headers: HeaderMap,
+    user: AuthenticatedUser,
     body: String,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    check_auth(&state.api_token, &headers)?;
+    tracing::info!(
+        session_id = %user.0.session_id,
+        body_len = body.len(),
+        "Importing labels"
+    );
 
     let mut store = state.labels.write().await;
     let local_ns = store.local_namespace();
@@ -227,11 +311,16 @@ struct SetLabelRequest {
 
 async fn set_label(
     State(state): State<SharedState>,
-    headers: HeaderMap,
+    user: AuthenticatedUser,
     req: Result<Json<SetLabelRequest>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    check_auth(&state.api_token, &headers)?;
     let Json(req) = req.map_err(|e| AppError::BadRequest(e.to_string()))?;
+
+    tracing::info!(
+        session_id = %user.0.session_id,
+        ref_id = %req.ref_id,
+        "Setting label for transaction"
+    );
 
     let mut store = state.labels.write().await;
     store.set_label(req.label_type, req.ref_id, req.label);
@@ -283,18 +372,6 @@ async fn static_files(uri: axum::http::Uri) -> Response {
 // Helpers
 // ==============================================================================
 
-fn check_auth(expected_token: &str, headers: &HeaderMap) -> Result<(), AppError> {
-    let token = headers
-        .get("x-api-token")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-
-    if token != expected_token {
-        return Err(AppError::Unauthorized);
-    }
-    Ok(())
-}
-
 /// Write the local namespace to disk if a persistence path is configured.
 async fn persist_labels(path: &Option<PathBuf>, store: &LabelStore) {
     if let Some(path) = path {
@@ -311,7 +388,6 @@ async fn persist_labels(path: &Option<PathBuf>, store: &LabelStore) {
 
 enum AppError {
     BadRequest(String),
-    Unauthorized,
     Internal(String),
 }
 
@@ -319,10 +395,6 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             Self::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
-            Self::Unauthorized => (
-                StatusCode::UNAUTHORIZED,
-                "invalid or missing X-API-Token".into(),
-            ),
             Self::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
         };
 
