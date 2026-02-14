@@ -59,7 +59,11 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
             axum::http::Method::DELETE,
             axum::http::Method::OPTIONS,
         ])
-        .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::COOKIE])
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::COOKIE,
+            axum::http::header::AUTHORIZATION,
+        ])
         .allow_credentials(true);
 
     let shared = Arc::new(state);
@@ -67,7 +71,9 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
 
     let public_api = Router::new()
         .route("/api/v1/health", get(health))
-        .route("/api/v1/auth/token", post(get_or_create_token));
+        .route("/api/v1/auth/token", post(get_or_create_token))
+        .route("/api/v1/auth/logout", post(logout))
+        .route("/api/v1/auth/refresh", post(refresh_token));
 
     // Label mutation routes get a 2 MB body limit to prevent abuse via
     // oversized import payloads. Graph and other routes use Axum's default.
@@ -98,11 +104,7 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
 
     Router::new()
         .merge(public_api)
-        .merge(
-            protected_api
-                .route("/api/v1/auth/refresh", post(refresh_token))
-                .route_layer(from_fn_with_state(jwt_manager, require_jwt_cookie_auth)),
-        )
+        .merge(protected_api.route_layer(from_fn_with_state(jwt_manager, require_jwt_cookie_auth)))
         .fallback(static_files)
         .layer(CookieManagerLayer::new())
         .layer(cors)
@@ -111,11 +113,10 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
 
 async fn require_jwt_cookie_auth(
     State(jwt_manager): State<Arc<crate::auth::JwtManager>>,
-    cookies: Cookies,
     request: Request,
     next: Next,
 ) -> Response {
-    crate::auth::jwt_auth_middleware(jwt_manager, cookies, request, next).await
+    crate::auth::jwt_auth_middleware(jwt_manager, request, next).await
 }
 
 // ==============================================================================
@@ -137,16 +138,29 @@ async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "ok" }))
 }
 
-/// Builds a JWT cookie with consistent security attributes.
-fn build_jwt_cookie(token: String, secure: bool) -> Cookie<'static> {
+/// Builds a refresh token cookie with consistent security attributes.
+fn build_refresh_token_cookie(token: String, secure: bool) -> Cookie<'static> {
     let mut cookie = Cookie::new(JWT_COOKIE_NAME, token);
     cookie.set_http_only(true);
     cookie.set_path("/");
     cookie.set_same_site(tower_cookies::cookie::SameSite::Strict);
-    cookie.set_max_age(tower_cookies::cookie::time::Duration::seconds(86400));
+    // Refresh token lasts 7 days
+    cookie.set_max_age(tower_cookies::cookie::time::Duration::seconds(
+        7 * 24 * 60 * 60,
+    ));
     if secure {
         cookie.set_secure(true);
     }
+    cookie
+}
+
+/// Clears a cookie by setting max_age to 0.
+fn clear_cookie() -> Cookie<'static> {
+    let mut cookie = Cookie::new(JWT_COOKIE_NAME, "");
+    cookie.set_http_only(true);
+    cookie.set_path("/");
+    cookie.set_same_site(tower_cookies::cookie::SameSite::Strict);
+    cookie.set_max_age(tower_cookies::cookie::time::Duration::seconds(0));
     cookie
 }
 
@@ -155,35 +169,72 @@ async fn get_or_create_token(
     cookies: Cookies,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let session_id = uuid::Uuid::new_v4().to_string();
-    let token = state
-        .jwt_manager
-        .generate_token(session_id.clone())
-        .map_err(|e| AppError::Internal(format!("failed to generate token: {e}")))?;
 
-    cookies.add(build_jwt_cookie(token, state.secure_cookies));
+    // Generate both access and refresh tokens
+    let access_token = state
+        .jwt_manager
+        .generate_access_token(session_id.clone())
+        .map_err(|e| AppError::Internal(format!("failed to generate access token: {e}")))?;
+
+    let refresh_token = state
+        .jwt_manager
+        .generate_refresh_token(session_id.clone())
+        .map_err(|e| AppError::Internal(format!("failed to generate refresh token: {e}")))?;
+
+    // Store refresh token in httponly cookie
+    cookies.add(build_refresh_token_cookie(
+        refresh_token,
+        state.secure_cookies,
+    ));
 
     Ok(Json(serde_json::json!({
         "session_id": session_id,
-        "expires_in": 86400,
-        "message": "JWT token set in cookie"
+        "access_token": access_token,
+        "access_token_expires_in": 15 * 60, // 15 minutes in seconds
+        "refresh_token_expires_in": 7 * 24 * 60 * 60, // 7 days in seconds
+        "message": "Login successful. Access token in response, refresh token in httponly cookie"
     })))
 }
 
 async fn refresh_token(
     State(state): State<SharedState>,
-    AuthenticatedUser(claims): AuthenticatedUser,
     cookies: Cookies,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let new_token = state
-        .jwt_manager
-        .generate_token(claims.session_id)
-        .map_err(|e| AppError::Internal(format!("failed to generate token: {e}")))?;
+    // Extract refresh token from cookie
+    let refresh_token = cookies
+        .get(JWT_COOKIE_NAME)
+        .ok_or_else(|| AppError::Unauthorized("Missing refresh token cookie".to_string()))?
+        .value()
+        .to_string();
 
-    cookies.add(build_jwt_cookie(new_token, state.secure_cookies));
+    let claims = state
+        .jwt_manager
+        .validate_token(&refresh_token)
+        .map_err(|e| AppError::Unauthorized(format!("Invalid refresh token: {e}")))?;
+
+    if claims.token_type != crate::auth::TokenType::Refresh {
+        return Err(AppError::Unauthorized(
+            "Invalid token type for refresh".to_string(),
+        ));
+    }
+
+    let new_access_token = state
+        .jwt_manager
+        .generate_access_token(claims.session_id)
+        .map_err(|e| AppError::Internal(format!("failed to generate access token: {e}")))?;
 
     Ok(Json(serde_json::json!({
-        "expires_in": 86400,
-        "message": "JWT token refreshed"
+        "access_token": new_access_token,
+        "access_token_expires_in": 15 * 60, // 15 minutes in seconds
+        "message": "Access token refreshed successfully"
+    })))
+}
+
+async fn logout(cookies: Cookies) -> Result<Json<serde_json::Value>, AppError> {
+    cookies.add(clear_cookie());
+
+    Ok(Json(serde_json::json!({
+        "message": "Logged out successfully"
     })))
 }
 
@@ -612,6 +663,7 @@ fn map_label_store_error(err: LabelStoreError) -> AppError {
 
 enum AppError {
     BadRequest(String),
+    Unauthorized(String),
     NotFound(String),
     Conflict(String),
     Internal(String),
@@ -621,6 +673,7 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             Self::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
+            Self::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
             Self::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             Self::Conflict(msg) => (StatusCode::CONFLICT, msg),
             Self::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),

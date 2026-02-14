@@ -14,6 +14,7 @@ import {
   fetchLabelFiles,
   initializeAuth,
   setLabelInFile,
+  SessionExpiredError,
 } from "./api";
 import { computeLayout, refreshNodesFromGraph } from "./layout";
 import Header from "./components/Header";
@@ -34,6 +35,8 @@ function editableLabelBucket(
 export default function App() {
   const SIDEBAR_MIN_WIDTH = 320;
   const SIDEBAR_MAX_WIDTH = 960;
+  const [authReady, setAuthReady] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [graph, setGraph] = useState<GraphResponse | null>(null);
@@ -54,14 +57,35 @@ export default function App() {
   const searchAbortRef = useRef<AbortController | null>(null);
   const searchIdRef = useRef(0);
 
+  // Helper to check if an error is a session expiration
+  const handlePossibleSessionExpiry = useCallback((e: unknown): boolean => {
+    if (e instanceof SessionExpiredError) {
+      setSessionExpired(true);
+      return true;
+    }
+    return false;
+  }, []);
+
   useEffect(() => {
     labelFilesRef.current = labelFiles;
   }, [labelFiles]);
 
+  // Initialize authentication before any API calls can be made.
+  // This ensures the access token is acquired before other effects run.
   useEffect(() => {
-    void initializeAuth().catch((err) => {
-      console.error("Authentication initialization failed:", err);
-    });
+    let mounted = true;
+    initializeAuth()
+      .then(() => {
+        if (mounted) setAuthReady(true);
+      })
+      .catch((err) => {
+        console.error("Authentication initialization failed:", err);
+        // Still mark as ready so the app can attempt recovery on API calls
+        if (mounted) setAuthReady(true);
+      });
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const upsertLabelInState = useCallback(
@@ -137,11 +161,15 @@ export default function App() {
       const files = await fetchLabelFiles();
       setLabelFiles(files);
       return files;
-    } catch {
+    } catch (e) {
+      // Session expired - propagate for handling
+      if (handlePossibleSessionExpiry(e)) {
+        return labelFilesRef.current;
+      }
       // Keep current list if label file metadata request fails.
       return labelFilesRef.current;
     }
-  }, []);
+  }, [handlePossibleSessionExpiry]);
 
   const doSearch = useCallback(
     async (
@@ -181,6 +209,9 @@ export default function App() {
         if ((e as Error).name === "AbortError") return;
         if (searchIdRef.current !== thisSearchId) return;
 
+        // Session expired - show session expired screen
+        if (handlePossibleSessionExpiry(e)) return;
+
         if (!opts?.quietErrors) {
           setError((e as Error).message);
           setGraph(null);
@@ -193,7 +224,7 @@ export default function App() {
         }
       }
     },
-    [],
+    [handlePossibleSessionExpiry],
   );
 
   const handleSaveLabel = useCallback(
@@ -214,9 +245,12 @@ export default function App() {
     [refreshLabelFiles, removeLabelFromState],
   );
 
+  // Only fetch label files after auth is ready to avoid 401 errors
   useEffect(() => {
-    void refreshLabelFiles();
-  }, [refreshLabelFiles]);
+    if (authReady) {
+      void refreshLabelFiles();
+    }
+  }, [authReady, refreshLabelFiles]);
 
   const handleNodesUpdate = useCallback((nextNodes: Node[]) => {
     setNodes(nextNodes);
@@ -298,6 +332,58 @@ export default function App() {
     },
     [sidebarWidth],
   );
+
+  // Show loading state while authentication is initializing
+  if (!authReady) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: "100vh",
+          color: "var(--muted-foreground)",
+        }}
+      >
+        Initializing...
+      </div>
+    );
+  }
+
+  // Show session expired screen when refresh token is invalid/expired
+  if (sessionExpired) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          height: "100vh",
+          gap: "1rem",
+          color: "var(--foreground)",
+        }}
+      >
+        <h2 style={{ margin: 0 }}>Session Expired</h2>
+        <p style={{ margin: 0, color: "var(--muted-foreground)" }}>
+          Your session has expired. Please refresh the page to continue in a new session.
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          style={{
+            padding: "0.5rem 1rem",
+            borderRadius: "0.375rem",
+            border: "1px solid var(--border)",
+            background: "var(--primary)",
+            color: "var(--primary-foreground)",
+            cursor: "pointer",
+          }}
+        >
+          Refresh Page
+        </button>
+      </div>
+    );
+  }
 
   return (
     <ReactFlowProvider>

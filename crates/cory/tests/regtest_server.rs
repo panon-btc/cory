@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::env;
 
-use reqwest::header::{HeaderMap, HeaderValue, ORIGIN};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, ORIGIN};
 use reqwest::Method;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
@@ -19,7 +19,26 @@ async fn wait_for_server(client: &Client, base_url: &str) {
     panic!("server did not become healthy in time");
 }
 
-async fn init_auth(client: &Client, base_url: &str) {
+#[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
+struct AuthTokenResponse {
+    session_id: String,
+    access_token: String,
+    access_token_expires_in: u64,
+    refresh_token_expires_in: u64,
+    message: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
+struct RefreshTokenResponse {
+    access_token: String,
+    access_token_expires_in: u64,
+    message: String,
+}
+
+/// Acquires auth tokens. Returns the access token which should be used in
+async fn init_auth(client: &Client, base_url: &str) -> String {
     let token_url = format!("{base_url}/api/v1/auth/token");
     let resp = client
         .post(&token_url)
@@ -27,6 +46,33 @@ async fn init_auth(client: &Client, base_url: &str) {
         .await
         .expect("auth token request must succeed");
     assert_eq!(resp.status(), StatusCode::OK, "auth initialization failed");
+
+    let auth_response: AuthTokenResponse = resp
+        .json()
+        .await
+        .expect("auth token response must be valid JSON");
+
+    // Verify response structure
+    assert!(
+        !auth_response.access_token.is_empty(),
+        "access_token must be present in response"
+    );
+    assert!(
+        !auth_response.session_id.is_empty(),
+        "session_id must be present in response"
+    );
+    assert_eq!(
+        auth_response.access_token_expires_in,
+        15 * 60,
+        "access_token should expire in 15 minutes"
+    );
+    assert_eq!(
+        auth_response.refresh_token_expires_in,
+        7 * 24 * 60 * 60,
+        "refresh_token should expire in 7 days"
+    );
+
+    auth_response.access_token
 }
 
 fn assert_no_wildcard_cors(headers: &HeaderMap) {
@@ -48,20 +94,25 @@ async fn regtest_server_endpoints_cover_api_surface() {
     let valid_txid =
         env::var("CORY_TEST_SERVER_VALID_TXID").expect("CORY_TEST_SERVER_VALID_TXID must be set");
 
+    // Client with cookie store for refresh token handling
     let client = Client::builder()
         .cookie_store(true)
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .expect("reqwest client must build");
+    // Client without cookie store to test unauthorized access
     let no_cookie_client = Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .expect("no-cookie client must build");
 
     wait_for_server(&client, &base_url).await;
-    init_auth(&client, &base_url).await;
 
-    // Health endpoint.
+    // Acquire access token (refresh token is stored in httpOnly cookie)
+    let access_token = init_auth(&client, &base_url).await;
+    let auth_header_value = format!("Bearer {access_token}");
+
+    // Health endpoint (public, no auth required).
     let health_url = format!("{base_url}/api/v1/health");
     let health_resp = client
         .get(&health_url)
@@ -77,6 +128,8 @@ async fn regtest_server_endpoints_cover_api_surface() {
 
     // Graph endpoint: valid txid payload shape.
     let graph_url = format!("{base_url}/api/v1/graph/tx/{valid_txid}");
+
+    // Request without auth should fail
     let graph_no_auth = no_cookie_client
         .get(&graph_url)
         .send()
@@ -84,8 +137,10 @@ async fn regtest_server_endpoints_cover_api_surface() {
         .expect("graph request without auth should return response");
     assert_eq!(graph_no_auth.status(), StatusCode::UNAUTHORIZED);
 
+    // Request with access token in Authorization header should succeed
     let graph_resp = client
         .get(&graph_url)
+        .header(AUTHORIZATION, &auth_header_value)
         .send()
         .await
         .expect("graph request with valid txid must succeed");
@@ -116,6 +171,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
     let invalid_graph_url = format!("{base_url}/api/v1/graph/tx/not-a-txid");
     let invalid_graph_resp = client
         .get(&invalid_graph_url)
+        .header(AUTHORIZATION, &auth_header_value)
         .send()
         .await
         .expect("graph request with invalid txid must return a response");
@@ -147,6 +203,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
 
     let create_ok = client
         .post(&label_url)
+        .header(AUTHORIZATION, &auth_header_value)
         .json(&create_payload)
         .send()
         .await
@@ -168,6 +225,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
 
     let duplicate_create = client
         .post(&label_url)
+        .header(AUTHORIZATION, &auth_header_value)
         .json(&create_payload)
         .send()
         .await
@@ -194,6 +252,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
 
     let import_ok = client
         .post(&label_url)
+        .header(AUTHORIZATION, &auth_header_value)
         .json(&import_payload)
         .send()
         .await
@@ -231,6 +290,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
 
     let upsert_ok = client
         .post(&upsert_url)
+        .header(AUTHORIZATION, &auth_header_value)
         .json(&upsert_payload)
         .send()
         .await
@@ -239,6 +299,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
 
     let upsert_bad_json = client
         .post(&upsert_url)
+        .header(AUTHORIZATION, &auth_header_value)
         .header("Content-Type", "application/json")
         .body("{\"type\":\"tx\",\"ref\":\"abc\",\"label\":}")
         .send()
@@ -248,6 +309,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
 
     let upsert_invalid_type = client
         .post(&upsert_url)
+        .header(AUTHORIZATION, &auth_header_value)
         .json(&serde_json::json!({
             "type": "not-a-valid-type",
             "ref": valid_txid,
@@ -261,6 +323,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
     // Replace content for created file.
     let replace_ok = client
         .post(&upsert_url)
+        .header(AUTHORIZATION, &auth_header_value)
         .json(&serde_json::json!({
             "content": serde_json::json!({"type":"tx","ref":&valid_txid,"label":"runner-replaced"}).to_string()
         }))
@@ -271,6 +334,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
 
     let replace_malformed = client
         .post(&upsert_url)
+        .header(AUTHORIZATION, &auth_header_value)
         .json(&serde_json::json!({
             "content": "{\"type\":\"tx\",\"ref\":\"x\",\"label\":}\n"
         }))
@@ -282,6 +346,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
     // List files should include both created files.
     let list_resp = client
         .get(&label_url)
+        .header(AUTHORIZATION, &auth_header_value)
         .send()
         .await
         .expect("list label files should return response");
@@ -309,6 +374,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
     let export_url = format!("{base_url}/api/v1/label/{import_file_id}/export");
     let export_resp = client
         .get(&export_url)
+        .header(AUTHORIZATION, &auth_header_value)
         .send()
         .await
         .expect("export label file request must succeed");
@@ -375,6 +441,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
 
     let delete_ok = client
         .delete(format!("{base_url}/api/v1/label/{import_file_id}"))
+        .header(AUTHORIZATION, &auth_header_value)
         .send()
         .await
         .expect("delete with auth should return response");
@@ -509,5 +576,86 @@ async fn regtest_server_endpoints_cover_api_surface() {
     assert!(
         preflight_disallowed_origin != Some(disallowed_origin),
         "disallowed preflight origin must not be granted"
+    );
+
+    //Basic flow followed
+    // 1. Login returns access token in body, refresh token in httpOnly cookie
+    // 2. Access token is used in Authorization header for API calls
+    // 3. Refresh endpoint uses cookie to issue new access token
+    // 4. Logout clears the refresh token cookie
+
+    // Test that refresh endpoint returns new access token using the refresh
+    // token that was set in cookie during init_auth above.
+    let refresh_url = format!("{base_url}/api/v1/auth/refresh");
+    let refresh_resp = client
+        .post(&refresh_url)
+        .send()
+        .await
+        .expect("refresh token request must succeed");
+    assert_eq!(refresh_resp.status(), StatusCode::OK);
+
+    let refresh_json: RefreshTokenResponse = refresh_resp
+        .json()
+        .await
+        .expect("refresh response must be valid JSON");
+    assert!(
+        !refresh_json.access_token.is_empty(),
+        "refresh should return new access_token"
+    );
+    assert_eq!(
+        refresh_json.access_token_expires_in,
+        15 * 60,
+        "new access_token should expire in 15 minutes"
+    );
+
+    // Verify the new access token works for API calls
+    let new_auth_header = format!("Bearer {}", refresh_json.access_token);
+    let graph_with_new_token = client
+        .get(&graph_url)
+        .header(AUTHORIZATION, &new_auth_header)
+        .send()
+        .await
+        .expect("graph request with refreshed token should succeed");
+    assert_eq!(graph_with_new_token.status(), StatusCode::OK);
+
+    // Test that refresh fails without the cookie (using no_cookie_client)
+    let refresh_no_cookie = no_cookie_client
+        .post(&refresh_url)
+        .send()
+        .await
+        .expect("refresh without cookie should return response");
+    assert_eq!(
+        refresh_no_cookie.status(),
+        StatusCode::UNAUTHORIZED,
+        "refresh without cookie should fail"
+    );
+
+    // Test logout clears the session
+    let logout_url = format!("{base_url}/api/v1/auth/logout");
+    let logout_resp = client
+        .post(&logout_url)
+        .send()
+        .await
+        .expect("logout request must succeed");
+    assert_eq!(logout_resp.status(), StatusCode::OK);
+    let logout_json: Value = logout_resp
+        .json()
+        .await
+        .expect("logout response must be valid JSON");
+    assert_eq!(
+        logout_json.get("message").and_then(Value::as_str),
+        Some("Logged out successfully")
+    );
+
+    // After logout, refresh should fail (cookie was cleared)
+    let refresh_after_logout = client
+        .post(&refresh_url)
+        .send()
+        .await
+        .expect("refresh after logout should return response");
+    assert_eq!(
+        refresh_after_logout.status(),
+        StatusCode::UNAUTHORIZED,
+        "refresh after logout should fail because cookie was cleared"
     );
 }
