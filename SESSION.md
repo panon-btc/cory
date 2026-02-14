@@ -11,3 +11,7 @@
   does not include `blockheight`, the adapter resolves it via
   `getblockheader` and caches the mapping. This adds per-block-hash
   RPC traffic.
+
+- **Token in URL leaks via history/logs**: Supporting `?token=` improves
+  bootstrap UX but can expose the API token in browser history and copied
+  links if users share full URLs.

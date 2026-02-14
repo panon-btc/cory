@@ -1,19 +1,16 @@
 use std::sync::Arc;
 
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
-use axum::http::StatusCode;
-use axum::middleware::{from_fn_with_state, Next};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use rust_embed::Embed;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tower_cookies::{Cookie, CookieManagerLayer, Cookies};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
-use crate::auth::{AuthenticatedUser, JWT_COOKIE_NAME};
 use cory_core::cache::Cache;
 use cory_core::enrich;
 use cory_core::labels::{Bip329Type, LabelFileKind, LabelFileSummary, LabelStore, LabelStoreError};
@@ -28,13 +25,10 @@ pub struct AppState {
     pub rpc: Arc<dyn BitcoinRpc>,
     pub cache: Arc<Cache>,
     pub labels: Arc<RwLock<LabelStore>>,
-    pub jwt_manager: Arc<crate::auth::JwtManager>,
+    pub api_token: String,
     pub default_limits: GraphLimits,
     pub rpc_concurrency: usize,
     pub network: bitcoin::Network,
-    /// Whether to set the `Secure` attribute on cookies (true when served
-    /// over HTTPS, i.e. not bound to localhost).
-    pub secure_cookies: bool,
 }
 
 type SharedState = Arc<AppState>;
@@ -61,19 +55,12 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
         ])
         .allow_headers([
             axum::http::header::CONTENT_TYPE,
-            axum::http::header::COOKIE,
-            axum::http::header::AUTHORIZATION,
-        ])
-        .allow_credentials(true);
+            axum::http::header::HeaderName::from_static("x-api-token"),
+        ]);
 
     let shared = Arc::new(state);
-    let jwt_manager = shared.jwt_manager.clone();
 
-    let public_api = Router::new()
-        .route("/api/v1/health", get(health))
-        .route("/api/v1/auth/token", post(get_or_create_token))
-        .route("/api/v1/auth/logout", post(logout))
-        .route("/api/v1/auth/refresh", post(refresh_token));
+    let public_api = Router::new().route("/api/v1/health", get(health));
 
     // Label mutation routes get a 2 MB body limit to prevent abuse via
     // oversized import payloads. Graph and other routes use Axum's default.
@@ -104,19 +91,10 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
 
     Router::new()
         .merge(public_api)
-        .merge(protected_api.route_layer(from_fn_with_state(jwt_manager, require_jwt_cookie_auth)))
+        .merge(protected_api)
         .fallback(static_files)
-        .layer(CookieManagerLayer::new())
         .layer(cors)
         .with_state(shared)
-}
-
-async fn require_jwt_cookie_auth(
-    State(jwt_manager): State<Arc<crate::auth::JwtManager>>,
-    request: Request,
-    next: Next,
-) -> Response {
-    crate::auth::jwt_auth_middleware(jwt_manager, request, next).await
 }
 
 // ==============================================================================
@@ -136,106 +114,6 @@ const MAX_GRAPH_EDGES: usize = 20_000;
 
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "ok" }))
-}
-
-/// Builds a refresh token cookie with consistent security attributes.
-fn build_refresh_token_cookie(token: String, secure: bool) -> Cookie<'static> {
-    let mut cookie = Cookie::new(JWT_COOKIE_NAME, token);
-    cookie.set_http_only(true);
-    cookie.set_path("/");
-    cookie.set_same_site(tower_cookies::cookie::SameSite::Strict);
-    // Refresh token lasts 7 days
-    cookie.set_max_age(tower_cookies::cookie::time::Duration::seconds(
-        7 * 24 * 60 * 60,
-    ));
-    if secure {
-        cookie.set_secure(true);
-    }
-    cookie
-}
-
-/// Clears a cookie by setting max_age to 0.
-fn clear_cookie() -> Cookie<'static> {
-    let mut cookie = Cookie::new(JWT_COOKIE_NAME, "");
-    cookie.set_http_only(true);
-    cookie.set_path("/");
-    cookie.set_same_site(tower_cookies::cookie::SameSite::Strict);
-    cookie.set_max_age(tower_cookies::cookie::time::Duration::seconds(0));
-    cookie
-}
-
-async fn get_or_create_token(
-    State(state): State<SharedState>,
-    cookies: Cookies,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let session_id = uuid::Uuid::new_v4().to_string();
-
-    // Generate both access and refresh tokens
-    let access_token = state
-        .jwt_manager
-        .generate_access_token(session_id.clone())
-        .map_err(|e| AppError::Internal(format!("failed to generate access token: {e}")))?;
-
-    let refresh_token = state
-        .jwt_manager
-        .generate_refresh_token(session_id.clone())
-        .map_err(|e| AppError::Internal(format!("failed to generate refresh token: {e}")))?;
-
-    // Store refresh token in httponly cookie
-    cookies.add(build_refresh_token_cookie(
-        refresh_token,
-        state.secure_cookies,
-    ));
-
-    Ok(Json(serde_json::json!({
-        "session_id": session_id,
-        "access_token": access_token,
-        "access_token_expires_in": 15 * 60, // 15 minutes in seconds
-        "refresh_token_expires_in": 7 * 24 * 60 * 60, // 7 days in seconds
-        "message": "Login successful. Access token in response, refresh token in httponly cookie"
-    })))
-}
-
-async fn refresh_token(
-    State(state): State<SharedState>,
-    cookies: Cookies,
-) -> Result<Json<serde_json::Value>, AppError> {
-    // Extract refresh token from cookie
-    let refresh_token = cookies
-        .get(JWT_COOKIE_NAME)
-        .ok_or_else(|| AppError::Unauthorized("Missing refresh token cookie".to_string()))?
-        .value()
-        .to_string();
-
-    let claims = state
-        .jwt_manager
-        .validate_token(&refresh_token)
-        .map_err(|e| AppError::Unauthorized(format!("Invalid refresh token: {e}")))?;
-
-    if claims.token_type != crate::auth::TokenType::Refresh {
-        return Err(AppError::Unauthorized(
-            "Invalid token type for refresh".to_string(),
-        ));
-    }
-
-    let new_access_token = state
-        .jwt_manager
-        .generate_access_token(claims.session_id)
-        .map_err(|e| AppError::Internal(format!("failed to generate access token: {e}")))?;
-
-    Ok(Json(serde_json::json!({
-        "access_token": new_access_token,
-        "access_token_expires_in": 15 * 60, // 15 minutes in seconds
-        "message": "Access token refreshed successfully"
-    })))
-}
-
-async fn logout(cookies: Cookies) -> Result<Json<serde_json::Value>, AppError> {
-    cookies.add(clear_cookie());
-
-    Ok(Json(serde_json::json!({
-        "message": "Logged out successfully"
-    })))
 }
 
 // -- Graph --------------------------------------------------------------------
@@ -287,9 +165,12 @@ struct GraphLabelsByType {
 
 async fn get_graph(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Path(txid_str): Path<String>,
     Query(query): Query<GraphQuery>,
 ) -> Result<Json<GraphResponse>, AppError> {
+    check_auth(&state.api_token, &headers)?;
+
     let txid: bitcoin::Txid = txid_str
         .parse()
         .map_err(|e| AppError::BadRequest(format!("invalid txid: {e}")))?;
@@ -442,16 +323,19 @@ enum CreateOrImportLabelFileRequest {
 
 async fn list_local_label_files(
     State(state): State<SharedState>,
+    headers: HeaderMap,
 ) -> Result<Json<Vec<LabelFileSummary>>, AppError> {
+    check_auth(&state.api_token, &headers)?;
     let store = state.labels.read().await;
     Ok(Json(store.list_files()))
 }
 
 async fn create_or_import_local_label_file(
     State(state): State<SharedState>,
-    _user: AuthenticatedUser,
+    headers: HeaderMap,
     req: Result<Json<CreateOrImportLabelFileRequest>, JsonRejection>,
 ) -> Result<Json<LabelFileSummary>, AppError> {
+    check_auth(&state.api_token, &headers)?;
     let Json(req) = req.map_err(|e| AppError::BadRequest(e.to_string()))?;
 
     let mut store = state.labels.write().await;
@@ -495,10 +379,11 @@ enum UpsertOrReplaceLabelFileRequest {
 
 async fn upsert_or_replace_local_label_file(
     State(state): State<SharedState>,
-    _user: AuthenticatedUser,
+    headers: HeaderMap,
     Path(file_id): Path<String>,
     req: Result<Json<UpsertOrReplaceLabelFileRequest>, JsonRejection>,
 ) -> Result<Json<LabelFileSummary>, AppError> {
+    check_auth(&state.api_token, &headers)?;
     let Json(req) = req.map_err(|e| AppError::BadRequest(e.to_string()))?;
 
     let mut store = state.labels.write().await;
@@ -521,9 +406,10 @@ async fn upsert_or_replace_local_label_file(
 
 async fn delete_local_label_file(
     State(state): State<SharedState>,
-    _user: AuthenticatedUser,
+    headers: HeaderMap,
     Path(file_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    check_auth(&state.api_token, &headers)?;
     let mut store = state.labels.write().await;
     store
         .remove_local_file(&file_id)
@@ -542,10 +428,11 @@ struct DeleteLabelQuery {
 
 async fn delete_local_label_entry(
     State(state): State<SharedState>,
-    _user: AuthenticatedUser,
+    headers: HeaderMap,
     Path(file_id): Path<String>,
     Query(query): Query<DeleteLabelQuery>,
 ) -> Result<Json<LabelFileSummary>, AppError> {
+    check_auth(&state.api_token, &headers)?;
     let mut store = state.labels.write().await;
     store
         .delete_local_label(&file_id, query.label_type, &query.ref_id)
@@ -559,8 +446,10 @@ async fn delete_local_label_entry(
 
 async fn export_local_label_file(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Path(file_id): Path<String>,
 ) -> Result<Response, AppError> {
+    check_auth(&state.api_token, &headers)?;
     let store = state.labels.read().await;
     let summary = store
         .get_local_file_summary(&file_id)
@@ -624,6 +513,20 @@ async fn static_files(uri: axum::http::Uri) -> Response {
 // ==============================================================================
 // Helpers
 // ==============================================================================
+
+fn check_auth(expected_token: &str, headers: &HeaderMap) -> Result<(), AppError> {
+    let token = headers
+        .get("x-api-token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if token != expected_token {
+        return Err(AppError::Unauthorized(
+            "invalid or missing X-API-Token".to_string(),
+        ));
+    }
+    Ok(())
+}
 
 fn to_label_entries(
     labels: Vec<(

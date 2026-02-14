@@ -1,4 +1,3 @@
-mod auth;
 mod cli;
 mod server;
 
@@ -24,9 +23,12 @@ async fn main() -> eyre::Result<()> {
         .with_level(true)
         .init();
 
-    // Generate a secret for JWT signing.
-    let jwt_secret = auth::generate_jwt_secret();
-    let jwt_manager = Arc::new(auth::JwtManager::new(jwt_secret));
+    // Generate a random API token for this server session.
+    let api_token = {
+        use rand::Rng;
+        let bytes: [u8; 16] = rand::thread_rng().r#gen();
+        hex_encode(bytes)
+    };
 
     // Connect to Bitcoin Core RPC and verify the connection succeeds
     // before starting the server.
@@ -86,19 +88,14 @@ async fn main() -> eyre::Result<()> {
         max_edges: args.max_edges,
     };
 
-    // Only set the Secure cookie attribute when the server is not bound to
-    // localhost, since localhost typically uses plain HTTP.
-    let is_localhost = args.bind == "127.0.0.1" || args.bind == "localhost" || args.bind == "::1";
-
     let state = server::AppState {
         rpc,
         cache,
         labels: Arc::new(tokio::sync::RwLock::new(label_store)),
-        jwt_manager: jwt_manager.clone(),
+        api_token: api_token.clone(),
         default_limits: graph_limits,
         rpc_concurrency: args.rpc_concurrency,
         network: map_chain_to_network(&chain_info.chain)?,
-        secure_cookies: !is_localhost,
     };
 
     let bind_addr = format!("{}:{}", args.bind, args.port);
@@ -111,7 +108,7 @@ async fn main() -> eyre::Result<()> {
 
     println!();
     println!("  Cory is running:");
-    println!("    URL: http://{bind_addr}");
+    println!("    URL:       http://{bind_addr}?token={api_token}");
     println!();
 
     let listener = tokio::net::TcpListener::bind(&bind_addr)
@@ -124,6 +121,11 @@ async fn main() -> eyre::Result<()> {
         .context("run HTTP server")?;
 
     Ok(())
+}
+
+/// Tiny hex-encoding helper to avoid adding a `hex` crate dependency.
+fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
+    bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Best-effort check that txindex is available. If `getrawtransaction` fails

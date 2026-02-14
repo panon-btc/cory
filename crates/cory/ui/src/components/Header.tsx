@@ -2,10 +2,18 @@ import { useState, useCallback } from "react";
 
 interface HeaderProps {
   onSearch: (txid: string) => void;
+  apiToken: string;
+  onTokenChange: (token: string) => void;
+  initialTxid?: string;
 }
 
-export default function Header({ onSearch }: HeaderProps) {
-  const [txid, setTxid] = useState("");
+export default function Header({
+  onSearch,
+  apiToken,
+  onTokenChange,
+  initialTxid = "",
+}: HeaderProps) {
+  const [txid, setTxid] = useState(initialTxid);
 
   const handleSearch = useCallback(() => {
     const trimmed = txid.trim();
@@ -47,6 +55,19 @@ export default function Header({ onSearch }: HeaderProps) {
           style={{ flex: 1, fontFamily: "var(--mono)" }}
         />
         <button onClick={handleSearch}>Search</button>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <label style={{ color: "var(--muted-foreground)", fontSize: 11 }}>API Token:</label>
+        <input
+          type="password"
+          value={apiToken}
+          onChange={(e) => onTokenChange(e.target.value)}
+          placeholder="paste token from terminal"
+          autoComplete="off"
+          spellCheck={false}
+          style={{ width: 240, fontSize: 11, fontFamily: "var(--mono)" }}
+        />
       </div>
     </header>
   );

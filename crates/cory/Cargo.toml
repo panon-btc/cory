@@ -19,8 +19,5 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 rust-embed = { workspace = true }
 mime_guess = { workspace = true }
-jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
-uuid = { version = "1.20.0", features = ["v4"] }
-tower-cookies = { version = "0.11.0", features = ["private"] }
 [dev-dependencies]
 reqwest = { workspace = true }

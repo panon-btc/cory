@@ -62,8 +62,8 @@ What it does:
 - Designed to run fully offline against your own node.
 - The local web server binds to `127.0.0.1` by default.
 - The UI serves local static assets only (no CDNs).
-- Mutating API calls require JWT cookie authentication to reduce localhost CSRF risk.
-  A session token is automatically acquired by the UI on page load.
+- Protected API calls require an `X-API-Token` header. Cory prints a random
+  API token at startup; paste it into the UI token field.
 
 
 ## Labels
