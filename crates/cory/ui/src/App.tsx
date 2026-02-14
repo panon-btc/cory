@@ -28,6 +28,9 @@ function editableLabelBucket(
 export default function App() {
   const SIDEBAR_MIN_WIDTH = 320;
   const SIDEBAR_MAX_WIDTH = 960;
+  const initialParams = new URLSearchParams(window.location.search);
+  const initialSearch = initialParams.get("search")?.trim() ?? "";
+  const initialToken = initialParams.get("token")?.trim() ?? "";
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [graph, setGraph] = useState<GraphResponse | null>(null);
@@ -35,7 +38,10 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [labelFiles, setLabelFiles] = useState<LabelFileSummary[]>([]);
-  const [apiToken, setApiTokenState] = useState(() => localStorage.getItem("cory:apiToken") ?? "");
+  const [apiToken, setApiTokenState] = useState(
+    () => initialToken || localStorage.getItem("cory:apiToken") || "",
+  );
+  const [searchParamTxid, setSearchParamTxid] = useState(initialSearch);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = localStorage.getItem("cory:sidebarWidth");
     if (stored) {
@@ -48,6 +54,27 @@ export default function App() {
   const labelFilesRef = useRef<LabelFileSummary[]>([]);
   const searchAbortRef = useRef<AbortController | null>(null);
   const searchIdRef = useRef(0);
+  const ranInitialSearchRef = useRef(false);
+
+  const replaceUrlParams = useCallback((token: string, search: string) => {
+    const tokenTrimmed = token.trim();
+    const searchTrimmed = search.trim();
+    const parts: string[] = [];
+
+    // Keep token first whenever both params are present.
+    if (tokenTrimmed) {
+      parts.push(`token=${encodeURIComponent(tokenTrimmed)}`);
+    }
+    if (searchTrimmed) {
+      parts.push(`search=${encodeURIComponent(searchTrimmed)}`);
+    }
+
+    const next = `${window.location.pathname}${parts.length > 0 ? `?${parts.join("&")}` : ""}`;
+    const current = `${window.location.pathname}${window.location.search}`;
+    if (next !== current) {
+      window.history.replaceState(null, "", next);
+    }
+  }, []);
 
   useEffect(() => {
     labelFilesRef.current = labelFiles;
@@ -56,7 +83,8 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("cory:apiToken", apiToken);
     setApiToken(apiToken);
-  }, [apiToken]);
+    replaceUrlParams(apiToken, searchParamTxid);
+  }, [apiToken, replaceUrlParams, searchParamTxid]);
 
   const upsertLabelInState = useCallback(
     (fileId: string, fileName: string, labelType: Bip329Type, refId: string, label: string) => {
@@ -152,6 +180,7 @@ export default function App() {
       const thisSearchId = ++searchIdRef.current;
 
       lastSearchRef.current = txid;
+      setSearchParamTxid(txid);
       setLoading(true);
       setError(null);
       try {
@@ -211,6 +240,14 @@ export default function App() {
   useEffect(() => {
     void refreshLabelFiles();
   }, [refreshLabelFiles]);
+
+  useEffect(() => {
+    if (ranInitialSearchRef.current) return;
+    ranInitialSearchRef.current = true;
+    if (initialSearch) {
+      void doSearch(initialSearch);
+    }
+  }, [doSearch, initialSearch]);
 
   const handleNodesUpdate = useCallback((nextNodes: Node[]) => {
     setNodes(nextNodes);
@@ -296,7 +333,12 @@ export default function App() {
   return (
     <ReactFlowProvider>
       <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-        <Header onSearch={doSearch} apiToken={apiToken} onTokenChange={setApiTokenState} />
+        <Header
+          onSearch={doSearch}
+          apiToken={apiToken}
+          onTokenChange={setApiTokenState}
+          initialTxid={initialSearch}
+        />
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
           <GraphPanel
             nodes={nodes}

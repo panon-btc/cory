@@ -199,6 +199,9 @@ Auth is via a startup API token. Cory prints a random token at launch,
 and the UI sends it in `X-API-Token` for protected routes. CORS allows
 only the exact server origin.
 
+The SPA also supports URL bootstrap params: `token` (API token) and
+`search` (txid).
+
 The graph response includes the raw `AncestryGraph` (flattened), plus
 per-node `enrichments` (fee, feerate, RBF, locktime), typed labels in
 `labels_by_type`, and address resolution maps:

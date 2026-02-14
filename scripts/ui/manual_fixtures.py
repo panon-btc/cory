@@ -418,9 +418,7 @@ def print_examples(server_url: str, api_token: str, scenarios: list[dict[str, An
     print("Copy/Paste Examples")
     print("=" * 130)
     print("1) UI walkthrough (diamond merge):")
-    print(f"   Open: {server_url}/")
-    print(f"   Paste API token in header field: {api_token}")
-    print(f"   Search txid: {diamond['root_txid']}")
+    print(f"   Open: {server_url}/?token={api_token}&search={diamond['root_txid']}")
     print()
     print("2) API check for truncation (long chain):")
     print(

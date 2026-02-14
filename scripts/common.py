@@ -13,6 +13,7 @@ import subprocess
 import time
 from typing import Any
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -256,7 +257,16 @@ def start_cory(
     )
 
     url_pat = re.compile(r"URL:\s+(http://\S+)")
-    token_pat = re.compile(r"API token:\s+([A-Za-z0-9]+)")
+    # The startup banner prints the token in the URL query (`?token=...`).
+    def parse_url_line(raw_url: str) -> tuple[str, str | None]:
+        parsed = urllib.parse.urlsplit(raw_url)
+        token_values = urllib.parse.parse_qs(parsed.query).get("token", [])
+        token = token_values[0] if token_values else None
+        base_url = urllib.parse.urlunsplit(
+            (parsed.scheme, parsed.netloc, parsed.path, "", "")
+        )
+        return base_url, token
+
     url = None
     token = None
 
@@ -271,11 +281,9 @@ def start_cory(
             if url is None:
                 match = url_pat.search(line)
                 if match:
-                    url = match.group(1).strip()
-            if token is None:
-                match = token_pat.search(line)
-                if match:
-                    token = match.group(1).strip()
+                    parsed_url, parsed_token = parse_url_line(match.group(1).strip())
+                    url = parsed_url
+                    token = parsed_token
             if url is not None and token is not None:
                 return proc, log_file, url, token
         else:

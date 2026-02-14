@@ -108,8 +108,7 @@ async fn main() -> eyre::Result<()> {
 
     println!();
     println!("  Cory is running:");
-    println!("    URL:       http://{bind_addr}");
-    println!("    API token: {api_token}");
+    println!("    URL:       http://{bind_addr}?token={api_token}");
     println!();
 
     let listener = tokio::net::TcpListener::bind(&bind_addr)

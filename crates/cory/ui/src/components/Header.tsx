@@ -4,10 +4,16 @@ interface HeaderProps {
   onSearch: (txid: string) => void;
   apiToken: string;
   onTokenChange: (token: string) => void;
+  initialTxid?: string;
 }
 
-export default function Header({ onSearch, apiToken, onTokenChange }: HeaderProps) {
-  const [txid, setTxid] = useState("");
+export default function Header({
+  onSearch,
+  apiToken,
+  onTokenChange,
+  initialTxid = "",
+}: HeaderProps) {
+  const [txid, setTxid] = useState(initialTxid);
 
   const handleSearch = useCallback(() => {
     const trimmed = txid.trim();
