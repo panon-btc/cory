@@ -46,7 +46,7 @@ export default function SelectedTxEditor({
           border: "1px solid var(--border)",
           borderRadius: 4,
           padding: 8,
-          color: "#f0a500",
+          color: "var(--warning)",
           fontSize: 10,
           fontStyle: "italic",
           fontWeight: 700,

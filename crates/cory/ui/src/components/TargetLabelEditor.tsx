@@ -1,7 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Bip329Type, LabelEntry, LabelFileSummary } from "../types";
-
-type SaveState = "saved" | "dirty" | "saving" | "error";
+import { AUTOSAVE_DEBOUNCE_MS } from "../constants";
+import { useAutosave, type SaveState } from "../hooks/useAutosave";
 
 interface TargetLabelEditorProps {
   title: ReactNode;
@@ -40,7 +40,6 @@ export default function TargetLabelEditor({
   const [isAdding, setIsAdding] = useState(false);
   const [newFileId, setNewFileId] = useState("");
   const [newLabel, setNewLabel] = useState("");
-  const [newLabelState, setNewLabelState] = useState<SaveState>("saved");
   const [editorError, setEditorError] = useState<string | null>(null);
 
   const editableEntries = useMemo(() => labels.filter((entry) => entry.editable), [labels]);
@@ -68,7 +67,6 @@ export default function TargetLabelEditor({
     setStates(nextStates);
     setIsAdding(false);
     setNewLabel("");
-    setNewLabelState("saved");
     setEditorError(null);
   }, [editableEntries, refId, labelType]);
 
@@ -93,8 +91,9 @@ export default function TargetLabelEditor({
     [labelType, onDeleteLabel, refId],
   );
 
-  // Debounce autosave: reset a 2s timeout each time drafts or states change,
-  // so we only save after the user stops typing for 2 seconds.
+  // Debounce autosave for existing labels: reset a timeout each time
+  // drafts or states change, so we only save after the user stops
+  // typing for AUTOSAVE_DEBOUNCE_MS.
   const savingRef = useRef(false);
   useEffect(() => {
     const dirtyFileIds = Object.entries(states)
@@ -123,36 +122,30 @@ export default function TargetLabelEditor({
             savingRef.current = false;
           });
       }
-    }, 2000);
+    }, AUTOSAVE_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timer);
   }, [states, drafts, labelType, onSaveLabel, refId]);
 
-  useEffect(() => {
-    if (!isAdding || !newFileId || !newLabel.trim()) {
-      return;
-    }
-    if (newLabelState !== "dirty" && newLabelState !== "error") {
-      return;
-    }
+  // Autosave for the new-label form: save after typing stops, then
+  // close the form on success.
+  const newLabelSave = useCallback(
+    async (value: string) => {
+      await onSaveLabel(newFileId, labelType, refId, value);
+      setNewLabel("");
+      setIsAdding(false);
+    },
+    [newFileId, labelType, refId, onSaveLabel],
+  );
 
-    const timer = window.setTimeout(() => {
-      setNewLabelState("saving");
-      void onSaveLabel(newFileId, labelType, refId, newLabel.trim())
-        .then(() => {
-          setEditorError(null);
-          setNewLabel("");
-          setNewLabelState("saved");
-          setIsAdding(false);
-        })
-        .catch((err) => {
-          setEditorError((err as Error).message);
-          setNewLabelState("error");
-        });
-    }, 2000);
+  const {
+    state: newLabelState,
+    error: newLabelError,
+    setState: setNewLabelState,
+  } = useAutosave(newLabel, isAdding && !!newFileId, newLabelSave);
 
-    return () => window.clearTimeout(timer);
-  }, [isAdding, labelType, newFileId, newLabel, newLabelState, onSaveLabel, refId]);
+  // Surface errors from both save paths in a single place.
+  const displayError = editorError ?? newLabelError;
 
   function stateColor(state: SaveState): string {
     if (state === "saved") return "var(--ok)";
@@ -328,7 +321,9 @@ export default function TargetLabelEditor({
             </div>
           )}
 
-          {editorError && <div style={{ color: "var(--accent)", fontSize: 10 }}>{editorError}</div>}
+          {displayError && (
+            <div style={{ color: "var(--accent)", fontSize: 10 }}>{displayError}</div>
+          )}
         </>
       )}
     </div>

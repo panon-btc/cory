@@ -2,38 +2,22 @@ import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "r
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
 import type { TxNodeData, TxOutputDisplayRow } from "../layout";
+import { IO_START_TOP, PRIMARY_ROW_HEIGHT, IO_ROW_GAP } from "../constants";
+import { shortOutpoint, shortAddress, formatSats, formatFeerate } from "../format";
 
 type TxNodeProps = NodeProps & { data: TxNodeData };
 
-const IO_START_TOP = 78;
-const PRIMARY_ROW_HEIGHT = 18;
-const IO_ROW_GAP = 2;
-
-function shortOutpoint(outpoint: string | null): string {
-  if (!outpoint) {
-    return "coinbase";
-  }
-  if (outpoint.length <= 20) {
-    return outpoint;
-  }
-  return `${outpoint.slice(0, 12)}...${outpoint.slice(-6)}`;
-}
-
-function shortAddress(address: string): string {
-  if (address.length <= 14) {
-    return address;
-  }
-  return `${address.slice(0, 6)}...${address.slice(-6)}`;
-}
-
-function formatSats(value: number): string {
-  return `${value.toLocaleString("en-US")} sat`;
-}
-
-function formatFeerate(value: number): string {
-  return value.toFixed(3).replace(/\.?0+$/, "");
-}
-
+// Two-pass handle positioning:
+//
+// Pass 1 (useMemo, estimated): prefix-sum of row heights gives approximate
+// handle Y positions. These are available immediately on first render,
+// preventing edge flicker when React Flow draws connections before the DOM
+// is measured.
+//
+// Pass 2 (useLayoutEffect, measured): after the DOM renders, we read each
+// row's actual offsetTop to correct for any discrepancy between estimated
+// and real heights (e.g. from font rendering differences or collapsed
+// output gaps). The measured values take priority in the Handle `top` prop.
 export default memo(function TxNode({ data, selected }: TxNodeProps) {
   const inputRowRefs = useRef(new Map<number, HTMLDivElement>());
   const outputRowRefs = useRef(new Map<number, HTMLDivElement>());

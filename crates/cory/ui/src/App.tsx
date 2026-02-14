@@ -1,33 +1,16 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import type { Node, Edge } from "@xyflow/react";
-import type {
-  Bip329Type,
-  GraphResponse,
-  LabelEntry,
-  LabelFileSummary,
-  LabelsByType,
-} from "./types";
+import type { Bip329Type, GraphResponse, LabelFileSummary } from "./types";
 import { deleteLabelInFile, fetchGraph, fetchLabelFiles, setApiToken, setLabelInFile } from "./api";
 import { computeLayout, refreshNodesFromGraph } from "./layout";
+import { upsertLabel, removeLabel } from "./labels";
+import { useSidebarResize } from "./hooks/useSidebarResize";
 import Header from "./components/Header";
 import GraphPanel from "./components/GraphPanel";
 import LabelPanel from "./components/LabelPanel";
 
-function editableLabelBucket(
-  labels: LabelsByType,
-  labelType: Bip329Type,
-): Record<string, LabelEntry[]> | null {
-  if (labelType === "tx") return labels.tx;
-  if (labelType === "input") return labels.input;
-  if (labelType === "output") return labels.output;
-  if (labelType === "addr") return labels.addr;
-  return null;
-}
-
 export default function App() {
-  const SIDEBAR_MIN_WIDTH = 320;
-  const SIDEBAR_MAX_WIDTH = 960;
   const initialParams = new URLSearchParams(window.location.search);
   const initialSearch = initialParams.get("search")?.trim() ?? "";
   const initialToken = initialParams.get("token")?.trim() ?? "";
@@ -42,16 +25,15 @@ export default function App() {
     () => initialToken || localStorage.getItem("cory:apiToken") || "",
   );
   const [searchParamTxid, setSearchParamTxid] = useState(initialSearch);
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const stored = localStorage.getItem("cory:sidebarWidth");
-    if (stored) {
-      const n = parseInt(stored, 10);
-      if (!isNaN(n) && n >= SIDEBAR_MIN_WIDTH && n <= SIDEBAR_MAX_WIDTH) return n;
-    }
-    return 390;
-  });
+  const { width: sidebarWidth, onResizeStart: handleSidebarResizeStart } = useSidebarResize();
   const lastSearchRef = useRef("");
   const labelFilesRef = useRef<LabelFileSummary[]>([]);
+
+  // Race-condition guard for fast typing: `searchAbortRef` cancels the
+  // in-flight HTTP request, while `searchIdRef` discards results that
+  // arrive after a newer search has already started. Both are needed
+  // because AbortController only cancels the fetch, not the subsequent
+  // ELK layout computation.
   const searchAbortRef = useRef<AbortController | null>(null);
   const searchIdRef = useRef(0);
   const ranInitialSearchRef = useRef(false);
@@ -88,68 +70,16 @@ export default function App() {
 
   const upsertLabelInState = useCallback(
     (fileId: string, fileName: string, labelType: Bip329Type, refId: string, label: string) => {
-      setGraph((prev) => {
-        if (!prev) return prev;
-        const next = {
-          ...prev,
-          labels_by_type: {
-            tx: { ...prev.labels_by_type.tx },
-            input: { ...prev.labels_by_type.input },
-            output: { ...prev.labels_by_type.output },
-            addr: { ...prev.labels_by_type.addr },
-          },
-        };
-
-        const bucket = editableLabelBucket(next.labels_by_type, labelType);
-        if (!bucket) {
-          return prev;
-        }
-
-        const existing = [...(bucket[refId] ?? [])];
-        const idx = existing.findIndex((entry) => entry.file_id === fileId);
-        const row: LabelEntry = {
-          file_id: fileId,
-          file_name: fileName,
-          file_kind: "local",
-          editable: true,
-          label,
-        };
-        if (idx >= 0) {
-          existing[idx] = row;
-        } else {
-          existing.push(row);
-        }
-        bucket[refId] = existing;
-
-        return next;
-      });
+      setGraph((prev) =>
+        prev ? upsertLabel(prev, fileId, fileName, labelType, refId, label) : prev,
+      );
     },
     [],
   );
 
   const removeLabelFromState = useCallback(
     (fileId: string, labelType: Bip329Type, refId: string) => {
-      setGraph((prev) => {
-        if (!prev) return prev;
-        const next = {
-          ...prev,
-          labels_by_type: {
-            tx: { ...prev.labels_by_type.tx },
-            input: { ...prev.labels_by_type.input },
-            output: { ...prev.labels_by_type.output },
-            addr: { ...prev.labels_by_type.addr },
-          },
-        };
-
-        const bucket = editableLabelBucket(next.labels_by_type, labelType);
-        if (!bucket) {
-          return prev;
-        }
-
-        const existing = bucket[refId] ?? [];
-        bucket[refId] = existing.filter((entry) => entry.file_id !== fileId);
-        return next;
-      });
+      setGraph((prev) => (prev ? removeLabel(prev, fileId, labelType, refId) : prev));
     },
     [],
   );
@@ -273,6 +203,9 @@ export default function App() {
     [doSearch, refreshLabelFiles, selectedTxid],
   );
 
+  // Label edits change node heights (more label lines = taller node)
+  // without changing the graph topology. We detect height changes and
+  // rerun ELK layout so nodes don't overlap after growing/shrinking.
   useEffect(() => {
     if (!graph) {
       return;
@@ -280,9 +213,6 @@ export default function App() {
     setNodes((prevNodes) => {
       const nextNodes = refreshNodesFromGraph(graph, prevNodes);
 
-      // If any node height changed (e.g. from label edits), rerun ELK
-      // layout so nodes don't overlap. We compare heights from the
-      // previous render to detect growth/shrinkage.
       const heightChanged = nextNodes.some((node, i) => {
         const prev = prevNodes[i];
         if (!prev || prev.id !== node.id) return true;
@@ -301,34 +231,6 @@ export default function App() {
       return nextNodes;
     });
   }, [graph]);
-
-  const handleSidebarResizeStart = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      const startX = e.clientX;
-      const startWidth = sidebarWidth;
-
-      const onMouseMove = (moveEvent: MouseEvent) => {
-        const deltaX = moveEvent.clientX - startX;
-        const next = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, startWidth - deltaX));
-        setSidebarWidth(next);
-      };
-
-      const onMouseUp = (upEvent: MouseEvent) => {
-        window.removeEventListener("mousemove", onMouseMove);
-        window.removeEventListener("mouseup", onMouseUp);
-        const finalWidth = Math.min(
-          SIDEBAR_MAX_WIDTH,
-          Math.max(SIDEBAR_MIN_WIDTH, startWidth - (upEvent.clientX - startX)),
-        );
-        localStorage.setItem("cory:sidebarWidth", String(finalWidth));
-      };
-
-      window.addEventListener("mousemove", onMouseMove);
-      window.addEventListener("mouseup", onMouseUp);
-    },
-    [sidebarWidth],
-  );
 
   return (
     <ReactFlowProvider>

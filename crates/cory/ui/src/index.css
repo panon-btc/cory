@@ -8,6 +8,7 @@
   --text-muted: #888;
   --accent: #e94560;
   --ok: #54b689;
+  --warning: #f0a500;
   --accent-dim: #533483;
   --mono: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
 }

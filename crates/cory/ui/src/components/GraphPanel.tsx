@@ -99,7 +99,7 @@ export default function GraphPanel({
         >
           {stats.node_count} transactions, {stats.edge_count} edges, max depth{" "}
           {stats.max_depth_reached}
-          {truncated && <span style={{ color: "#f0a500", marginLeft: 8 }}>(truncated)</span>}
+          {truncated && <span style={{ color: "var(--warning)", marginLeft: 8 }}>(truncated)</span>}
         </div>
       )}
       <ReactFlow
