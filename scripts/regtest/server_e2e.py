@@ -56,7 +56,7 @@ def main() -> int:
         log(f"created fixture transaction txid={txid}")
 
         rpc_url = f"http://127.0.0.1:{cfg.rpc_port}"
-        cory_proc, cory_log_file, base_url, _token = start_cory(
+        cory_proc, cory_log_file, base_url, api_token = start_cory(
             root_dir=root_dir,
             rpc_url=rpc_url,
             rpc_user=cfg.rpc_user,
@@ -82,6 +82,7 @@ def main() -> int:
             test_name="regtest_server",
             extra_env={
                 "CORY_TEST_SERVER_BASE_URL": base_url,
+                "CORY_TEST_SERVER_API_TOKEN": api_token,
                 "CORY_TEST_SERVER_VALID_TXID": txid,
                 "CORY_TEST_SERVER_FIXTURE_FILE": str(fixture_file),
             },

@@ -3,7 +3,7 @@
 Playwright E2E tests for the label workflow in the Cory UI.
 
 This suite tracks the current UI structure:
-- cookie/JWT auth (no manual API token field)
+- manual API token field in the header
 - right sidebar organized as <details> sections
 - in-sidebar "Selected Transaction Editor" for label editing
 """
@@ -60,6 +60,7 @@ class TestResult:
 class E2ERunner:
     page: Page
     server_url: str
+    api_token: str
     scenarios: list[dict[str, Any]]
     results: list[TestResult] = field(default_factory=list)
 
@@ -97,6 +98,10 @@ class E2ERunner:
     def root_txid(self) -> str:
         return self.simple_chain["root_txid"]
 
+    def ensure_api_token(self) -> None:
+        token_input = self.page.get_by_placeholder("paste token from terminal")
+        token_input.fill(self.api_token)
+
     def search_txid(self, txid: str) -> None:
         search_input = self.page.get_by_placeholder(
             "Enter a txid to explore its spending ancestry..."
@@ -123,6 +128,7 @@ class E2ERunner:
 
 def test_graph_renders_after_search(r: E2ERunner) -> None:
     r.page.goto(r.server_url)
+    r.ensure_api_token()
     r.search_txid(r.root_txid())
 
     r.page.locator(".react-flow__node").first.wait_for(state="visible", timeout=15000)
@@ -480,7 +486,7 @@ def main() -> int:
         generate_import_fixture(scenarios)
 
         rpc_url = f"http://127.0.0.1:{cfg.rpc_port}"
-        cory_proc, cory_log_file, server_url, _token = start_cory(
+        cory_proc, cory_log_file, server_url, api_token = start_cory(
             root_dir=root_dir,
             rpc_url=rpc_url,
             rpc_user=cfg.rpc_user,
@@ -496,7 +502,9 @@ def main() -> int:
             browser = pw.chromium.launch(headless=not args.headed, slow_mo=args.slowmo)
             page = browser.new_page()
 
-            runner = E2ERunner(page=page, server_url=server_url, scenarios=scenarios)
+            runner = E2ERunner(
+                page=page, server_url=server_url, api_token=api_token, scenarios=scenarios
+            )
 
             tests = [
                 ("test_graph_renders_after_search", lambda: test_graph_renders_after_search(runner)),

@@ -14,162 +14,28 @@ export class ApiError extends Error {
   }
 }
 
-export class SessionExpiredError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "SessionExpiredError";
-  }
+let apiToken = "";
+
+export function setApiToken(token: string): void {
+  apiToken = token.trim();
 }
 
-interface TokenResponse {
-  access_token: string;
-  access_token_expires_in: number;
-  refresh_token_expires_in?: number;
-  session_id: string;
-  message: string;
-}
-
-interface RefreshTokenResponse {
-  access_token: string;
-  access_token_expires_in: number;
-  message: string;
-}
-
-class TokenManager {
-  private tokenAcquisitionPromise: Promise<void> | null = null;
-  private tokenRefreshPromise: Promise<boolean> | null = null;
-  private authRecoveryPromise: Promise<void> | null = null;
-  private readonly ACCESS_TOKEN_KEY = "cory_access_token";
-
-  getAccessToken(): string | null {
-    return localStorage.getItem(this.ACCESS_TOKEN_KEY);
-  }
-
-  private setAccessToken(token: string): void {
-    localStorage.setItem(this.ACCESS_TOKEN_KEY, token);
-  }
-
-  clearAccessToken(): void {
-    localStorage.removeItem(this.ACCESS_TOKEN_KEY);
-  }
-
-  async acquireToken(): Promise<void> {
-    if (this.tokenAcquisitionPromise) {
-      return this.tokenAcquisitionPromise;
-    }
-    this.tokenAcquisitionPromise = this.performTokenAcquisition();
-    try {
-      await this.tokenAcquisitionPromise;
-    } finally {
-      this.tokenAcquisitionPromise = null;
-    }
-  }
-
-  async refreshToken(): Promise<boolean> {
-    if (this.tokenRefreshPromise) {
-      return this.tokenRefreshPromise;
-    }
-    this.tokenRefreshPromise = this.performTokenRefresh();
-    try {
-      return await this.tokenRefreshPromise;
-    } finally {
-      this.tokenRefreshPromise = null;
-    }
-  }
-
-  async recoverAuth(): Promise<void> {
-    if (this.authRecoveryPromise) {
-      return this.authRecoveryPromise;
-    }
-    this.authRecoveryPromise = this.performAuthRecovery();
-    try {
-      await this.authRecoveryPromise;
-    } finally {
-      this.authRecoveryPromise = null;
-    }
-  }
-
-  private async performAuthRecovery(): Promise<void> {
-    const refreshed = await this.refreshToken();
-    if (!refreshed) {
-      throw new SessionExpiredError("Session expired. Please refresh the page to log in again.");
-    }
-  }
-
-  async ensureAccessToken(): Promise<string> {
-    let token = this.getAccessToken();
-    if (!token) {
-      await this.recoverAuth();
-      token = this.getAccessToken();
-      if (!token) {
-        throw new SessionExpiredError("Session expired. Please refresh the page to log in again.");
-      }
-    }
-    return token;
-  }
-
-  private async performTokenAcquisition(): Promise<void> {
-    const resp = await fetch("/api/v1/auth/token", {
-      method: "POST",
-      credentials: "include",
-    });
-    if (!resp.ok) {
-      const error = await resp.text();
-      throw new Error(`Failed to acquire authentication token: ${error}`);
-    }
-    const data = (await resp.json()) as TokenResponse;
-    this.setAccessToken(data.access_token);
-  }
-
-  private async performTokenRefresh(): Promise<boolean> {
-    const resp = await fetch("/api/v1/auth/refresh", {
-      method: "POST",
-      credentials: "include",
-    });
-    if (resp.status === 401) {
-      this.clearAccessToken();
-      return false;
-    }
-    if (!resp.ok) {
-      const error = await resp.text();
-      throw new Error(`Failed to refresh authentication token: ${error}`);
-    }
-    const data = (await resp.json()) as RefreshTokenResponse;
-    this.setAccessToken(data.access_token);
-    return true;
-  }
-}
-
-const tokenManager = new TokenManager();
-
-export async function initializeAuth(): Promise<void> {
-  await tokenManager.acquireToken();
-}
-
-async function apiFetch(
-  path: string,
-  opts: RequestInit = {},
-  allowAuthRecovery = true,
-): Promise<Response> {
-  const accessToken = await tokenManager.ensureAccessToken();
+async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response> {
   const headers = new Headers(opts.headers);
-  headers.set("Authorization", `Bearer ${accessToken}`);
+  if (apiToken) {
+    headers.set("X-API-Token", apiToken);
+  }
 
   const resp = await fetch(path, {
     ...opts,
     headers,
-    credentials: "include",
   });
-
-  if (resp.status === 401 && allowAuthRecovery) {
-    await tokenManager.recoverAuth();
-    return apiFetch(path, opts, false);
-  }
 
   if (!resp.ok) {
     const err = (await resp.json().catch(() => ({ error: resp.statusText }))) as ApiErrorPayload;
     throw new ApiError(resp.status, err.error || resp.statusText);
   }
+
   return resp;
 }
 

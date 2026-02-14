@@ -256,7 +256,9 @@ def start_cory(
     )
 
     url_pat = re.compile(r"URL:\s+(http://\S+)")
+    token_pat = re.compile(r"API token:\s+([A-Za-z0-9]+)")
     url = None
+    token = None
 
     deadline = time.time() + 90
     while time.time() < deadline:
@@ -270,13 +272,16 @@ def start_cory(
                 match = url_pat.search(line)
                 if match:
                     url = match.group(1).strip()
-            if url is not None:
-                # No longer waiting for token - auth is automatic via cookies
-                return proc, log_file, url, None
+            if token is None:
+                match = token_pat.search(line)
+                if match:
+                    token = match.group(1).strip()
+            if url is not None and token is not None:
+                return proc, log_file, url, token
         else:
             time.sleep(0.1)
 
-    raise RuntimeError("timed out waiting for cory startup output (URL)")
+    raise RuntimeError("timed out waiting for cory startup output (URL/API token)")
 
 
 SATS_PER_BTC = 100_000_000

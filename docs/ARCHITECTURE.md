@@ -170,7 +170,7 @@ Clap derive struct. Notable options:
 ### `main.rs` — Startup
 
 1. Parse CLI, init tracing.
-2. Generate a random JWT signing secret.
+2. Generate a random API token for this server process.
 3. Connect to Bitcoin Core RPC. **This is fatal** — if
    `get_blockchain_info()` fails, the process exits with an error.
    A best-effort `txindex` probe runs immediately after.
@@ -186,19 +186,18 @@ Clap derive struct. Notable options:
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/api/v1/health` | No | `{"status": "ok"}` |
-| GET | `/api/v1/graph/tx/{txid}` | No | Build ancestry graph |
-| GET | `/api/v1/label` | No | List local + pack label files |
+| GET | `/api/v1/graph/tx/{txid}` | Yes | Build ancestry graph |
+| GET | `/api/v1/label` | Yes | List local + pack label files |
 | POST | `/api/v1/label` | Yes | Create file or import JSONL |
 | POST | `/api/v1/label/{file_id}` | Yes | Upsert label or replace file content |
 | DELETE | `/api/v1/label/{file_id}/entry?type=tx&ref=<txid>` | Yes | Delete one label entry from a local file |
 | DELETE | `/api/v1/label/{file_id}` | Yes | Remove local label file |
-| GET | `/api/v1/label/{file_id}/export` | No | Export one local file |
+| GET | `/api/v1/label/{file_id}/export` | Yes | Export one local file |
 | GET | `*` (fallback) | No | Serve embedded UI |
 
-Auth is via JWT cookies (HttpOnly, SameSite=Strict, conditionally
-Secure). The UI acquires a token on page load via `POST /api/v1/auth/token`
-and refreshes it via `POST /api/v1/auth/refresh`. Mutating endpoints
-require a valid JWT cookie. CORS allows only the exact server origin.
+Auth is via a startup API token. Cory prints a random token at launch,
+and the UI sends it in `X-API-Token` for protected routes. CORS allows
+only the exact server origin.
 
 The graph response includes the raw `AncestryGraph` (flattened), plus
 per-node `enrichments` (fee, feerate, RBF, locktime), typed labels in
@@ -242,7 +241,7 @@ ui/src/
 
 - Txid search → interactive DAG visualization with ELK layered layout
 - Click a node to select it → sidebar shows selected-transaction editor
-- Create/import/remove local label files (POST/DELETE with JWT cookie auth)
+- Create/import/remove local label files (POST/DELETE with `X-API-Token` auth)
 - Edit `tx`, `input`, `output`, and derived `addr` labels from the selected transaction editor
 - Address labels are shared by address string (reused addresses map to one label target)
 - Delete one label entry from a local file (DELETE entry endpoint)

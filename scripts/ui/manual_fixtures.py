@@ -409,8 +409,8 @@ def print_scenario_table(scenarios: list[dict[str, Any]]) -> None:
     print("-" * 130)
 
 
-def print_examples(server_url: str, scenarios: list[dict[str, Any]]) -> None:
-    """Print example commands using cookie-based authentication."""
+def print_examples(server_url: str, api_token: str, scenarios: list[dict[str, Any]]) -> None:
+    """Print example commands using `X-API-Token` authentication."""
     deep = next(s for s in scenarios if s["name"].startswith("deep_chain_"))
     diamond = next(s for s in scenarios if s["name"] == "diamond_merge")
 
@@ -419,8 +419,8 @@ def print_examples(server_url: str, scenarios: list[dict[str, Any]]) -> None:
     print("=" * 130)
     print("1) UI walkthrough (diamond merge):")
     print(f"   Open: {server_url}/")
+    print(f"   Paste API token in header field: {api_token}")
     print(f"   Search txid: {diamond['root_txid']}")
-    print("   Authentication is automatic - just use the UI!")
     print()
     print("2) API check for truncation (long chain):")
     print(
@@ -428,23 +428,19 @@ def print_examples(server_url: str, scenarios: list[dict[str, Any]]) -> None:
     )
     print()
     print("3) Mutating API example (set label on deep root):")
-    print("   Note: You need to establish a cookie session first:")
-    print(f"   # First, get a token (sets cookie)")
-    print(f"   curl -s -X POST -c cookies.txt \"{server_url}/api/v1/auth/token\"")
-    print()
     print("   # Create a label file, then upsert a label into it:")
     print(
         "   FILE_ID=$(curl -s -X POST "
         f"\"{server_url}/api/v1/label\" "
+        f"-H \"x-api-token: {api_token}\" "
         "-H \"content-type: application/json\" "
-        "-b cookies.txt "
         "-d '{\"name\":\"manual\"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)[\"id\"])')"
     )
     print(
         "   curl -s -X POST "
         f"\"{server_url}/api/v1/label/$FILE_ID\" "
+        f"-H \"x-api-token: {api_token}\" "
         "-H \"content-type: application/json\" "
-        "-b cookies.txt "
         f"-d '{{\"type\":\"tx\",\"ref\":\"{deep['root_txid']}\",\"label\":\"manual-fixture\"}}'"
     )
 
@@ -533,7 +529,7 @@ def main() -> int:
         )
 
         rpc_url = f"http://127.0.0.1:{cfg.rpc_port}"
-        cory_proc, cory_log_file, server_url, _token = start_cory(
+        cory_proc, cory_log_file, server_url, api_token = start_cory(
             root_dir=root_dir,
             rpc_url=rpc_url,
             rpc_user=cfg.rpc_user,
@@ -569,7 +565,7 @@ def main() -> int:
         print(f"cory log:    {cory_log}")
 
         print_scenario_table(scenarios)
-        print_examples(server_url, scenarios)
+        print_examples(server_url, api_token, scenarios)
 
         print()
         print("Shutdown")
