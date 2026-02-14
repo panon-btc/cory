@@ -14,9 +14,44 @@ export class ApiError extends Error {
   }
 }
 
+export class SessionExpiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SessionExpiredError";
+  }
+}
+
+interface TokenResponse {
+  access_token: string;
+  access_token_expires_in: number;
+  refresh_token_expires_in?: number;
+  session_id: string;
+  message: string;
+}
+
+interface RefreshTokenResponse {
+  access_token: string;
+  access_token_expires_in: number;
+  message: string;
+}
+
 class TokenManager {
   private tokenAcquisitionPromise: Promise<void> | null = null;
   private tokenRefreshPromise: Promise<boolean> | null = null;
+  private authRecoveryPromise: Promise<void> | null = null;
+  private readonly ACCESS_TOKEN_KEY = "cory_access_token";
+
+  getAccessToken(): string | null {
+    return localStorage.getItem(this.ACCESS_TOKEN_KEY);
+  }
+
+  private setAccessToken(token: string): void {
+    localStorage.setItem(this.ACCESS_TOKEN_KEY, token);
+  }
+
+  clearAccessToken(): void {
+    localStorage.removeItem(this.ACCESS_TOKEN_KEY);
+  }
 
   async acquireToken(): Promise<void> {
     if (this.tokenAcquisitionPromise) {
@@ -43,10 +78,34 @@ class TokenManager {
   }
 
   async recoverAuth(): Promise<void> {
+    if (this.authRecoveryPromise) {
+      return this.authRecoveryPromise;
+    }
+    this.authRecoveryPromise = this.performAuthRecovery();
+    try {
+      await this.authRecoveryPromise;
+    } finally {
+      this.authRecoveryPromise = null;
+    }
+  }
+
+  private async performAuthRecovery(): Promise<void> {
     const refreshed = await this.refreshToken();
     if (!refreshed) {
-      await this.acquireToken();
+      throw new SessionExpiredError("Session expired. Please refresh the page to log in again.");
     }
+  }
+
+  async ensureAccessToken(): Promise<string> {
+    let token = this.getAccessToken();
+    if (!token) {
+      await this.recoverAuth();
+      token = this.getAccessToken();
+      if (!token) {
+        throw new SessionExpiredError("Session expired. Please refresh the page to log in again.");
+      }
+    }
+    return token;
   }
 
   private async performTokenAcquisition(): Promise<void> {
@@ -58,6 +117,8 @@ class TokenManager {
       const error = await resp.text();
       throw new Error(`Failed to acquire authentication token: ${error}`);
     }
+    const data = (await resp.json()) as TokenResponse;
+    this.setAccessToken(data.access_token);
   }
 
   private async performTokenRefresh(): Promise<boolean> {
@@ -66,12 +127,15 @@ class TokenManager {
       credentials: "include",
     });
     if (resp.status === 401) {
+      this.clearAccessToken();
       return false;
     }
     if (!resp.ok) {
       const error = await resp.text();
       throw new Error(`Failed to refresh authentication token: ${error}`);
     }
+    const data = (await resp.json()) as RefreshTokenResponse;
+    this.setAccessToken(data.access_token);
     return true;
   }
 }
@@ -87,14 +151,21 @@ async function apiFetch(
   opts: RequestInit = {},
   allowAuthRecovery = true,
 ): Promise<Response> {
+  const accessToken = await tokenManager.ensureAccessToken();
+  const headers = new Headers(opts.headers);
+  headers.set("Authorization", `Bearer ${accessToken}`);
+
   const resp = await fetch(path, {
     ...opts,
+    headers,
     credentials: "include",
   });
+
   if (resp.status === 401 && allowAuthRecovery) {
     await tokenManager.recoverAuth();
     return apiFetch(path, opts, false);
   }
+
   if (!resp.ok) {
     const err = (await resp.json().catch(() => ({ error: resp.statusText }))) as ApiErrorPayload;
     throw new ApiError(resp.status, err.error || resp.statusText);
