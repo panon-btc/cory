@@ -10,11 +10,7 @@ export class ApiError extends Error {
   status: number;
   code: string | null;
 
-  constructor(params: {
-    status: number;
-    message: string;
-    code?: string | null;
-  }) {
+  constructor(params: { status: number; message: string; code?: string | null }) {
     const { status, message, code = null } = params;
     super(message);
     this.name = "ApiError";
@@ -67,9 +63,10 @@ async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response>
               ? payload.message
               : fallback
           : fallback;
-    const code = payload && typeof payload === "object" && typeof payload.code === "string"
-      ? payload.code
-      : null;
+    const code =
+      payload && typeof payload === "object" && typeof payload.code === "string"
+        ? payload.code
+        : null;
     throw new ApiError({
       status: resp.status,
       message,

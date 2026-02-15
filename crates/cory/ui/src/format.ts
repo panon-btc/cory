@@ -59,3 +59,13 @@ export function formatFeerate(value: number): string {
 export function formatLabelEntry(entry: LabelEntry): string {
   return `${entry.file_name}/${entry.label}`;
 }
+
+// ==============================================================================
+// Clipboard
+// ==============================================================================
+
+// Copy text to the clipboard. Failures are silently ignored because clipboard
+// access requires a user gesture and may be unavailable in older browsers.
+export function copyToClipboard(text: string): void {
+  void navigator.clipboard?.writeText(text).catch(() => undefined);
+}

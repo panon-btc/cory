@@ -56,8 +56,7 @@ export function useAutosave(
           setState("saved");
         })
         .catch((err) => {
-          const nextError =
-            onError?.(err) ?? (err instanceof Error ? err.message : "Save failed");
+          const nextError = onError?.(err) ?? (err instanceof Error ? err.message : "Save failed");
           if (nextError === null) {
             setError(null);
             setState("saved");

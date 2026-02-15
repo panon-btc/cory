@@ -132,194 +132,194 @@ export const useAppStore = create<AppState>((set, get) => {
   };
 
   return {
-  nodes: [],
-  edges: [],
-  graph: null,
-  selectedTxid: null,
-  loading: false,
-  error: null,
-  authError: null,
-  labelFiles: [],
-  apiToken: "",
-  searchParamTxid: "",
+    nodes: [],
+    edges: [],
+    graph: null,
+    selectedTxid: null,
+    loading: false,
+    error: null,
+    authError: null,
+    labelFiles: [],
+    apiToken: "",
+    searchParamTxid: "",
 
-  setSelectedTxid: (txid) => set({ selectedTxid: txid }),
+    setSelectedTxid: (txid) => set({ selectedTxid: txid }),
 
-  setNodes: (updater) =>
-    set((state) => ({
-      nodes: typeof updater === "function" ? updater(state.nodes) : updater,
-    })),
+    setNodes: (updater) =>
+      set((state) => ({
+        nodes: typeof updater === "function" ? updater(state.nodes) : updater,
+      })),
 
-  setEdges: (edges) => set({ edges }),
+    setEdges: (edges) => set({ edges }),
 
-  setAuthError: (message) => set({ authError: message }),
+    setAuthError: (message) => set({ authError: message }),
 
-  setApiToken: (token) => {
-    set({ apiToken: token, authError: null });
-    localStorage.setItem("cory:apiToken", token);
-    setApiTokenInModule(token);
-    replaceUrlParams(token, get().searchParamTxid);
-  },
+    setApiToken: (token) => {
+      set({ apiToken: token, authError: null });
+      localStorage.setItem("cory:apiToken", token);
+      setApiTokenInModule(token);
+      replaceUrlParams(token, get().searchParamTxid);
+    },
 
-  refreshLabelFiles: async () => {
-    try {
-      const files = await fetchLabelFiles();
-      set({ labelFiles: files, authError: null });
-      return files;
-    } catch (e) {
-      setAuthErrorFrom(e);
-      // Keep current list if label file metadata request fails.
-      return get().labelFiles;
-    }
-  },
+    refreshLabelFiles: async () => {
+      try {
+        const files = await fetchLabelFiles();
+        set({ labelFiles: files, authError: null });
+        return files;
+      } catch (e) {
+        setAuthErrorFrom(e);
+        // Keep current list if label file metadata request fails.
+        return get().labelFiles;
+      }
+    },
 
-  doSearch: async (txid, opts) => {
-    // Abort any in-flight search request so we don't apply stale results.
-    searchAbortController?.abort();
-    const controller = new AbortController();
-    searchAbortController = controller;
-    const thisSearchId = ++searchId;
+    doSearch: async (txid, opts) => {
+      // Abort any in-flight search request so we don't apply stale results.
+      searchAbortController?.abort();
+      const controller = new AbortController();
+      searchAbortController = controller;
+      const thisSearchId = ++searchId;
 
-    lastSearchTxid = txid;
-    set({ searchParamTxid: txid, loading: true, error: null });
-    replaceUrlParams(get().apiToken, txid);
+      lastSearchTxid = txid;
+      set({ searchParamTxid: txid, loading: true, error: null });
+      replaceUrlParams(get().apiToken, txid);
 
-    try {
-      const resp = await fetchGraph(txid, controller.signal);
-      const { nodes: n, edges: e } = await computeLayout(resp);
+      try {
+        const resp = await fetchGraph(txid, controller.signal);
+        const { nodes: n, edges: e } = await computeLayout(resp);
 
-      // Guard: if another search was started while we were awaiting,
-      // discard these results silently.
-      if (searchId !== thisSearchId) return;
+        // Guard: if another search was started while we were awaiting,
+        // discard these results silently.
+        if (searchId !== thisSearchId) return;
 
-      const preservedTxid = opts?.preserveSelectedTxid;
-      const nextSelectedTxid =
-        preservedTxid && resp.nodes[preservedTxid] ? preservedTxid : resp.root_txid;
+        const preservedTxid = opts?.preserveSelectedTxid;
+        const nextSelectedTxid =
+          preservedTxid && resp.nodes[preservedTxid] ? preservedTxid : resp.root_txid;
 
-      set({ graph: resp, nodes: n, edges: e, selectedTxid: nextSelectedTxid, authError: null });
-    } catch (e) {
-      // Aborted requests are not errors — just ignore them.
-      if ((e as Error).name === "AbortError") return;
-      if (searchId !== thisSearchId) return;
+        set({ graph: resp, nodes: n, edges: e, selectedTxid: nextSelectedTxid, authError: null });
+      } catch (e) {
+        // Aborted requests are not errors — just ignore them.
+        if ((e as Error).name === "AbortError") return;
+        if (searchId !== thisSearchId) return;
 
-      if (setAuthErrorFrom(e)) {
-        window.alert(errorMessage(e, "request failed"));
-        return;
+        if (setAuthErrorFrom(e)) {
+          window.alert(errorMessage(e, "request failed"));
+          return;
+        }
+
+        if (!opts?.quietErrors) {
+          set({
+            error: errorMessage(e, "Failed to load graph"),
+            graph: null,
+            nodes: [],
+            edges: [],
+          });
+        }
+      } finally {
+        if (searchId === thisSearchId) {
+          set({ loading: false });
+        }
+      }
+    },
+
+    saveLabel: async (fileId, labelType, refId, label) => {
+      let summary;
+      try {
+        summary = await setLabelInFile(fileId, labelType, refId, label);
+        set({ authError: null });
+      } catch (e) {
+        setAuthErrorFrom(e);
+        throw e;
       }
 
-      if (!opts?.quietErrors) {
-        set({
-          error: errorMessage(e, "Failed to load graph"),
-          graph: null,
-          nodes: [],
-          edges: [],
+      // Inline upsert into graph state (replaces labels.ts:upsertLabel).
+      set((state) => {
+        const { graph } = state;
+        if (!graph) return state;
+
+        const next = {
+          ...graph,
+          labels_by_type: {
+            tx: { ...graph.labels_by_type.tx },
+            input: { ...graph.labels_by_type.input },
+            output: { ...graph.labels_by_type.output },
+            addr: { ...graph.labels_by_type.addr },
+          },
+        };
+
+        const bucket = labelBucket(next.labels_by_type, labelType);
+        if (!bucket) return state;
+
+        const existing = [...(bucket[refId] ?? [])];
+        const idx = existing.findIndex((entry) => entry.file_id === fileId);
+        const row: LabelEntry = {
+          file_id: fileId,
+          file_name: summary.name,
+          file_kind: "local",
+          editable: true,
+          label,
+        };
+        if (idx >= 0) {
+          existing[idx] = row;
+        } else {
+          existing.push(row);
+        }
+        bucket[refId] = existing;
+
+        return { graph: next };
+      });
+
+      await get().refreshLabelFiles();
+    },
+
+    deleteLabel: async (fileId, labelType, refId) => {
+      try {
+        await deleteLabelInFile(fileId, labelType, refId);
+        set({ authError: null });
+      } catch (e) {
+        setAuthErrorFrom(e);
+        throw e;
+      }
+
+      // Inline removal from graph state (replaces labels.ts:removeLabel).
+      set((state) => {
+        const { graph } = state;
+        if (!graph) return state;
+
+        const next = {
+          ...graph,
+          labels_by_type: {
+            tx: { ...graph.labels_by_type.tx },
+            input: { ...graph.labels_by_type.input },
+            output: { ...graph.labels_by_type.output },
+            addr: { ...graph.labels_by_type.addr },
+          },
+        };
+
+        const bucket = labelBucket(next.labels_by_type, labelType);
+        if (!bucket) return state;
+
+        const existing = bucket[refId] ?? [];
+        bucket[refId] = existing.filter((entry) => entry.file_id !== fileId);
+
+        return { graph: next };
+      });
+
+      await get().refreshLabelFiles();
+    },
+
+    labelsChanged: async (opts) => {
+      await get().refreshLabelFiles();
+      if (opts?.refreshGraph === false) return;
+
+      if (lastSearchTxid) {
+        await get().doSearch(lastSearchTxid, {
+          preserveSelectedTxid: get().selectedTxid,
+          quietErrors: true,
         });
       }
-    } finally {
-      if (searchId === thisSearchId) {
-        set({ loading: false });
-      }
-    }
-  },
-
-  saveLabel: async (fileId, labelType, refId, label) => {
-    let summary;
-    try {
-      summary = await setLabelInFile(fileId, labelType, refId, label);
-      set({ authError: null });
-    } catch (e) {
-      setAuthErrorFrom(e);
-      throw e;
-    }
-
-    // Inline upsert into graph state (replaces labels.ts:upsertLabel).
-    set((state) => {
-      const { graph } = state;
-      if (!graph) return state;
-
-      const next = {
-        ...graph,
-        labels_by_type: {
-          tx: { ...graph.labels_by_type.tx },
-          input: { ...graph.labels_by_type.input },
-          output: { ...graph.labels_by_type.output },
-          addr: { ...graph.labels_by_type.addr },
-        },
-      };
-
-      const bucket = labelBucket(next.labels_by_type, labelType);
-      if (!bucket) return state;
-
-      const existing = [...(bucket[refId] ?? [])];
-      const idx = existing.findIndex((entry) => entry.file_id === fileId);
-      const row: LabelEntry = {
-        file_id: fileId,
-        file_name: summary.name,
-        file_kind: "local",
-        editable: true,
-        label,
-      };
-      if (idx >= 0) {
-        existing[idx] = row;
-      } else {
-        existing.push(row);
-      }
-      bucket[refId] = existing;
-
-      return { graph: next };
-    });
-
-    await get().refreshLabelFiles();
-  },
-
-  deleteLabel: async (fileId, labelType, refId) => {
-    try {
-      await deleteLabelInFile(fileId, labelType, refId);
-      set({ authError: null });
-    } catch (e) {
-      setAuthErrorFrom(e);
-      throw e;
-    }
-
-    // Inline removal from graph state (replaces labels.ts:removeLabel).
-    set((state) => {
-      const { graph } = state;
-      if (!graph) return state;
-
-      const next = {
-        ...graph,
-        labels_by_type: {
-          tx: { ...graph.labels_by_type.tx },
-          input: { ...graph.labels_by_type.input },
-          output: { ...graph.labels_by_type.output },
-          addr: { ...graph.labels_by_type.addr },
-        },
-      };
-
-      const bucket = labelBucket(next.labels_by_type, labelType);
-      if (!bucket) return state;
-
-      const existing = bucket[refId] ?? [];
-      bucket[refId] = existing.filter((entry) => entry.file_id !== fileId);
-
-      return { graph: next };
-    });
-
-    await get().refreshLabelFiles();
-  },
-
-  labelsChanged: async (opts) => {
-    await get().refreshLabelFiles();
-    if (opts?.refreshGraph === false) return;
-
-    if (lastSearchTxid) {
-      await get().doSearch(lastSearchTxid, {
-        preserveSelectedTxid: get().selectedTxid,
-        quietErrors: true,
-      });
-    }
-  },
-};
+    },
+  };
 });
 
 // ==========================================================================
