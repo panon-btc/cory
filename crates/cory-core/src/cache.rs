@@ -1,3 +1,9 @@
+//! In-memory LRU caches for decoded transactions and resolved prevout data.
+//!
+//! The cache is shared across concurrent graph-building tasks via
+//! `Arc<Cache>`. Both lookup methods acquire a **write** lock because
+//! the underlying `LruCache::get` updates recency tracking.
+
 use std::num::NonZeroUsize;
 
 use bitcoin::{Amount, ScriptBuf, Txid};
@@ -44,10 +50,13 @@ pub struct Cache {
 }
 
 impl Cache {
+    /// Create a cache with the default capacities (10 000 transactions,
+    /// 50 000 prevouts).
     pub fn new() -> Self {
         Self::with_capacity(DEFAULT_TX_CAPACITY, DEFAULT_PREVOUT_CAPACITY)
     }
 
+    /// Create a cache with explicit capacities. Both values must be > 0.
     pub fn with_capacity(tx_cap: usize, prevout_cap: usize) -> Self {
         Self {
             transactions: RwLock::new(LruCache::new(
@@ -59,18 +68,26 @@ impl Cache {
         }
     }
 
+    /// Look up a cached transaction by txid.
+    ///
+    /// Takes a **write** lock because LRU `get` updates recency tracking.
     pub async fn get_tx(&self, txid: &Txid) -> Option<TxNode> {
         self.transactions.write().await.get(txid).cloned()
     }
 
+    /// Insert a decoded transaction into the cache.
     pub async fn insert_tx(&self, txid: Txid, node: TxNode) {
         self.transactions.write().await.put(txid, node);
     }
 
+    /// Look up cached prevout info for a specific outpoint.
+    ///
+    /// Takes a **write** lock because LRU `get` updates recency tracking.
     pub async fn get_prevout(&self, txid: &Txid, vout: u32) -> Option<PrevoutInfo> {
         self.prevouts.write().await.get(&(*txid, vout)).cloned()
     }
 
+    /// Cache resolved prevout data for a specific outpoint.
     pub async fn insert_prevout(&self, txid: Txid, vout: u32, info: PrevoutInfo) {
         self.prevouts.write().await.put((txid, vout), info);
     }

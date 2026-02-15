@@ -1,3 +1,8 @@
+//! Bitcoin Core RPC abstraction layer.
+//!
+//! Defines the [`BitcoinRpc`] trait and provides an HTTP JSON-RPC
+//! implementation ([`HttpRpcClient`]) plus a test mock (`mock::MockRpc`).
+
 mod http_adapter;
 #[cfg(test)]
 pub mod mock;

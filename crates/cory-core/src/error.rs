@@ -1,3 +1,5 @@
+//! Error types for cory-core.
+
 use bitcoin::Txid;
 
 // ==============================================================================
@@ -28,6 +30,7 @@ pub enum RpcError {
 // Core Errors
 // ==============================================================================
 
+/// Top-level error type for the cory-core crate.
 #[derive(Debug, thiserror::Error)]
 pub enum CoreError {
     #[error(transparent)]

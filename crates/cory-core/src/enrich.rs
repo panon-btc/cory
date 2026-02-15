@@ -1,3 +1,8 @@
+//! Transaction enrichment and analysis utilities.
+//!
+//! Provides script classification, fee/feerate computation, RBF signaling
+//! detection, and locktime interpretation.
+
 use bitcoin::{Amount, Script};
 use serde::{Deserialize, Serialize};
 

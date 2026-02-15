@@ -1,3 +1,8 @@
+//! Mock [`BitcoinRpc`] implementation for unit tests.
+//!
+//! Uses a builder pattern (`MockRpc::builder()`) to register canned
+//! transactions and chain info before the mock is consumed.
+
 use std::collections::HashMap;
 
 use async_trait::async_trait;
@@ -30,22 +35,26 @@ impl MockRpc {
     }
 }
 
+/// Builder for configuring a [`MockRpc`] with canned data.
 pub struct MockRpcBuilder {
     transactions: HashMap<Txid, RawTxInfo>,
     chain_info: ChainInfo,
 }
 
 impl MockRpcBuilder {
+    /// Register a transaction, keyed by its `txid`.
     pub fn with_tx(mut self, tx: RawTxInfo) -> Self {
         self.transactions.insert(tx.txid, tx);
         self
     }
 
+    /// Override the default chain info (regtest, 100 blocks).
     pub fn with_chain_info(mut self, info: ChainInfo) -> Self {
         self.chain_info = info;
         self
     }
 
+    /// Consume the builder and produce a [`MockRpc`].
     pub fn build(self) -> MockRpc {
         MockRpc {
             transactions: self.transactions,

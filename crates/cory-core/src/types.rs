@@ -1,3 +1,9 @@
+//! Domain types for Cory's transaction ancestry model.
+//!
+//! Contains the enriched transaction types (`TxNode`, `TxInput`, `TxOutput`),
+//! the ancestry graph structure (`AncestryGraph`, `AncestryEdge`), graph
+//! limits, and shared enums like `ScriptType` and `BlockHeight`.
+
 use std::collections::HashMap;
 
 use bitcoin::{Amount, BlockHash, ScriptBuf, Txid};

@@ -1,3 +1,9 @@
+//! Ancestry graph builder — BFS expansion of transaction spending history.
+//!
+//! Starting from a root transaction, the builder follows each input's
+//! outpoint to its funding transaction, recursively, producing a DAG
+//! of the spending ancestry bounded by configurable limits.
+
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use bitcoin::Txid;

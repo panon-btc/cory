@@ -1,3 +1,8 @@
+//! Native JSON-RPC client for Bitcoin Core compatible endpoints.
+//!
+//! Implements [`BitcoinRpc`] over HTTP using `reqwest`, with support for
+//! single and batched RPC calls, basic auth, and an LRU block-height cache.
+
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,6 +30,11 @@ use super::BitcoinRpc;
 /// Maximum number of block-hash → height entries cached in memory.
 const BLOCK_HEIGHT_CACHE_CAP: usize = 1_000;
 
+/// HTTP-based Bitcoin Core JSON-RPC client.
+///
+/// Supports both single and batched RPC calls. Maintains an LRU cache of
+/// block-hash-to-height mappings to avoid redundant `getblockheader` calls
+/// for confirmed transactions.
 pub struct HttpRpcClient {
     client: reqwest::Client,
     url: String,
@@ -37,6 +47,7 @@ pub struct HttpRpcClient {
 }
 
 impl HttpRpcClient {
+    /// Create a new client pointing at `url` with optional basic auth.
     pub fn new(url: &str, user: Option<&str>, pass: Option<&str>) -> Self {
         let auth = match (user, pass) {
             (Some(u), Some(p)) => Some((u.to_owned(), p.to_owned())),
@@ -63,6 +74,7 @@ impl HttpRpcClient {
         }
     }
 
+    /// Atomically reserve `count` consecutive request IDs for batch calls.
     fn reserve_request_ids(&self, count: u64) -> u64 {
         self.next_id.fetch_add(count, Ordering::Relaxed)
     }
