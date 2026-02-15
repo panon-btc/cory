@@ -184,6 +184,12 @@ fn emit_rerun_directives(ui_dir: &Path) -> usize {
         count += walk_rerun(&src);
     }
 
+    // Static files served as-is by Vite from ui/public/.
+    let public = ui_dir.join("public");
+    if public.exists() {
+        count += walk_rerun(&public);
+    }
+
     count
 }
 
@@ -216,6 +222,12 @@ fn hash_ui_sources(ui_dir: &Path) -> String {
     let src = ui_dir.join("src");
     if src.exists() {
         hash_dir(&src, &mut hasher);
+    }
+
+    // Hash static public files so changing images invalidates the UI cache key.
+    let public = ui_dir.join("public");
+    if public.exists() {
+        hash_dir(&public, &mut hasher);
     }
 
     format!("{:016x}", hasher.finish())

@@ -15,3 +15,5 @@
 - **Token in URL leaks via history/logs**: Supporting `?token=` improves
   bootstrap UX but can expose the API token in browser history and copied
   links if users share full URLs.
+
+- *UI build currently emits a large chunk warning* (`dist/assets/elk.bundled-*.js` and main bundle exceed Vite's 500kB warning threshold); consider code splitting/manual chunks if startup size matters.

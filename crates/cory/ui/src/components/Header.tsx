@@ -36,7 +36,25 @@ export default function Header({ initialTxid = "" }: HeaderProps) {
         flexWrap: "wrap",
       }}
     >
-      <h1 style={{ fontSize: 16, color: "var(--accent)", margin: 0 }}>Cory</h1>
+      <div
+        aria-label="Cory"
+        role="img"
+        style={{
+          alignSelf: "stretch",
+          height: "100%",
+          aspectRatio: "271.61 / 101.03",
+          backgroundColor: "var(--accent)",
+          WebkitMaskImage: "url('/img/logo_mini.svg')",
+          maskImage: "url('/img/logo_mini.svg')",
+          WebkitMaskRepeat: "no-repeat",
+          maskRepeat: "no-repeat",
+          WebkitMaskPosition: "center",
+          maskPosition: "center",
+          WebkitMaskSize: "contain",
+          maskSize: "contain",
+          flexShrink: 0,
+        }}
+      />
 
       <div style={{ display: "flex", gap: 8, flex: 1, minWidth: 300 }}>
         <input
