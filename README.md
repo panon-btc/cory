@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" alt="Cory logo" width="220" />
+  <img src="logo.svg" alt="Cory logo" width="360" />
 </p>
 
 <p align="center">Local-first Bitcoin transaction ancestry explorer and BIP-329 label editor.</p>
