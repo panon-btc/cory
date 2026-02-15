@@ -1,4 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { errorMessage, isAuthError } from "../api";
 import type { Bip329Type, LabelEntry, LabelFileSummary } from "../types";
 import { AUTOSAVE_DEBOUNCE_MS } from "../constants";
 import { useAutosave, type SaveState } from "../hooks/useAutosave";
@@ -85,7 +86,8 @@ export default function TargetLabelEditor({
         setEditorError(null);
         await onDeleteLabel(fileId, labelType, refId);
       } catch (err) {
-        setEditorError((err as Error).message);
+        if (isAuthError(err)) return;
+        setEditorError(errorMessage(err, "request failed"));
       }
     },
     [labelType, onDeleteLabel, refId],
@@ -115,7 +117,11 @@ export default function TargetLabelEditor({
             setStates((prev) => ({ ...prev, [fileId]: "saved" }));
           })
           .catch((err) => {
-            setEditorError((err as Error).message);
+            if (isAuthError(err)) {
+              setStates((prev) => ({ ...prev, [fileId]: "saved" }));
+              return;
+            }
+            setEditorError(errorMessage(err, "request failed"));
             setStates((prev) => ({ ...prev, [fileId]: "error" }));
           })
           .finally(() => {
@@ -142,7 +148,9 @@ export default function TargetLabelEditor({
     state: newLabelState,
     error: newLabelError,
     setState: setNewLabelState,
-  } = useAutosave(newLabel, isAdding && !!newFileId, newLabelSave);
+  } = useAutosave(newLabel, isAdding && !!newFileId, newLabelSave, (err) =>
+    isAuthError(err) ? null : errorMessage(err, "request failed"),
+  );
 
   // Surface errors from both save paths in a single place.
   const displayError = editorError ?? newLabelError;

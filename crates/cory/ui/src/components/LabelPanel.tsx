@@ -3,8 +3,10 @@ import {
   ApiError,
   createLabelFile,
   deleteLabelFile,
+  errorMessage,
   exportLabelFile,
   importLabelFile,
+  isAuthError,
 } from "../api";
 import type { LabelFileSummary } from "../types";
 import { useAppStore } from "../store";
@@ -21,6 +23,7 @@ function fileNameWithoutJsonl(fileName: string): string {
 export default function LabelPanel({ width }: LabelPanelProps) {
   const labelFiles = useAppStore((s) => s.labelFiles);
   const labelsChanged = useAppStore((s) => s.labelsChanged);
+  const setAuthError = useAppStore((s) => s.setAuthError);
 
   const [newFileName, setNewFileName] = useState("");
   const [panelError, setPanelError] = useState<string | null>(null);
@@ -40,6 +43,16 @@ export default function LabelPanel({ width }: LabelPanelProps) {
     fontWeight: 600,
     fontSize: 12,
   };
+  const handleAuthError = useCallback(
+    (err: unknown): boolean => {
+      if (!isAuthError(err)) return false;
+      setAuthError(errorMessage(err, "request failed"));
+      setPanelError(null);
+      return true;
+    },
+    [setAuthError],
+  );
+
   const handleCreateFile = useCallback(async () => {
     const trimmed = newFileName.trim();
     if (!trimmed) return;
@@ -50,9 +63,10 @@ export default function LabelPanel({ width }: LabelPanelProps) {
       setPanelError(null);
       await labelsChanged({ refreshGraph: false });
     } catch (err) {
-      setPanelError("Create failed: " + (err as Error).message);
+      if (handleAuthError(err)) return;
+      setPanelError("Create failed: " + errorMessage(err, "request failed"));
     }
-  }, [newFileName, labelsChanged]);
+  }, [newFileName, labelsChanged, handleAuthError]);
 
   const handleImportClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -70,20 +84,20 @@ export default function LabelPanel({ width }: LabelPanelProps) {
         setPanelError(null);
         await labelsChanged({ refreshGraph: true });
       } catch (err) {
-        const apiErr = err as ApiError;
-        if (apiErr.status === 409) {
+        if (handleAuthError(err)) return;
+        if (err instanceof ApiError && err.status === 409) {
           const name = fileNameWithoutJsonl(file.name);
           const message = `Label file '${name}' already exists. Choose a different file name and import again.`;
           setPanelError(message);
           window.alert(message);
         } else {
-          setPanelError("Import failed: " + (err as Error).message);
+          setPanelError("Import failed: " + errorMessage(err, "request failed"));
         }
       }
 
       e.target.value = "";
     },
-    [labelsChanged],
+    [labelsChanged, handleAuthError],
   );
 
   const handleExport = useCallback(async (file: LabelFileSummary) => {
@@ -140,9 +154,10 @@ export default function LabelPanel({ width }: LabelPanelProps) {
       if ((err as Error).name === "AbortError") {
         return;
       }
-      setPanelError("Export failed: " + (err as Error).message);
+      if (handleAuthError(err)) return;
+      setPanelError("Export failed: " + errorMessage(err, "request failed"));
     }
-  }, []);
+  }, [handleAuthError]);
 
   const handleDelete = useCallback(
     async (file: LabelFileSummary) => {
@@ -154,10 +169,11 @@ export default function LabelPanel({ width }: LabelPanelProps) {
         setPanelError(null);
         await labelsChanged({ refreshGraph: true });
       } catch (err) {
-        setPanelError("Delete failed: " + (err as Error).message);
+        if (handleAuthError(err)) return;
+        setPanelError("Delete failed: " + errorMessage(err, "request failed"));
       }
     },
-    [labelsChanged],
+    [labelsChanged, handleAuthError],
   );
 
   return (

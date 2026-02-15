@@ -18,12 +18,15 @@ import type {
 } from "./types";
 import {
   deleteLabelInFile,
+  errorMessage,
   fetchGraph,
   fetchLabelFiles,
+  isAuthError,
   setApiToken as setApiTokenInModule,
   setLabelInFile,
 } from "./api";
-import { computeLayout, refreshNodesFromGraph } from "./layout";
+import { computeLayout } from "./layout";
+import { refreshNodesFromGraph } from "./model";
 
 // ==========================================================================
 // Module-scope mutable variables (not reactive state)
@@ -90,6 +93,7 @@ interface AppState {
   selectedTxid: string | null;
   loading: boolean;
   error: string | null;
+  authError: string | null;
 
   // Labels
   labelFiles: LabelFileSummary[];
@@ -108,6 +112,7 @@ interface AppState {
   setSelectedTxid: (txid: string | null) => void;
   setNodes: (updater: Node[] | ((prev: Node[]) => Node[])) => void;
   setEdges: (edges: Edge[]) => void;
+  setAuthError: (message: string | null) => void;
   setApiToken: (token: string) => void;
   refreshLabelFiles: () => Promise<LabelFileSummary[]>;
   saveLabel: (fileId: string, labelType: Bip329Type, refId: string, label: string) => Promise<void>;
@@ -119,13 +124,21 @@ interface AppState {
 // Store creation
 // ==========================================================================
 
-export const useAppStore = create<AppState>((set, get) => ({
+export const useAppStore = create<AppState>((set, get) => {
+  const setAuthErrorFrom = (err: unknown): boolean => {
+    if (!isAuthError(err)) return false;
+    set({ authError: errorMessage(err, "request failed") });
+    return true;
+  };
+
+  return {
   nodes: [],
   edges: [],
   graph: null,
   selectedTxid: null,
   loading: false,
   error: null,
+  authError: null,
   labelFiles: [],
   apiToken: "",
   searchParamTxid: "",
@@ -139,8 +152,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setEdges: (edges) => set({ edges }),
 
+  setAuthError: (message) => set({ authError: message }),
+
   setApiToken: (token) => {
-    set({ apiToken: token });
+    set({ apiToken: token, authError: null });
     localStorage.setItem("cory:apiToken", token);
     setApiTokenInModule(token);
     replaceUrlParams(token, get().searchParamTxid);
@@ -149,9 +164,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   refreshLabelFiles: async () => {
     try {
       const files = await fetchLabelFiles();
-      set({ labelFiles: files });
+      set({ labelFiles: files, authError: null });
       return files;
-    } catch {
+    } catch (e) {
+      setAuthErrorFrom(e);
       // Keep current list if label file metadata request fails.
       return get().labelFiles;
     }
@@ -180,15 +196,20 @@ export const useAppStore = create<AppState>((set, get) => ({
       const nextSelectedTxid =
         preservedTxid && resp.nodes[preservedTxid] ? preservedTxid : resp.root_txid;
 
-      set({ graph: resp, nodes: n, edges: e, selectedTxid: nextSelectedTxid });
+      set({ graph: resp, nodes: n, edges: e, selectedTxid: nextSelectedTxid, authError: null });
     } catch (e) {
       // Aborted requests are not errors — just ignore them.
       if ((e as Error).name === "AbortError") return;
       if (searchId !== thisSearchId) return;
 
+      if (setAuthErrorFrom(e)) {
+        window.alert(errorMessage(e, "request failed"));
+        return;
+      }
+
       if (!opts?.quietErrors) {
         set({
-          error: (e as Error).message,
+          error: errorMessage(e, "Failed to load graph"),
           graph: null,
           nodes: [],
           edges: [],
@@ -202,7 +223,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   saveLabel: async (fileId, labelType, refId, label) => {
-    const summary = await setLabelInFile(fileId, labelType, refId, label);
+    let summary;
+    try {
+      summary = await setLabelInFile(fileId, labelType, refId, label);
+      set({ authError: null });
+    } catch (e) {
+      setAuthErrorFrom(e);
+      throw e;
+    }
 
     // Inline upsert into graph state (replaces labels.ts:upsertLabel).
     set((state) => {
@@ -245,7 +273,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   deleteLabel: async (fileId, labelType, refId) => {
-    await deleteLabelInFile(fileId, labelType, refId);
+    try {
+      await deleteLabelInFile(fileId, labelType, refId);
+      set({ authError: null });
+    } catch (e) {
+      setAuthErrorFrom(e);
+      throw e;
+    }
 
     // Inline removal from graph state (replaces labels.ts:removeLabel).
     set((state) => {
@@ -285,7 +319,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
     }
   },
-}));
+};
+});
 
 // ==========================================================================
 // Height-change relayout helper

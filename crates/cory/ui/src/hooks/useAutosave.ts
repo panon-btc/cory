@@ -35,6 +35,7 @@ export function useAutosave(
   draft: string,
   active: boolean,
   onSave: (value: string) => Promise<void>,
+  onError?: (err: unknown) => string | null,
 ): { state: SaveState; error: string | null; setState: (s: SaveState) => void } {
   const [state, setState] = useState<SaveState>("saved");
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +56,14 @@ export function useAutosave(
           setState("saved");
         })
         .catch((err) => {
-          setError((err as Error).message);
+          const nextError =
+            onError?.(err) ?? (err instanceof Error ? err.message : "Save failed");
+          if (nextError === null) {
+            setError(null);
+            setState("saved");
+            return;
+          }
+          setError(nextError);
           setState("error");
         })
         .finally(() => {
@@ -64,7 +72,7 @@ export function useAutosave(
     }, AUTOSAVE_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timer);
-  }, [active, draft, state, onSave]);
+  }, [active, draft, state, onSave, onError]);
 
   return { state, error, setState };
 }

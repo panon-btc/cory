@@ -1,23 +1,46 @@
 import type { Bip329Type, GraphResponse, LabelFileSummary } from "./types";
 
 interface ApiErrorPayload {
-  error?: string;
+  error?: unknown;
+  message?: unknown;
+  code?: unknown;
 }
 
 export class ApiError extends Error {
   status: number;
+  code: string | null;
 
-  constructor(status: number, message: string) {
+  constructor(params: {
+    status: number;
+    message: string;
+    code?: string | null;
+  }) {
+    const { status, message, code = null } = params;
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
   }
 }
 
 let apiToken = "";
+const INVALID_TOKEN_MESSAGE = "Invalid API token (paste from terminal)";
 
 export function setApiToken(token: string): void {
   apiToken = token.trim();
+}
+
+export function errorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) {
+    if (err.status === 401) return INVALID_TOKEN_MESSAGE;
+    return err.message || fallback;
+  }
+  if (err instanceof Error) return err.message || fallback;
+  return fallback;
+}
+
+export function isAuthError(err: unknown): err is ApiError {
+  return err instanceof ApiError && err.status === 401;
 }
 
 async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response> {
@@ -32,8 +55,26 @@ async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response>
   });
 
   if (!resp.ok) {
-    const err = (await resp.json().catch(() => ({ error: resp.statusText }))) as ApiErrorPayload;
-    throw new ApiError(resp.status, err.error || resp.statusText);
+    const fallback = resp.statusText || `HTTP ${resp.status}`;
+    const payload = (await resp.json().catch(() => null)) as ApiErrorPayload | string | null;
+    const message =
+      typeof payload === "string"
+        ? payload || fallback
+        : payload && typeof payload === "object"
+          ? typeof payload.error === "string"
+            ? payload.error
+            : typeof payload.message === "string"
+              ? payload.message
+              : fallback
+          : fallback;
+    const code = payload && typeof payload === "object" && typeof payload.code === "string"
+      ? payload.code
+      : null;
+    throw new ApiError({
+      status: resp.status,
+      message,
+      code,
+    });
   }
 
   return resp;

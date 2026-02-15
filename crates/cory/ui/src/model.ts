@@ -144,10 +144,12 @@ export function buildNodeRenderModel(
   txid: string,
   connectedOutputsByTx: Map<string, Set<number>>,
 ): { data: TxNodeData; nodeHeight: number } {
+  // 1) Gather transaction/enrichment context reused by all row builders.
   const nodeData = response.nodes[txid]!;
   const enrichment = response.enrichments[txid];
   const isCoinbase = nodeData.inputs.length === 1 && nodeData.inputs[0]?.prevout === null;
 
+  // 2) Build input rows with merged input+address labels and dynamic row height.
   const inputRows: TxInputView[] = nodeData.inputs.map((input, index) => {
     const inputRef = `${txid}:${index}`;
     const inputLabels = response.labels_by_type.input[inputRef] ?? [];
@@ -163,6 +165,7 @@ export function buildNodeRenderModel(
     };
   });
 
+  // 3) Build full output rows first; visibility/collapse is handled in a later pass.
   const connectedIndices = connectedOutputsByTx.get(txid) ?? new Set<number>();
   const allOutputRows: TxOutputRowView[] = nodeData.outputs.map((output, index) => {
     const outputRef = `${txid}:${index}`;
@@ -183,6 +186,7 @@ export function buildNodeRenderModel(
     };
   });
 
+  // 4) Collapse non-essential output ranges into explicit `gap` rows.
   const visibleOutputIndices = buildVisibleOutputIndices(allOutputRows.length, connectedIndices);
   const outputRows: TxOutputDisplayRow[] = [];
   let prevVisibleIndex = -1;
@@ -200,6 +204,7 @@ export function buildNodeRenderModel(
     prevVisibleIndex = visibleIndex;
   }
 
+  // 5) Assemble header metadata and final node height for layout sizing.
   const txLabels = (response.labels_by_type.tx[txid] ?? []).map(formatLabelEntry);
   const inputTotalHeight = inputRows.reduce((sum, row) => sum + row.rowHeight, 0);
   const outputTotalHeight = outputRows.reduce((sum, row) => sum + row.rowHeight, 0);

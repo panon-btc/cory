@@ -22,7 +22,6 @@ export type {
   TxOutputDisplayRow,
   TxNodeData,
 } from "./model";
-export { refreshNodesFromGraph } from "./model";
 
 // Lazily import ELK so Vite can code-split the ~1MB WASM bundle into a
 // separate chunk, keeping the initial page load fast.
