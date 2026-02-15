@@ -100,43 +100,8 @@ impl BitcoinRpc for MockRpc {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{RawInputInfo, RawOutputInfo};
+    use crate::test_util::*;
     use bitcoin::Amount;
-
-    fn txid_from_byte(b: u8) -> Txid {
-        let mut bytes = [0u8; 32];
-        bytes[0] = b;
-        Txid::from_byte_array(bytes)
-    }
-
-    fn simple_output(sats: u64) -> RawOutputInfo {
-        let script_bytes = [
-            0x00, 0x14, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
-            0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14,
-        ];
-        RawOutputInfo {
-            value: Amount::from_sat(sats),
-            script_pub_key: bitcoin::ScriptBuf::from_bytes(script_bytes.to_vec()),
-            n: 0,
-        }
-    }
-
-    fn make_tx(txid: Txid, inputs: Vec<RawInputInfo>, outputs: Vec<RawOutputInfo>) -> RawTxInfo {
-        RawTxInfo {
-            txid,
-            version: 2,
-            locktime: 0,
-            size: 250,
-            vsize: 140,
-            weight: 560,
-            block_hash: None,
-            block_height: Some(100),
-            block_time: Some(1_700_000_000),
-            confirmations: Some(10),
-            inputs,
-            outputs,
-        }
-    }
 
     #[tokio::test]
     async fn with_chain_info_overrides_defaults() {
@@ -163,7 +128,7 @@ mod tests {
         let mut out1 = simple_output(3000);
         out1.n = 1;
 
-        let tx = make_tx(
+        let tx = make_raw_tx(
             txid,
             vec![RawInputInfo {
                 prevout: None,
