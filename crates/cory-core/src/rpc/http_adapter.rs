@@ -1,16 +1,18 @@
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use bitcoin::{Amount, BlockHash, OutPoint, ScriptBuf, Txid};
+use lru::LruCache;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, trace};
 
-use crate::error::CoreError;
+use crate::error::{CoreError, RpcError};
 
 use super::types::{ChainInfo, RawInputInfo, RawOutputInfo, RawTxInfo, TxOutInfo};
 use super::BitcoinRpc;
@@ -18,14 +20,19 @@ use super::BitcoinRpc;
 // ==============================================================================
 // HttpRpcClient — native JSON-RPC client for Bitcoin Core compatible endpoints
 // ==============================================================================
-//
+
+/// Maximum number of block-hash → height entries cached in memory.
+const BLOCK_HEIGHT_CACHE_CAP: usize = 1_000;
 
 pub struct HttpRpcClient {
     client: reqwest::Client,
     url: String,
     auth: Option<(String, String)>,
     next_id: AtomicU64,
-    block_height_cache: RwLock<HashMap<BlockHash, u32>>,
+    /// Bounded LRU cache mapping confirmed block hashes to their height.
+    /// Confirmed block heights are immutable, so entries never need
+    /// invalidation — only eviction under memory pressure.
+    block_height_cache: RwLock<LruCache<BlockHash, u32>>,
 }
 
 impl HttpRpcClient {
@@ -48,7 +55,10 @@ impl HttpRpcClient {
             url: url.to_owned(),
             auth,
             next_id: AtomicU64::new(initial_request_id()),
-            block_height_cache: RwLock::new(HashMap::new()),
+            block_height_cache: RwLock::new(LruCache::new(
+                NonZeroUsize::new(BLOCK_HEIGHT_CACHE_CAP)
+                    .expect("BLOCK_HEIGHT_CACHE_CAP is non-zero"),
+            )),
         }
     }
 
@@ -84,24 +94,19 @@ impl HttpRpcClient {
             builder = builder.basic_auth(user, Some(pass));
         }
 
-        let response = builder
-            .send()
-            .await
-            .map_err(|e| CoreError::Rpc(format!("HTTP error: {e}")))?;
+        let response = builder.send().await.map_err(RpcError::Transport)?;
         let status = response.status();
 
-        let body = response
-            .text()
-            .await
-            .map_err(|e| CoreError::Rpc(format!("read response body: {e}")))?;
+        let body = response.text().await.map_err(RpcError::Transport)?;
         debug!(rpc.id = id, rpc.method = method, %status, body_len = body.len(), "rpc response");
         trace!(rpc.id = id, rpc.method = method, body = %body, "rpc response body");
 
-        let decoded: JsonRpcResponse = serde_json::from_str(&body)
-            .map_err(|e| CoreError::Rpc(format!("decode JSON-RPC response: {e}; body={body}")))?;
+        let decoded: JsonRpcResponse = serde_json::from_str(&body).map_err(|e| {
+            RpcError::InvalidResponse(format!("decode JSON-RPC response: {e}; body={body}"))
+        })?;
 
         if let Some(err) = decoded.error {
-            return Err(CoreError::Rpc(err.to_string()));
+            return Err(parse_jsonrpc_error(err));
         }
 
         Ok(decoded.result.unwrap_or(serde_json::Value::Null))
@@ -137,16 +142,10 @@ impl HttpRpcClient {
             builder = builder.basic_auth(user, Some(pass));
         }
 
-        let response = builder
-            .send()
-            .await
-            .map_err(|e| CoreError::Rpc(format!("HTTP error: {e}")))?;
+        let response = builder.send().await.map_err(RpcError::Transport)?;
         let status = response.status();
 
-        let body = response
-            .text()
-            .await
-            .map_err(|e| CoreError::Rpc(format!("read batch response body: {e}")))?;
+        let body = response.text().await.map_err(RpcError::Transport)?;
         debug!(
             rpc.batch_start_id = start_id,
             rpc.batch_size = calls.len(),
@@ -162,7 +161,9 @@ impl HttpRpcClient {
         );
 
         let decoded: Vec<JsonRpcResponseOwned> = serde_json::from_str(&body).map_err(|e| {
-            CoreError::Rpc(format!("decode JSON-RPC batch response: {e}; body={body}"))
+            RpcError::InvalidResponse(format!(
+                "decode JSON-RPC batch response: {e}; body={body}"
+            ))
         })?;
 
         let mut by_id: HashMap<u64, JsonRpcResponseOwned> = HashMap::with_capacity(decoded.len());
@@ -175,10 +176,10 @@ impl HttpRpcClient {
         for id in start_id..(start_id + calls.len() as u64) {
             let item = by_id
                 .remove(&id)
-                .ok_or_else(|| CoreError::Rpc(format!("missing JSON-RPC batch item id={id}")))?;
+                .ok_or(RpcError::MissingBatchItem { id })?;
 
             if let Some(err) = item.error {
-                return Err(CoreError::Rpc(err.to_string()));
+                return Err(parse_jsonrpc_error(err));
             }
             ordered.push(item.result.unwrap_or(serde_json::Value::Null));
         }
@@ -187,9 +188,11 @@ impl HttpRpcClient {
     }
 
     async fn get_block_height(&self, block_hash: BlockHash) -> Result<Option<u32>, CoreError> {
+        // The LRU cache requires a write lock for `get` (it updates recency),
+        // but the lookup is fast so the write lock is acceptable.
         if let Some(height) = self
             .block_height_cache
-            .read()
+            .write()
             .await
             .get(&block_hash)
             .copied()
@@ -211,7 +214,7 @@ impl HttpRpcClient {
             self.block_height_cache
                 .write()
                 .await
-                .insert(block_hash, height);
+                .put(block_hash, height);
         }
         Ok(height)
     }
@@ -334,6 +337,10 @@ impl BitcoinRpc for HttpRpcClient {
     }
 }
 
+// ==============================================================================
+// JSON-RPC Protocol Types
+// ==============================================================================
+
 #[derive(Serialize)]
 struct JsonRpcRequest<'a> {
     jsonrpc: &'static str,
@@ -371,6 +378,38 @@ struct TxOutResponse {
     confirmations: u64,
     coinbase: bool,
 }
+
+// ==============================================================================
+// JSON-RPC Error Parsing
+// ==============================================================================
+
+/// Parse a JSON-RPC error value into a structured `CoreError`.
+///
+/// The JSON-RPC spec defines errors as `{"code": <int>, "message": <string>}`.
+/// If the error value matches that shape, we produce a `ServerError`;
+/// otherwise we fall back to `InvalidResponse` with the raw JSON.
+fn parse_jsonrpc_error(err: serde_json::Value) -> CoreError {
+    #[derive(Deserialize)]
+    struct JsonRpcError {
+        code: i64,
+        message: String,
+    }
+
+    if let Ok(parsed) = serde_json::from_value::<JsonRpcError>(err.clone()) {
+        CoreError::Rpc(RpcError::ServerError {
+            code: parsed.code,
+            message: parsed.message,
+        })
+    } else {
+        CoreError::Rpc(RpcError::InvalidResponse(format!(
+            "non-standard JSON-RPC error: {err}"
+        )))
+    }
+}
+
+// ==============================================================================
+// Response Field Parsers
+// ==============================================================================
 
 fn parse_gettxout_result(raw: serde_json::Value) -> Result<Option<TxOutInfo>, CoreError> {
     if raw.is_null() {
@@ -547,12 +586,12 @@ fn parse_batch_id(id: &serde_json::Value) -> Result<u64, CoreError> {
     }
 
     if let Some(s) = id.as_str() {
-        return s
-            .parse::<u64>()
-            .map_err(|e| CoreError::Rpc(format!("invalid batch response id string: {e}")));
+        return s.parse::<u64>().map_err(|e| {
+            RpcError::InvalidResponse(format!("invalid batch response id string: {e}")).into()
+        });
     }
 
-    Err(CoreError::Rpc(format!("invalid batch response id: {id}")))
+    Err(RpcError::InvalidResponse(format!("invalid batch response id: {id}")).into())
 }
 
 fn initial_request_id() -> u64 {

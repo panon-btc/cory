@@ -16,5 +16,5 @@ pub mod types;
 #[cfg(test)]
 pub(crate) mod test_util;
 
-pub use error::CoreError;
+pub use error::{CoreError, RpcError};
 pub use types::{AncestryGraph, GraphLimits, TxNode};
