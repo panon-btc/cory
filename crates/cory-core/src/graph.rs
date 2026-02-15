@@ -7,10 +7,10 @@ use tokio::sync::Semaphore;
 use crate::cache::{Cache, PrevoutInfo};
 use crate::enrich::classify_script;
 use crate::error::CoreError;
+use crate::rpc::types::{RawInputInfo, RawTxInfo};
 use crate::rpc::BitcoinRpc;
 use crate::types::{
-    AncestryEdge, AncestryGraph, GraphLimits, GraphStats, RawInputInfo, RawTxInfo, ScriptType,
-    TxInput, TxNode, TxOutput,
+    AncestryEdge, AncestryGraph, GraphLimits, GraphStats, ScriptType, TxInput, TxNode, TxOutput,
 };
 
 // ==============================================================================

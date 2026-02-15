@@ -11,8 +11,8 @@ use tokio::sync::RwLock;
 use tracing::{debug, trace};
 
 use crate::error::CoreError;
-use crate::types::{ChainInfo, RawInputInfo, RawOutputInfo, RawTxInfo, TxOutInfo};
 
+use super::types::{ChainInfo, RawInputInfo, RawOutputInfo, RawTxInfo, TxOutInfo};
 use super::BitcoinRpc;
 
 // ==============================================================================

@@ -5,8 +5,8 @@ use bitcoin::hashes::Hash;
 use bitcoin::{BlockHash, OutPoint, Txid};
 
 use crate::error::CoreError;
-use crate::types::{ChainInfo, RawTxInfo, TxOutInfo};
 
+use super::types::{ChainInfo, RawTxInfo, TxOutInfo};
 use super::BitcoinRpc;
 
 /// A mock Bitcoin RPC backend for testing. Returns canned transaction data

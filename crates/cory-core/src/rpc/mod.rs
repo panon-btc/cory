@@ -1,14 +1,15 @@
 mod http_adapter;
 #[cfg(test)]
 pub mod mock;
+pub mod types;
 
 pub use http_adapter::HttpRpcClient;
+pub use types::{ChainInfo, RawTxInfo, TxOutInfo};
 
 use async_trait::async_trait;
 use bitcoin::{OutPoint, Txid};
 
 use crate::error::CoreError;
-use crate::types::{ChainInfo, RawTxInfo, TxOutInfo};
 
 /// Minimal trait covering the Bitcoin Core RPC methods that Cory needs.
 ///

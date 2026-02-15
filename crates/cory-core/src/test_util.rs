@@ -12,7 +12,7 @@ use crate::types::{ScriptType, TxInput, TxNode, TxOutput};
 
 // Re-export RPC intermediate types so test modules that build raw
 // transactions don't need a second import line.
-pub use crate::types::{RawInputInfo, RawOutputInfo, RawTxInfo};
+pub use crate::rpc::types::{RawInputInfo, RawOutputInfo, RawTxInfo};
 
 // ==============================================================================
 // Txid Helpers
