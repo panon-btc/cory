@@ -13,6 +13,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, trace};
 
 use crate::error::{CoreError, RpcError};
+use crate::types::BlockHeight;
 
 use super::types::{ChainInfo, RawInputInfo, RawOutputInfo, RawTxInfo, TxOutInfo};
 use super::BitcoinRpc;
@@ -32,7 +33,7 @@ pub struct HttpRpcClient {
     /// Bounded LRU cache mapping confirmed block hashes to their height.
     /// Confirmed block heights are immutable, so entries never need
     /// invalidation — only eviction under memory pressure.
-    block_height_cache: RwLock<LruCache<BlockHash, u32>>,
+    block_height_cache: RwLock<LruCache<BlockHash, BlockHeight>>,
 }
 
 impl HttpRpcClient {
@@ -187,7 +188,10 @@ impl HttpRpcClient {
         Ok(ordered)
     }
 
-    async fn get_block_height(&self, block_hash: BlockHash) -> Result<Option<u32>, CoreError> {
+    async fn get_block_height(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockHeight>, CoreError> {
         // The LRU cache requires a write lock for `get` (it updates recency),
         // but the lookup is fast so the write lock is acceptable.
         if let Some(height) = self
@@ -209,7 +213,7 @@ impl HttpRpcClient {
                 ],
             )
             .await?;
-        let height = parse_opt_u32(raw.get("height"));
+        let height = parse_opt_u32(raw.get("height")).map(BlockHeight);
         if let Some(height) = height {
             self.block_height_cache
                 .write()
@@ -237,7 +241,7 @@ impl BitcoinRpc for HttpRpcClient {
         let vsize = parse_u64(raw.get("vsize"), "vsize")?;
         let weight = parse_u64(raw.get("weight"), "weight")?;
         let block_hash = parse_opt_block_hash(raw.get("blockhash"))?;
-        let mut block_height = parse_opt_u32(raw.get("blockheight"));
+        let mut block_height = parse_opt_u32(raw.get("blockheight")).map(BlockHeight);
         let confirmations = parse_opt_u64(raw.get("confirmations"));
         let block_time = parse_opt_u64(raw.get("blocktime"));
 

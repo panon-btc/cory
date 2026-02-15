@@ -5,6 +5,8 @@
 
 use bitcoin::{Amount, BlockHash, ScriptBuf, Txid};
 
+use crate::types::BlockHeight;
+
 // ==============================================================================
 // Decoded Transaction
 // ==============================================================================
@@ -20,7 +22,7 @@ pub struct RawTxInfo {
     pub vsize: u64,
     pub weight: u64,
     pub block_hash: Option<BlockHash>,
-    pub block_height: Option<u32>,
+    pub block_height: Option<BlockHeight>,
     pub block_time: Option<u64>,
     pub confirmations: Option<u64>,
     pub inputs: Vec<RawInputInfo>,

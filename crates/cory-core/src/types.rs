@@ -39,6 +39,44 @@ impl std::fmt::Display for ScriptType {
 }
 
 // ==============================================================================
+// Block Height
+// ==============================================================================
+
+/// A Bitcoin block height, wrapped for type safety.
+///
+/// `#[serde(transparent)]` preserves the JSON representation as a bare
+/// integer, so this newtype is wire-compatible with plain `u32`.
+/// `Deref<Target = u32>` minimises call-site churn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct BlockHeight(pub u32);
+
+impl From<u32> for BlockHeight {
+    fn from(h: u32) -> Self {
+        Self(h)
+    }
+}
+
+impl From<BlockHeight> for u32 {
+    fn from(h: BlockHeight) -> Self {
+        h.0
+    }
+}
+
+impl std::ops::Deref for BlockHeight {
+    type Target = u32;
+    fn deref(&self) -> &u32 {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for BlockHeight {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+// ==============================================================================
 // Transaction Types
 // ==============================================================================
 
@@ -53,7 +91,7 @@ pub struct TxNode {
     pub weight: u64,
     pub block_hash: Option<BlockHash>,
     /// Block height; `None` for unconfirmed (mempool) transactions.
-    pub block_height: Option<u32>,
+    pub block_height: Option<BlockHeight>,
     pub block_time: Option<u64>,
     pub inputs: Vec<TxInput>,
     pub outputs: Vec<TxOutput>,
@@ -62,8 +100,9 @@ pub struct TxNode {
 impl TxNode {
     /// Compute confirmations relative to the current chain tip.
     /// Returns `None` for unconfirmed transactions.
-    pub fn confirmations(&self, tip_height: u32) -> Option<u32> {
-        self.block_height.map(|h| tip_height.saturating_sub(h) + 1)
+    pub fn confirmations(&self, tip_height: BlockHeight) -> Option<u32> {
+        self.block_height
+            .map(|h| tip_height.saturating_sub(*h) + 1)
     }
 
     /// A coinbase transaction has exactly one input whose prevout is `None`.

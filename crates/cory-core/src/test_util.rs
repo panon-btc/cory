@@ -8,7 +8,7 @@
 use bitcoin::hashes::Hash;
 use bitcoin::{Amount, Txid};
 
-use crate::types::{ScriptType, TxInput, TxNode, TxOutput};
+use crate::types::{BlockHeight, ScriptType, TxInput, TxNode, TxOutput};
 
 // Re-export RPC intermediate types so test modules that build raw
 // transactions don't need a second import line.
@@ -45,7 +45,7 @@ pub fn make_raw_tx(
         vsize: 140,
         weight: 560,
         block_hash: None,
-        block_height: Some(100),
+        block_height: Some(BlockHeight(100)),
         block_time: Some(1_700_000_000),
         confirmations: Some(10),
         inputs,
@@ -128,7 +128,7 @@ pub fn make_tx_node(inputs: Vec<TxInput>, outputs: Vec<TxOutput>, vsize: u64) ->
         vsize,
         weight: vsize * 4,
         block_hash: None,
-        block_height: Some(100),
+        block_height: Some(BlockHeight(100)),
         block_time: Some(1_700_000_000),
         inputs,
         outputs,
