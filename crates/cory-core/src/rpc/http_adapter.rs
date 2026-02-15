@@ -616,3 +616,73 @@ fn initial_request_id() -> u64 {
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(1)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- parse_btc_amount tests -----------------------------------------------
+
+    #[test]
+    fn parse_btc_amount_integer() {
+        let val = serde_json::json!(1);
+        let amount = parse_btc_amount(&val).expect("should parse integer");
+        assert_eq!(amount, Amount::from_btc(1.0).expect("valid"));
+    }
+
+    #[test]
+    fn parse_btc_amount_fractional() {
+        let val = serde_json::json!(0.00001);
+        let amount = parse_btc_amount(&val).expect("should parse fractional");
+        assert_eq!(amount, Amount::from_sat(1000));
+    }
+
+    #[test]
+    fn parse_btc_amount_string() {
+        let val = serde_json::json!("0.5");
+        let amount = parse_btc_amount(&val).expect("should parse string");
+        assert_eq!(amount, Amount::from_btc(0.5).expect("valid"));
+    }
+
+    #[test]
+    fn parse_btc_amount_zero() {
+        let val = serde_json::json!(0);
+        let amount = parse_btc_amount(&val).expect("should parse zero");
+        assert_eq!(amount, Amount::ZERO);
+    }
+
+    #[test]
+    fn parse_btc_amount_invalid() {
+        let val = serde_json::json!(true);
+        assert!(parse_btc_amount(&val).is_err());
+    }
+
+    // -- parse_gettxout_result tests ------------------------------------------
+
+    #[test]
+    fn parse_gettxout_result_null() {
+        let val = serde_json::Value::Null;
+        let result = parse_gettxout_result(val).expect("should parse null");
+        assert!(result.is_none());
+    }
+
+    // -- parse_batch_id tests -------------------------------------------------
+
+    #[test]
+    fn parse_batch_id_u64() {
+        let val = serde_json::json!(42);
+        assert_eq!(parse_batch_id(&val).expect("should parse"), 42);
+    }
+
+    #[test]
+    fn parse_batch_id_string() {
+        let val = serde_json::json!("123");
+        assert_eq!(parse_batch_id(&val).expect("should parse"), 123);
+    }
+
+    #[test]
+    fn parse_batch_id_invalid() {
+        let val = serde_json::json!(true);
+        assert!(parse_batch_id(&val).is_err());
+    }
+}

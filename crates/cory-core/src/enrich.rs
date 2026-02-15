@@ -265,4 +265,39 @@ mod tests {
         assert_eq!(info.kind, LocktimeKind::BlockHeight);
         assert!(!info.active);
     }
+
+    // -- classify_script tests ------------------------------------------------
+
+    #[test]
+    fn classify_p2wpkh_script() {
+        // OP_0 PUSH20 <20-byte-hash>
+        let script = bitcoin::ScriptBuf::from_bytes(vec![
+            0x00, 0x14, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+            0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14,
+        ]);
+        assert_eq!(classify_script(script.as_script()), ScriptType::P2wpkh);
+    }
+
+    #[test]
+    fn classify_p2tr_script() {
+        // OP_1 PUSH32 <32-byte-key>
+        let mut bytes = vec![0x51, 0x20];
+        bytes.extend_from_slice(&[0xAA; 32]);
+        let script = bitcoin::ScriptBuf::from_bytes(bytes);
+        assert_eq!(classify_script(script.as_script()), ScriptType::P2tr);
+    }
+
+    #[test]
+    fn classify_op_return_script() {
+        // OP_RETURN followed by arbitrary data.
+        let script = bitcoin::ScriptBuf::from_bytes(vec![0x6a, 0x04, 0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(classify_script(script.as_script()), ScriptType::OpReturn);
+    }
+
+    #[test]
+    fn classify_unknown_script() {
+        // An empty script doesn't match any known pattern.
+        let script = bitcoin::ScriptBuf::new();
+        assert_eq!(classify_script(script.as_script()), ScriptType::Unknown);
+    }
 }

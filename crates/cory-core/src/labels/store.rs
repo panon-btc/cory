@@ -439,4 +439,63 @@ mod tests {
         assert_eq!(addr_labels.len(), 1);
         assert_eq!(addr_labels[0].1.label, "addr label");
     }
+
+    // -- error cases ----------------------------------------------------------
+
+    #[test]
+    fn create_file_with_empty_name_fails() {
+        let mut store = LabelStore::new();
+        assert!(matches!(
+            store.create_local_file(""),
+            Err(LabelStoreError::EmptyFileName)
+        ));
+    }
+
+    #[test]
+    fn create_duplicate_file_fails() {
+        let mut store = LabelStore::new();
+        store.create_local_file("wallet").expect("first create");
+        assert!(matches!(
+            store.create_local_file("wallet"),
+            Err(LabelStoreError::DuplicateLocalFile(_))
+        ));
+    }
+
+    #[test]
+    fn set_label_with_empty_ref_fails() {
+        let mut store = LabelStore::new();
+        store.create_local_file("wallet").expect("create");
+        assert!(matches!(
+            store.set_local_label("wallet", Bip329Type::Tx, "  ".to_string(), "label".to_string()),
+            Err(LabelStoreError::EmptyRef)
+        ));
+    }
+
+    #[test]
+    fn set_label_with_empty_label_fails() {
+        let mut store = LabelStore::new();
+        store.create_local_file("wallet").expect("create");
+        assert!(matches!(
+            store.set_local_label("wallet", Bip329Type::Tx, "txid1".to_string(), "  ".to_string()),
+            Err(LabelStoreError::EmptyLabel)
+        ));
+    }
+
+    #[test]
+    fn remove_nonexistent_file_fails() {
+        let mut store = LabelStore::new();
+        assert!(matches!(
+            store.remove_local_file("no-such-file"),
+            Err(LabelStoreError::LocalFileNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn export_nonexistent_file_fails() {
+        let store = LabelStore::new();
+        assert!(matches!(
+            store.export_local_file("no-such-file"),
+            Err(LabelStoreError::LocalFileNotFound(_))
+        ));
+    }
 }
