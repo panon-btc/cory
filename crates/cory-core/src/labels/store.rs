@@ -13,10 +13,7 @@ use super::jsonl::{
     export_map_to_jsonl, normalize_label_file_id, parse_jsonl_records, parse_local_file_name,
 };
 use super::pack::walk_pack_dir;
-use super::types::{
-    Bip329Record, Bip329Type, LabelFile, LabelFileKind, LabelFileMeta, LabelFileSummary,
-    LabelStoreError,
-};
+use super::types::{Bip329Record, Bip329Type, LabelFile, LabelFileKind, LabelStoreError};
 
 pub struct LabelStore {
     local_files: Vec<LabelFile>,
@@ -52,39 +49,10 @@ impl LabelStore {
             label_dir: Some(dir.to_path_buf()),
         };
 
-        // Load existing JSONL files from the label directory.
-        let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<Vec<_>, _>>()?;
-        entries.sort_by_key(|e| e.path());
-
-        for entry in entries {
-            let path = entry.path();
-            if path.extension().is_none_or(|ext| ext != "jsonl") {
-                continue;
-            }
-            let file_name = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("labels")
-                .to_string();
-            let id = normalize_label_file_id(&file_name);
-            if id.is_empty() {
-                continue;
-            }
-
-            let content = std::fs::read_to_string(&path)?;
-            let mut labels = HashMap::new();
-            parse_jsonl_records(&content, &mut labels)?;
-
-            store.local_files.push(LabelFile {
-                meta: LabelFileMeta {
-                    id,
-                    name: file_name,
-                    kind: LabelFileKind::Local,
-                    editable: true,
-                },
-                labels,
-            });
-        }
+        // Load existing JSONL files recursively so nested persistence layouts
+        // are restored deterministically on startup.
+        let mut seen_ids = HashSet::new();
+        Self::load_local_files_recursive(dir, dir, &mut store.local_files, &mut seen_ids)?;
 
         Ok(store)
     }
@@ -93,90 +61,58 @@ impl LabelStore {
     // Local file lifecycle
     // ========================================================================
 
-    pub fn list_local_files(&self) -> Vec<LabelFileSummary> {
-        self.local_files
-            .iter()
-            .map(|file| LabelFileSummary {
-                id: file.meta.id.clone(),
-                name: file.meta.name.clone(),
-                kind: file.meta.kind,
-                editable: file.meta.editable,
-                record_count: file.labels.len(),
-            })
-            .collect()
-    }
-
-    pub fn list_files(&self) -> Vec<LabelFileSummary> {
+    pub fn list_files(&self) -> Vec<&LabelFile> {
         self.local_files
             .iter()
             .chain(self.pack_files.iter())
-            .map(|file| LabelFileSummary {
-                id: file.meta.id.clone(),
-                name: file.meta.name.clone(),
-                kind: file.meta.kind,
-                editable: file.meta.editable,
-                record_count: file.labels.len(),
-            })
             .collect()
     }
 
-    pub fn get_local_file_summary(&self, file_id: &str) -> Option<LabelFileSummary> {
+    pub fn get_local_file(&self, file_id: &str) -> Option<&LabelFile> {
         self.find_local_file_by_id(file_id)
-            .map(|file| LabelFileSummary {
-                id: file.meta.id.clone(),
-                name: file.meta.name.clone(),
-                kind: file.meta.kind,
-                editable: file.meta.editable,
-                record_count: file.labels.len(),
-            })
     }
 
-    pub fn create_local_file(&mut self, name: &str) -> Result<LabelFileMeta, LabelStoreError> {
+    pub fn create_local_file(&mut self, name: &str) -> Result<String, LabelStoreError> {
         let parsed = parse_local_file_name(name)?;
         if self.find_local_file_index_by_id(&parsed.id).is_some() {
             return Err(LabelStoreError::DuplicateLocalFile(parsed.id));
         }
 
-        let meta = LabelFileMeta {
+        let file = LabelFile {
             id: parsed.id.clone(),
             name: parsed.name,
             kind: LabelFileKind::Local,
             editable: true,
-        };
-        self.local_files.push(LabelFile {
-            meta: meta.clone(),
             labels: HashMap::new(),
-        });
+        };
+        self.local_files.push(file);
         self.flush_local_file(&parsed.id)?;
-        Ok(meta)
+        Ok(parsed.id)
     }
 
     pub fn import_local_file(
         &mut self,
         name: &str,
         content: &str,
-    ) -> Result<LabelFileMeta, LabelStoreError> {
+    ) -> Result<String, LabelStoreError> {
         let parsed = parse_local_file_name(name)?;
         if self.find_local_file_index_by_id(&parsed.id).is_some() {
             return Err(LabelStoreError::DuplicateLocalFile(parsed.id));
         }
 
-        let mut labels = HashMap::new();
-        parse_jsonl_records(content, &mut labels)?;
+        let labels = parse_jsonl_records(content)?;
 
-        let meta = LabelFileMeta {
+        let file = LabelFile {
             id: parsed.id.clone(),
             name: parsed.name,
             kind: LabelFileKind::Local,
             editable: true,
-        };
-        self.local_files.push(LabelFile {
-            meta: meta.clone(),
             labels,
-        });
+        };
+        self.local_files.push(file);
         self.flush_local_file(&parsed.id)?;
 
-        Ok(meta)
+        Ok(parsed.id)
     }
 
     pub fn replace_local_file_content(
@@ -188,8 +124,7 @@ impl LabelStore {
             .find_local_file_index_by_id(file_id)
             .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
 
-        let mut labels = HashMap::new();
-        parse_jsonl_records(content, &mut labels)?;
+        let labels = parse_jsonl_records(content)?;
         self.local_files[idx].labels = labels;
         self.flush_local_file(file_id)?;
         Ok(())
@@ -199,7 +134,7 @@ impl LabelStore {
         let idx = self
             .find_local_file_index_by_id(file_id)
             .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
-        let name = self.local_files[idx].meta.name.clone();
+        let name = self.local_files[idx].name.clone();
         self.local_files.remove(idx);
         self.remove_local_file_on_disk(&name);
         Ok(())
@@ -272,13 +207,13 @@ impl LabelStore {
         &self,
         label_type: Bip329Type,
         ref_id: &str,
-    ) -> Vec<(LabelFileMeta, Bip329Record)> {
+    ) -> Vec<(&LabelFile, &Bip329Record)> {
         let key = (label_type, ref_id.to_string());
         let mut results = Vec::new();
 
         for file in self.local_files.iter().chain(self.pack_files.iter()) {
             if let Some(record) = file.labels.get(&key) {
-                results.push((file.meta.clone(), record.clone()));
+                results.push((file, record));
             }
         }
 
@@ -298,8 +233,7 @@ impl LabelStore {
         }
 
         // Track existing pack IDs to detect collisions.
-        let mut seen_ids: HashSet<String> =
-            self.pack_files.iter().map(|f| f.meta.id.clone()).collect();
+        let mut seen_ids: HashSet<String> = self.pack_files.iter().map(|f| f.id.clone()).collect();
         walk_pack_dir(dir, dir, &mut self.pack_files, &mut seen_ids)
     }
 
@@ -307,12 +241,60 @@ impl LabelStore {
     // Internal
     // ========================================================================
 
+    fn load_local_files_recursive(
+        base: &Path,
+        current: &Path,
+        local_files: &mut Vec<LabelFile>,
+        seen_ids: &mut HashSet<String>,
+    ) -> Result<(), CoreError> {
+        let mut entries: Vec<_> = std::fs::read_dir(current)?.collect::<Result<Vec<_>, _>>()?;
+        entries.sort_by_key(|e| e.path());
+
+        for entry in entries {
+            let path = entry.path();
+            if path.is_dir() {
+                Self::load_local_files_recursive(base, &path, local_files, seen_ids)?;
+                continue;
+            }
+            if path.extension().is_none_or(|ext| ext != "jsonl") {
+                continue;
+            }
+
+            let relative = path.strip_prefix(base).unwrap_or(&path);
+            let name = relative
+                .with_extension("")
+                .to_string_lossy()
+                .replace('\\', "/");
+            let id = normalize_label_file_id(&name);
+            if id.is_empty() {
+                continue;
+            }
+            if !seen_ids.insert(id.clone()) {
+                return Err(CoreError::LabelParse {
+                    line: 0,
+                    message: format!("duplicate local file ID `{id}` from {}", path.display()),
+                });
+            }
+
+            let content = std::fs::read_to_string(&path)?;
+            let labels = parse_jsonl_records(&content)?;
+            local_files.push(LabelFile {
+                id,
+                name,
+                kind: LabelFileKind::Local,
+                editable: true,
+                labels,
+            });
+        }
+        Ok(())
+    }
+
     fn find_local_file_index_by_id(&self, file_id: &str) -> Option<usize> {
-        self.local_files.iter().position(|f| f.meta.id == file_id)
+        self.local_files.iter().position(|f| f.id == file_id)
     }
 
     fn find_local_file_by_id(&self, file_id: &str) -> Option<&LabelFile> {
-        self.local_files.iter().find(|f| f.meta.id == file_id)
+        self.local_files.iter().find(|f| f.id == file_id)
     }
 
     /// Flush a local file to disk if persistence is enabled.
@@ -324,7 +306,10 @@ impl LabelStore {
             .find_local_file_by_id(file_id)
             .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
         let content = export_map_to_jsonl(&file.labels);
-        let path = dir.join(format!("{}.jsonl", file.meta.name));
+        let path = dir.join(format!("{}.jsonl", file.name));
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(CoreError::Io)?;
+        }
         std::fs::write(&path, content).map_err(CoreError::Io)?;
         Ok(())
     }
@@ -346,6 +331,10 @@ mod tests {
     fn normalize_file_id() {
         assert_eq!(normalize_label_file_id("My Wallet"), "my-wallet");
         assert_eq!(normalize_label_file_id("wallet.jsonl"), "wallet-jsonl");
+        assert_eq!(
+            normalize_label_file_id("Exchanges/Binance Hot"),
+            "exchanges/binance-hot"
+        );
     }
 
     #[test]
@@ -354,7 +343,7 @@ mod tests {
         let created = store
             .create_local_file("wallet-a")
             .expect("create local file should succeed");
-        assert_eq!(created.id, "wallet-a");
+        assert_eq!(created, "wallet-a");
 
         store
             .set_local_label(
@@ -373,7 +362,14 @@ mod tests {
         store
             .remove_local_file("wallet-a")
             .expect("delete local file should succeed");
-        assert!(store.list_local_files().is_empty());
+        assert!(
+            store
+                .list_files()
+                .into_iter()
+                .filter(|f| f.kind == LabelFileKind::Local)
+                .count()
+                == 0
+        );
     }
 
     #[test]
@@ -386,20 +382,15 @@ mod tests {
             )
             .expect("local import should succeed");
 
-        let mut pack_labels = HashMap::new();
-        parse_jsonl_records(
-            r#"{"type":"tx","ref":"txid1","label":"Pack label"}"#,
-            &mut pack_labels,
-        )
-        .expect("pack parse should succeed");
+        let pack_labels =
+            parse_jsonl_records(r#"{"type":"tx","ref":"txid1","label":"Pack label"}"#)
+                .expect("pack parse should succeed");
 
         store.pack_files.push(LabelFile {
-            meta: LabelFileMeta {
-                id: "pack:default".into(),
-                name: "default".into(),
-                kind: LabelFileKind::Pack,
-                editable: false,
-            },
+            id: "pack:default".into(),
+            name: "default".into(),
+            kind: LabelFileKind::Pack,
+            editable: false,
             labels: pack_labels,
         });
 
@@ -412,11 +403,11 @@ mod tests {
     #[test]
     fn typed_lookup_ignores_other_label_types() {
         let mut store = LabelStore::new();
-        let file = store.create_local_file("wallet").expect("create file");
+        let file_id = store.create_local_file("wallet").expect("create file");
 
         store
             .set_local_label(
-                &file.id,
+                &file_id,
                 Bip329Type::Tx,
                 "abc".to_string(),
                 "tx label".to_string(),
@@ -424,7 +415,7 @@ mod tests {
             .expect("set tx label");
         store
             .set_local_label(
-                &file.id,
+                &file_id,
                 Bip329Type::Addr,
                 "abc".to_string(),
                 "addr label".to_string(),
@@ -466,7 +457,12 @@ mod tests {
         let mut store = LabelStore::new();
         store.create_local_file("wallet").expect("create");
         assert!(matches!(
-            store.set_local_label("wallet", Bip329Type::Tx, "  ".to_string(), "label".to_string()),
+            store.set_local_label(
+                "wallet",
+                Bip329Type::Tx,
+                "  ".to_string(),
+                "label".to_string()
+            ),
             Err(LabelStoreError::EmptyRef)
         ));
     }
@@ -476,7 +472,12 @@ mod tests {
         let mut store = LabelStore::new();
         store.create_local_file("wallet").expect("create");
         assert!(matches!(
-            store.set_local_label("wallet", Bip329Type::Tx, "txid1".to_string(), "  ".to_string()),
+            store.set_local_label(
+                "wallet",
+                Bip329Type::Tx,
+                "txid1".to_string(),
+                "  ".to_string()
+            ),
             Err(LabelStoreError::EmptyLabel)
         ));
     }

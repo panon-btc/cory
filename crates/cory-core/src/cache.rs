@@ -1,39 +1,26 @@
 //! In-memory LRU caches for decoded transactions and resolved prevout data.
 //!
 //! The cache is shared across concurrent graph-building tasks via
-//! `Arc<Cache>`. Both lookup methods acquire a **write** lock because
-//! the underlying `LruCache::get` updates recency tracking.
+//! `Arc<Cache>`. Lookups mutate LRU recency state, so both operations
+//! require mutable access.
 
 use std::num::NonZeroUsize;
 
-use bitcoin::{Amount, ScriptBuf, Txid};
+use bitcoin::Txid;
 use lru::LruCache;
-use tokio::sync::RwLock;
+use tokio::sync::Mutex;
 
-use crate::types::{ScriptType, TxNode};
-
-// ==============================================================================
-// Prevout Cache Entry
-// ==============================================================================
-
-/// Cached information about a previous output, used to enrich inputs
-/// with value and script type without re-fetching the full transaction.
-#[derive(Debug, Clone)]
-pub struct PrevoutInfo {
-    pub value: Amount,
-    pub script_pub_key: ScriptBuf,
-    pub script_type: ScriptType,
-}
+use crate::types::{TxNode, TxOutput};
 
 // ==============================================================================
 // Default Capacity
 // ==============================================================================
 
 /// Default maximum number of cached transactions.
-const DEFAULT_TX_CAPACITY: usize = 10_000;
+const DEFAULT_TX_CAPACITY: usize = 20_000;
 
 /// Default maximum number of cached prevout entries.
-const DEFAULT_PREVOUT_CAPACITY: usize = 50_000;
+const DEFAULT_PREVOUT_CAPACITY: usize = 100_000;
 
 // ==============================================================================
 // Cache
@@ -42,16 +29,16 @@ const DEFAULT_PREVOUT_CAPACITY: usize = 50_000;
 /// In-memory LRU caches for decoded transactions and resolved prevouts.
 ///
 /// Shared across the graph builder and server via `Arc<Cache>`.
-/// Uses `tokio::sync::RwLock` for async-friendly concurrent access.
+/// Uses `tokio::sync::Mutex` for async-friendly concurrent access.
+/// Mutex and not RwLock is needed since LRU reads update recency tracking.
 /// Entries are evicted in least-recently-used order when the cache is full.
 pub struct Cache {
-    transactions: RwLock<LruCache<Txid, TxNode>>,
-    prevouts: RwLock<LruCache<(Txid, u32), PrevoutInfo>>,
+    transactions: Mutex<LruCache<Txid, TxNode>>,
+    prevouts: Mutex<LruCache<(Txid, u32), TxOutput>>,
 }
 
 impl Cache {
-    /// Create a cache with the default capacities (10 000 transactions,
-    /// 50 000 prevouts).
+    /// Create a cache with the default capacities
     pub fn new() -> Self {
         Self::with_capacity(DEFAULT_TX_CAPACITY, DEFAULT_PREVOUT_CAPACITY)
     }
@@ -59,10 +46,10 @@ impl Cache {
     /// Create a cache with explicit capacities. Both values must be > 0.
     pub fn with_capacity(tx_cap: usize, prevout_cap: usize) -> Self {
         Self {
-            transactions: RwLock::new(LruCache::new(
+            transactions: Mutex::new(LruCache::new(
                 NonZeroUsize::new(tx_cap).expect("tx capacity must be > 0"),
             )),
-            prevouts: RwLock::new(LruCache::new(
+            prevouts: Mutex::new(LruCache::new(
                 NonZeroUsize::new(prevout_cap).expect("prevout capacity must be > 0"),
             )),
         }
@@ -70,26 +57,26 @@ impl Cache {
 
     /// Look up a cached transaction by txid.
     ///
-    /// Takes a **write** lock because LRU `get` updates recency tracking.
+    /// Takes a mutex lock because LRU `get` updates recency tracking.
     pub async fn get_tx(&self, txid: &Txid) -> Option<TxNode> {
-        self.transactions.write().await.get(txid).cloned()
+        self.transactions.lock().await.get(txid).cloned()
     }
 
     /// Insert a decoded transaction into the cache.
     pub async fn insert_tx(&self, txid: Txid, node: TxNode) {
-        self.transactions.write().await.put(txid, node);
+        self.transactions.lock().await.put(txid, node);
     }
 
     /// Look up cached prevout info for a specific outpoint.
     ///
-    /// Takes a **write** lock because LRU `get` updates recency tracking.
-    pub async fn get_prevout(&self, txid: &Txid, vout: u32) -> Option<PrevoutInfo> {
-        self.prevouts.write().await.get(&(*txid, vout)).cloned()
+    /// Takes a mutex lock because LRU `get` updates recency tracking.
+    pub async fn get_prevout(&self, txid: &Txid, vout: u32) -> Option<TxOutput> {
+        self.prevouts.lock().await.get(&(*txid, vout)).cloned()
     }
 
     /// Cache resolved prevout data for a specific outpoint.
-    pub async fn insert_prevout(&self, txid: Txid, vout: u32, info: PrevoutInfo) {
-        self.prevouts.write().await.put((txid, vout), info);
+    pub async fn insert_prevout(&self, txid: Txid, vout: u32, info: TxOutput) {
+        self.prevouts.lock().await.put((txid, vout), info);
     }
 }
 
@@ -134,7 +121,10 @@ mod tests {
         cache.insert_tx(txid_b, node.clone()).await;
         cache.insert_tx(txid_c, node.clone()).await;
 
-        assert!(cache.get_tx(&txid_a).await.is_none(), "oldest should be evicted");
+        assert!(
+            cache.get_tx(&txid_a).await.is_none(),
+            "oldest should be evicted"
+        );
         assert!(cache.get_tx(&txid_b).await.is_some());
         assert!(cache.get_tx(&txid_c).await.is_some());
     }
@@ -146,15 +136,11 @@ mod tests {
 
         assert!(cache.get_prevout(&txid, 0).await.is_none());
 
-        let info = PrevoutInfo {
-            value: Amount::from_sat(5000),
-            script_pub_key: ScriptBuf::new(),
-            script_type: ScriptType::P2wpkh,
-        };
+        let info = make_output(5000);
         cache.insert_prevout(txid, 0, info.clone()).await;
 
         let cached = cache.get_prevout(&txid, 0).await.expect("should be cached");
-        assert_eq!(cached.value, Amount::from_sat(5000));
+        assert_eq!(cached.value, info.value);
 
         // Different vout should miss.
         assert!(cache.get_prevout(&txid, 1).await.is_none());

@@ -98,7 +98,6 @@ pub struct TxNode {
     pub block_hash: Option<BlockHash>,
     /// Block height; `None` for unconfirmed (mempool) transactions.
     pub block_height: Option<BlockHeight>,
-    pub block_time: Option<u64>,
     pub inputs: Vec<TxInput>,
     pub outputs: Vec<TxOutput>,
 }
@@ -107,8 +106,7 @@ impl TxNode {
     /// Compute confirmations relative to the current chain tip.
     /// Returns `None` for unconfirmed transactions.
     pub fn confirmations(&self, tip_height: BlockHeight) -> Option<u32> {
-        self.block_height
-            .map(|h| tip_height.saturating_sub(*h) + 1)
+        self.block_height.map(|h| tip_height.saturating_sub(*h) + 1)
     }
 
     /// A coinbase transaction has exactly one input whose prevout is `None`.
@@ -191,4 +189,3 @@ impl Default for GraphLimits {
         }
     }
 }
-

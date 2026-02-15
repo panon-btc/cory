@@ -29,7 +29,6 @@ export interface TxNode {
   weight: number;
   block_hash: string | null;
   block_height: number | null;
-  block_time: number | null;
   inputs: TxInput[];
   outputs: TxOutput[];
 }

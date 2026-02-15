@@ -8,15 +8,14 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use bitcoin::Txid;
 use futures::future::try_join_all;
+use futures::stream::{self, StreamExt};
 use tokio::sync::Semaphore;
 
-use crate::cache::{Cache, PrevoutInfo};
-use crate::enrich::classify_script;
+use crate::cache::Cache;
 use crate::error::CoreError;
-use crate::rpc::types::{RawInputInfo, RawTxInfo};
 use crate::rpc::BitcoinRpc;
 use crate::types::{
-    AncestryEdge, AncestryGraph, GraphLimits, GraphStats, ScriptType, TxInput, TxNode, TxOutput,
+    AncestryEdge, AncestryGraph, GraphLimits, GraphStats, ScriptType, TxInput, TxNode,
 };
 
 // ==============================================================================
@@ -101,7 +100,7 @@ pub async fn build_ancestry(
                 if edges.len() + candidate_edge_count > limits.max_edges {
                     nodes.insert(txid, tx_node);
                     truncated = true;
-                    // Stop processing this frontier — remaining nodes are
+                    // Stop processing this frontier: remaining nodes are
                     // already visited so they won't be re-queued.
                     continue;
                 }
@@ -148,9 +147,8 @@ pub async fn build_ancestry(
 // Transaction Fetching and Conversion
 // ==============================================================================
 
-/// Fetch a transaction from the cache or RPC, converting the raw RPC
-/// response into a `TxNode` with enriched inputs (prevout values and
-/// script types).
+/// Fetch a transaction from the cache or RPC and enrich unresolved
+/// inputs with prevout values/script types when possible.
 async fn fetch_and_convert(
     rpc: &dyn BitcoinRpc,
     cache: &Cache,
@@ -174,87 +172,66 @@ async fn fetch_and_convert(
         return Ok(cached);
     }
 
-    let raw = rpc.get_transaction(txid).await?;
-    let tx_node = convert_raw_tx(rpc, cache, raw).await?;
+    let tx = rpc.get_transaction(txid).await?;
+    let tx_node = enrich_tx_node(rpc, cache, tx).await?;
 
     cache.insert_tx(*txid, tx_node.clone()).await;
     Ok(tx_node)
 }
 
-/// Convert a `RawTxInfo` into a `TxNode`, resolving prevout values and
-/// script types for each input. When the raw response already includes
-/// prevout data (verbosity=2), we use that directly; otherwise we look
-/// up the funding transaction from the cache (which will have been fetched
-/// during earlier BFS levels) or fall back to the prevout cache.
+/// Enrich a decoded transaction by resolving input prevout metadata.
+/// When RPC already provided input value/script data (verbosity=2), we
+/// use that directly; otherwise we resolve from caches and fallback RPC.
 ///
 /// The conversion proceeds in three phases:
-/// 1. Build initial inputs from cache/local data, collecting unresolved
+/// 1. Fill inputs from cache/local data, collecting unresolved
 ///    outpoints.
 /// 2. Resolve unresolved prevouts via batched RPC, then individual
 ///    parent-tx fallback.
-/// 3. Convert raw outputs to domain `TxOutput` with script classification.
-async fn convert_raw_tx(
+/// 3. Return the enriched transaction.
+async fn enrich_tx_node(
     rpc: &dyn BitcoinRpc,
     cache: &Cache,
-    raw: RawTxInfo,
+    mut tx: TxNode,
 ) -> Result<TxNode, CoreError> {
-    // Phase 1: build inputs from local data, track what still needs RPC.
-    let (mut inputs, unresolved) = build_inputs_initial(cache, &raw.inputs).await;
+    // Phase 1: fill inputs from local data, track what still needs RPC.
+    let unresolved = build_inputs_initial(cache, &mut tx.inputs).await;
 
     // Phase 2: resolve remaining inputs via batched gettxout + parent tx fallback.
     if !unresolved.is_empty() {
-        resolve_unresolved_prevouts(rpc, cache, &mut inputs, &unresolved, &raw.txid).await;
+        resolve_unresolved_prevouts(rpc, cache, &mut tx.inputs, &unresolved, &tx.txid).await;
     }
 
-    // Phase 3: classify output scripts.
-    let outputs = convert_outputs(&raw.outputs);
-
-    Ok(TxNode {
-        txid: raw.txid,
-        version: raw.version,
-        locktime: raw.locktime,
-        size: raw.size,
-        vsize: raw.vsize,
-        weight: raw.weight,
-        block_hash: raw.block_hash,
-        block_height: raw.block_height,
-        block_time: raw.block_time,
-        inputs,
-        outputs,
-    })
+    Ok(tx)
 }
 
-/// Phase 1: iterate raw inputs, resolve from cache/raw data where possible,
-/// and return the partially-filled inputs along with a list of outpoints
-/// that still need RPC resolution.
+/// Phase 1: iterate inputs, resolve from local cache data where possible,
+/// and return the outpoints that still need RPC resolution.
 async fn build_inputs_initial(
     cache: &Cache,
-    raw_inputs: &[RawInputInfo],
-) -> (Vec<TxInput>, Vec<(usize, bitcoin::OutPoint)>) {
-    let mut inputs = Vec::with_capacity(raw_inputs.len());
-    let mut unresolved = Vec::new();
-
-    for (idx, raw_input) in raw_inputs.iter().enumerate() {
-        let (value, script_type) = match &raw_input.prevout {
-            None => (None, None),
-            Some(outpoint) => match resolve_prevout_without_rpc(cache, raw_input, outpoint).await {
-                Some((value, script_type)) => (Some(value), Some(script_type)),
-                None => {
-                    unresolved.push((idx, *outpoint));
-                    (None, None)
-                }
-            },
-        };
-
-        inputs.push(TxInput {
-            prevout: raw_input.prevout,
-            sequence: raw_input.sequence,
-            value,
-            script_type,
-        });
-    }
-
-    (inputs, unresolved)
+    inputs: &mut [TxInput],
+) -> Vec<(usize, bitcoin::OutPoint)> {
+    stream::iter(inputs.iter_mut().enumerate())
+        .then(|(idx, input)| async move {
+            match &input.prevout {
+                None => None,
+                Some(outpoint) => match resolve_prevout_without_rpc(cache, input, outpoint).await {
+                    Some((value, script_type)) => {
+                        input.value = Some(value);
+                        input.script_type = Some(script_type);
+                        None
+                    }
+                    None => {
+                        input.value = None;
+                        input.script_type = None;
+                        Some((idx, *outpoint))
+                    }
+                },
+            }
+        })
+        .filter_map(std::future::ready)
+        .collect()
+        .await
 }
 
 /// Phase 2: for unresolved prevouts, first try a batched `gettxout` call,
@@ -273,24 +250,21 @@ async fn resolve_unresolved_prevouts(
     match rpc.get_tx_outs(&outpoints).await {
         Ok(resolved) => {
             for ((input_idx, outpoint), info_opt) in unresolved.iter().zip(resolved) {
-                if let Some(info) = info_opt {
-                    let script_type = classify_script(info.script_pub_key.as_script());
-                    cache
-                        .insert_prevout(
-                            outpoint.txid,
-                            outpoint.vout,
-                            PrevoutInfo {
-                                value: info.value,
-                                script_pub_key: info.script_pub_key,
-                                script_type,
-                            },
-                        )
-                        .await;
+                // Skip unresolved outpoints that `gettxout` could not return
+                let Some(info) = info_opt else {
+                    continue;
+                };
 
-                    if let Some(input) = inputs.get_mut(*input_idx) {
-                        input.value = Some(info.value);
-                        input.script_type = Some(script_type);
-                    }
+                // Cache the resolved output so future lookups can reuse it without an RPC call.
+                cache
+                    .insert_prevout(outpoint.txid, outpoint.vout, info.clone())
+                    .await;
+
+                // Backfill this transaction input with value/script metadata
+                // from the resolved prevout.
+                if let Some(input) = inputs.get_mut(*input_idx) {
+                    input.value = Some(info.value);
+                    input.script_type = Some(info.script_type);
                 }
             }
         }
@@ -326,35 +300,14 @@ async fn resolve_unresolved_prevouts(
         }
         if let Ok(parent_tx) = rpc.get_transaction(&outpoint.txid).await {
             if let Some(output) = parent_tx.outputs.get(outpoint.vout as usize) {
-                let st = classify_script(output.script_pub_key.as_script());
                 cache
-                    .insert_prevout(
-                        outpoint.txid,
-                        outpoint.vout,
-                        PrevoutInfo {
-                            value: output.value,
-                            script_pub_key: output.script_pub_key.clone(),
-                            script_type: st,
-                        },
-                    )
+                    .insert_prevout(outpoint.txid, outpoint.vout, output.clone())
                     .await;
                 inputs[idx].value = Some(output.value);
-                inputs[idx].script_type = Some(st);
+                inputs[idx].script_type = Some(output.script_type);
             }
         }
     }
-}
-
-/// Phase 3: classify each raw output's script and build domain `TxOutput`s.
-fn convert_outputs(raw_outputs: &[crate::rpc::types::RawOutputInfo]) -> Vec<TxOutput> {
-    raw_outputs
-        .iter()
-        .map(|o| TxOutput {
-            value: o.value,
-            script_pub_key: o.script_pub_key.clone(),
-            script_type: classify_script(o.script_pub_key.as_script()),
-        })
-        .collect()
 }
 
 /// Try to resolve the value and script type for a prevout using (in order):
@@ -364,25 +317,14 @@ fn convert_outputs(raw_outputs: &[crate::rpc::types::RawOutputInfo]) -> Vec<TxOu
 /// 4. The gettxout RPC call (last resort, only works for unspent outputs)
 async fn resolve_prevout_without_rpc(
     cache: &Cache,
-    raw_input: &RawInputInfo,
+    input: &TxInput,
     outpoint: &bitcoin::OutPoint,
 ) -> Option<(bitcoin::Amount, ScriptType)> {
-    // 1. Check if the raw response already has prevout info.
-    if let (Some(value), Some(script)) = (&raw_input.prevout_value, &raw_input.prevout_script) {
-        let st = classify_script(script.as_script());
-        // Cache for future lookups.
-        cache
-            .insert_prevout(
-                outpoint.txid,
-                outpoint.vout,
-                PrevoutInfo {
-                    value: *value,
-                    script_pub_key: script.clone(),
-                    script_type: st,
-                },
-            )
-            .await;
-        return Some((*value, st));
+    // 1. Check if the RPC response already provided both fields.
+    // We do not cache this path because `TxInput` intentionally does not
+    // carry the prevout script bytes needed for `TxOutput.script_pub_key`.
+    if let (Some(value), Some(script_type)) = (input.value, input.script_type) {
+        return Some((value, script_type));
     }
 
     // 2. Check the prevout cache.
@@ -394,15 +336,7 @@ async fn resolve_prevout_without_rpc(
     if let Some(funding_tx) = cache.get_tx(&outpoint.txid).await {
         if let Some(output) = funding_tx.outputs.get(outpoint.vout as usize) {
             cache
-                .insert_prevout(
-                    outpoint.txid,
-                    outpoint.vout,
-                    PrevoutInfo {
-                        value: output.value,
-                        script_pub_key: output.script_pub_key.clone(),
-                        script_type: output.script_type,
-                    },
-                )
+                .insert_prevout(outpoint.txid, outpoint.vout, output.clone())
                 .await;
             return Some((output.value, output.script_type));
         }
@@ -600,10 +534,8 @@ mod tests {
             vec![simple_output(10000)],
         );
 
-        let mut parent_out_0 = simple_output(4000);
-        parent_out_0.n = 0;
-        let mut parent_out_1 = simple_output(5000);
-        parent_out_1.n = 1;
+        let parent_out_0 = simple_output(4000);
+        let parent_out_1 = simple_output(5000);
 
         let parent = make_raw_tx(
             parent_txid,
@@ -651,10 +583,8 @@ mod tests {
             vec![coinbase_input()],
             vec![simple_output(10_000)],
         );
-        let mut parent_out_0 = simple_output(4_000);
-        parent_out_0.n = 0;
-        let mut parent_out_1 = simple_output(5_000);
-        parent_out_1.n = 1;
+        let parent_out_0 = simple_output(4_000);
+        let parent_out_1 = simple_output(5_000);
 
         let parent = make_raw_tx(
             parent_txid,

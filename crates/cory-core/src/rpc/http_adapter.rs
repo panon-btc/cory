@@ -17,10 +17,11 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, trace};
 
+use crate::enrich::classify_script;
 use crate::error::{CoreError, RpcError};
-use crate::types::BlockHeight;
+use crate::types::{BlockHeight, TxInput, TxNode, TxOutput};
 
-use super::types::{ChainInfo, RawInputInfo, RawOutputInfo, RawTxInfo, TxOutInfo};
+use super::types::ChainInfo;
 use super::BitcoinRpc;
 
 // ==============================================================================
@@ -28,7 +29,7 @@ use super::BitcoinRpc;
 // ==============================================================================
 
 /// Maximum number of block-hash → height entries cached in memory.
-const BLOCK_HEIGHT_CACHE_CAP: usize = 1_000;
+const BLOCK_HEIGHT_CACHE_CAP: usize = 10_000;
 
 /// HTTP-based Bitcoin Core JSON-RPC client.
 ///
@@ -42,7 +43,7 @@ pub struct HttpRpcClient {
     next_id: AtomicU64,
     /// Bounded LRU cache mapping confirmed block hashes to their height.
     /// Confirmed block heights are immutable, so entries never need
-    /// invalidation — only eviction under memory pressure.
+    /// invalidation, only eviction under memory pressure.
     block_height_cache: RwLock<LruCache<BlockHash, BlockHeight>>,
 }
 
@@ -174,9 +175,7 @@ impl HttpRpcClient {
         );
 
         let decoded: Vec<JsonRpcResponseOwned> = serde_json::from_str(&body).map_err(|e| {
-            RpcError::InvalidResponse(format!(
-                "decode JSON-RPC batch response: {e}; body={body}"
-            ))
+            RpcError::InvalidResponse(format!("decode JSON-RPC batch response: {e}; body={body}"))
         })?;
 
         let mut by_id: HashMap<u64, JsonRpcResponseOwned> = HashMap::with_capacity(decoded.len());
@@ -187,9 +186,7 @@ impl HttpRpcClient {
 
         let mut ordered = Vec::with_capacity(calls.len());
         for id in start_id..(start_id + calls.len() as u64) {
-            let item = by_id
-                .remove(&id)
-                .ok_or(RpcError::MissingBatchItem { id })?;
+            let item = by_id.remove(&id).ok_or(RpcError::MissingBatchItem { id })?;
 
             if let Some(err) = item.error {
                 return Err(parse_jsonrpc_error(err));
@@ -225,7 +222,7 @@ impl HttpRpcClient {
                 ],
             )
             .await?;
-        let height = parse_opt_u32(raw.get("height")).map(BlockHeight);
+        let height = parse_integer_optional::<u32, false>(raw.get("height")).map(BlockHeight);
         if let Some(height) = height {
             self.block_height_cache
                 .write()
@@ -238,7 +235,7 @@ impl HttpRpcClient {
 
 #[async_trait]
 impl BitcoinRpc for HttpRpcClient {
-    async fn get_transaction(&self, txid: &Txid) -> Result<RawTxInfo, CoreError> {
+    async fn get_transaction(&self, txid: &Txid) -> Result<TxNode, CoreError> {
         let raw = self
             .rpc_call(
                 "getrawtransaction",
@@ -247,15 +244,15 @@ impl BitcoinRpc for HttpRpcClient {
             .await?;
 
         let txid = parse_txid(raw.get("txid"), "txid")?;
-        let version = parse_i32(raw.get("version"), "version")?;
-        let locktime = parse_u32(raw.get("locktime"), "locktime")?;
-        let size = parse_u64(raw.get("size"), "size")?;
-        let vsize = parse_u64(raw.get("vsize"), "vsize")?;
-        let weight = parse_u64(raw.get("weight"), "weight")?;
+        let version = parse_integer_required::<i32, true>(raw.get("version"), "version")?;
+        let locktime = parse_integer_required::<u32, false>(raw.get("locktime"), "locktime")?;
+        let size = parse_integer_required::<u64, false>(raw.get("size"), "size")?;
+        let vsize = parse_integer_required::<u64, false>(raw.get("vsize"), "vsize")?;
+        let weight = parse_integer_required::<u64, false>(raw.get("weight"), "weight")?;
         let block_hash = parse_opt_block_hash(raw.get("blockhash"))?;
-        let mut block_height = parse_opt_u32(raw.get("blockheight")).map(BlockHeight);
-        let confirmations = parse_opt_u64(raw.get("confirmations"));
-        let block_time = parse_opt_u64(raw.get("blocktime"));
+        let mut block_height =
+            parse_integer_optional::<u32, false>(raw.get("blockheight")).map(BlockHeight);
+        let confirmations = parse_integer_optional::<u64, false>(raw.get("confirmations"));
 
         if block_height.is_none() {
             if let Some(block_hash) = block_hash {
@@ -277,7 +274,7 @@ impl BitcoinRpc for HttpRpcClient {
         let inputs = parse_vin(vin)?;
         let outputs = parse_vout(vout)?;
 
-        Ok(RawTxInfo {
+        Ok(TxNode {
             txid,
             version,
             locktime,
@@ -286,14 +283,12 @@ impl BitcoinRpc for HttpRpcClient {
             weight,
             block_hash,
             block_height,
-            block_time,
-            confirmations,
             inputs,
             outputs,
         })
     }
 
-    async fn get_tx_out(&self, txid: &Txid, vout: u32) -> Result<Option<TxOutInfo>, CoreError> {
+    async fn get_tx_out(&self, txid: &Txid, vout: u32) -> Result<Option<TxOutput>, CoreError> {
         let raw = self
             .rpc_call(
                 "gettxout",
@@ -311,7 +306,7 @@ impl BitcoinRpc for HttpRpcClient {
     async fn get_tx_outs(
         &self,
         outpoints: &[OutPoint],
-    ) -> Result<Vec<Option<TxOutInfo>>, CoreError> {
+    ) -> Result<Vec<Option<TxOutput>>, CoreError> {
         let calls: Vec<(String, Vec<serde_json::Value>)> = outpoints
             .iter()
             .map(|outpoint| {
@@ -331,25 +326,11 @@ impl BitcoinRpc for HttpRpcClient {
     }
 
     async fn get_blockchain_info(&self) -> Result<ChainInfo, CoreError> {
-        #[derive(Deserialize)]
-        struct BlockchainInfoMinimal {
-            chain: String,
-            blocks: u64,
-            bestblockhash: BlockHash,
-            pruned: bool,
-        }
-
         let raw = self.rpc_call("getblockchaininfo", Vec::new()).await?;
-        let info: BlockchainInfoMinimal = serde_json::from_value(raw).map_err(|e| {
+        let info: ChainInfo = serde_json::from_value(raw).map_err(|e| {
             CoreError::InvalidTxData(format!("invalid getblockchaininfo result: {e}"))
         })?;
-
-        Ok(ChainInfo {
-            chain: info.chain,
-            blocks: info.blocks,
-            best_block_hash: info.bestblockhash,
-            pruned: info.pruned,
-        })
+        Ok(info)
     }
 }
 
@@ -391,8 +372,6 @@ struct TxOutResponse {
     value: serde_json::Value,
     #[serde(rename = "scriptPubKey")]
     script_pubkey: serde_json::Value,
-    confirmations: u64,
-    coinbase: bool,
 }
 
 // ==============================================================================
@@ -427,7 +406,7 @@ fn parse_jsonrpc_error(err: serde_json::Value) -> CoreError {
 // Response Field Parsers
 // ==============================================================================
 
-fn parse_gettxout_result(raw: serde_json::Value) -> Result<Option<TxOutInfo>, CoreError> {
+fn parse_gettxout_result(raw: serde_json::Value) -> Result<Option<TxOutput>, CoreError> {
     if raw.is_null() {
         return Ok(None);
     }
@@ -437,12 +416,12 @@ fn parse_gettxout_result(raw: serde_json::Value) -> Result<Option<TxOutInfo>, Co
 
     let value = parse_btc_amount(&response.value)?;
     let script_pub_key = parse_script_pubkey_from_json(&response.script_pubkey)?;
+    let script_type = classify_script(script_pub_key.as_script());
 
-    Ok(Some(TxOutInfo {
+    Ok(Some(TxOutput {
         value,
         script_pub_key,
-        confirmations: response.confirmations,
-        coinbase: response.coinbase,
+        script_type,
     }))
 }
 
@@ -465,46 +444,76 @@ fn parse_opt_block_hash(value: Option<&serde_json::Value>) -> Result<Option<Bloc
     }
 }
 
-fn parse_u64(value: Option<&serde_json::Value>, field: &str) -> Result<u64, CoreError> {
-    value
-        .and_then(serde_json::Value::as_u64)
+fn parse_integer_required<T, const SIGNED: bool>(
+    value: Option<&serde_json::Value>,
+    field: &str,
+) -> Result<T, CoreError>
+where
+    T: TryFrom<i64> + TryFrom<u64>,
+{
+    parse_integer::<T, SIGNED, true>(value, field)?
         .ok_or_else(|| CoreError::InvalidTxData(format!("missing {field}")))
 }
 
-fn parse_u32(value: Option<&serde_json::Value>, field: &str) -> Result<u32, CoreError> {
-    parse_u64(value, field).and_then(|n| {
-        u32::try_from(n).map_err(|_| CoreError::InvalidTxData(format!("{field} out of range: {n}")))
-    })
+fn parse_integer_optional<T, const SIGNED: bool>(value: Option<&serde_json::Value>) -> Option<T>
+where
+    T: TryFrom<i64> + TryFrom<u64>,
+{
+    parse_integer::<T, SIGNED, false>(value, "value")
+        .ok()
+        .flatten()
 }
 
-fn parse_i32(value: Option<&serde_json::Value>, field: &str) -> Result<i32, CoreError> {
-    let n = value
-        .and_then(serde_json::Value::as_i64)
-        .ok_or_else(|| CoreError::InvalidTxData(format!("missing {field}")))?;
-    i32::try_from(n).map_err(|_| CoreError::InvalidTxData(format!("{field} out of range: {n}")))
+// Generic integer parser used by all concrete numeric helpers.
+// `required=false` treats missing/null/type-mismatch as `Ok(None)`.
+fn parse_integer<T, const SIGNED: bool, const REQUIRED: bool>(
+    value: Option<&serde_json::Value>,
+    field: &str,
+) -> Result<Option<T>, CoreError>
+where
+    T: TryFrom<i64> + TryFrom<u64>,
+{
+    let missing_or_none = || {
+        if REQUIRED {
+            Err(CoreError::InvalidTxData(format!("missing {field}")))
+        } else {
+            Ok(None)
+        }
+    };
+
+    let Some(value) = value else {
+        return missing_or_none();
+    };
+
+    if SIGNED {
+        let Some(n) = value.as_i64() else {
+            return missing_or_none();
+        };
+        T::try_from(n)
+            .map(Some)
+            .map_err(|_| CoreError::InvalidTxData(format!("{field} out of range: {n}")))
+    } else {
+        let Some(n) = value.as_u64() else {
+            return missing_or_none();
+        };
+        T::try_from(n)
+            .map(Some)
+            .map_err(|_| CoreError::InvalidTxData(format!("{field} out of range: {n}")))
+    }
 }
 
-fn parse_opt_u64(value: Option<&serde_json::Value>) -> Option<u64> {
-    value.and_then(serde_json::Value::as_u64)
-}
-
-fn parse_opt_u32(value: Option<&serde_json::Value>) -> Option<u32> {
-    value
-        .and_then(serde_json::Value::as_u64)
-        .and_then(|n| u32::try_from(n).ok())
-}
-
-fn parse_vin(vin: &[serde_json::Value]) -> Result<Vec<RawInputInfo>, CoreError> {
+fn parse_vin(vin: &[serde_json::Value]) -> Result<Vec<TxInput>, CoreError> {
     vin.iter()
         .map(|input| {
-            let sequence = parse_u32(input.get("sequence"), "sequence")?;
+            let sequence = parse_integer_required::<u32, false>(input.get("sequence"), "sequence")?;
             let is_coinbase = input.get("coinbase").is_some();
 
             let prevout = if is_coinbase {
                 None
             } else {
                 let prev_txid = parse_txid(input.get("txid"), "vin.txid")?;
-                let prev_vout = parse_u32(input.get("vout"), "vin.vout")?;
+                let prev_vout =
+                    parse_integer_required::<u32, false>(input.get("vout"), "vin.vout")?;
                 Some(OutPoint::new(prev_txid, prev_vout))
             };
 
@@ -513,24 +522,25 @@ fn parse_vin(vin: &[serde_json::Value]) -> Result<Vec<RawInputInfo>, CoreError> 
                 .and_then(|p| p.get("value"))
                 .and_then(|v| parse_btc_amount(v).ok());
 
-            let prevout_script = input
+            let script_type = input
                 .get("prevout")
                 .and_then(|p| p.get("scriptPubKey"))
                 .and_then(|s| s.get("hex"))
                 .and_then(serde_json::Value::as_str)
-                .and_then(|hex_str| script_from_hex(hex_str).ok());
+                .and_then(|hex_str| script_from_hex(hex_str).ok())
+                .map(|script| classify_script(script.as_script()));
 
-            Ok(RawInputInfo {
+            Ok(TxInput {
                 prevout,
                 sequence,
-                prevout_value,
-                prevout_script,
+                value: prevout_value,
+                script_type,
             })
         })
         .collect()
 }
 
-fn parse_vout(vout: &[serde_json::Value]) -> Result<Vec<RawOutputInfo>, CoreError> {
+fn parse_vout(vout: &[serde_json::Value]) -> Result<Vec<TxOutput>, CoreError> {
     vout.iter()
         .map(|output| {
             let value = parse_btc_amount(
@@ -539,16 +549,18 @@ fn parse_vout(vout: &[serde_json::Value]) -> Result<Vec<RawOutputInfo>, CoreErro
                     .ok_or_else(|| CoreError::InvalidTxData("missing value in vout".into()))?,
             )?;
 
-            let n = parse_u32(output.get("n"), "vout.n")?;
             let script =
                 parse_script_pubkey_from_json(output.get("scriptPubKey").ok_or_else(|| {
                     CoreError::InvalidTxData("missing scriptPubKey in vout".into())
                 })?)?;
+            let script_type = classify_script(script.as_script());
+            // We intentionally rely on array position for `vout` indexing.
+            // TODO: Validate `vout.n` sequencing if we need stricter RPC checks.
 
-            Ok(RawOutputInfo {
+            Ok(TxOutput {
                 value,
                 script_pub_key: script,
-                n,
+                script_type,
             })
         })
         .collect()
@@ -572,9 +584,8 @@ fn script_from_hex(hex_str: &str) -> Result<ScriptBuf, CoreError> {
 /// Bitcoin Core returns amounts as JSON numbers like `1.23456789`. We convert
 /// the raw JSON representation to a string first and parse via the `bitcoin`
 /// crate's `Amount::from_str_in`, which avoids the precision hazards of
-/// `f64 * 1e8`. Falls back to the f64 path for robustness.
+/// `f64 * 1e8`.
 fn parse_btc_amount(value: &serde_json::Value) -> Result<Amount, CoreError> {
-    // Try the string path first for maximum precision.
     let s = match value {
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::String(s) => s.clone(),
@@ -585,15 +596,8 @@ fn parse_btc_amount(value: &serde_json::Value) -> Result<Amount, CoreError> {
         }
     };
 
-    Amount::from_str_in(&s, bitcoin::Denomination::Bitcoin).or_else(|_| {
-        // Fallback: parse as f64 for edge cases (scientific notation, etc.).
-        s.parse::<f64>()
-            .map_err(|e| CoreError::InvalidTxData(format!("invalid BTC amount `{s}`: {e}")))
-            .and_then(|f| {
-                Amount::from_btc(f)
-                    .map_err(|e| CoreError::InvalidTxData(format!("invalid BTC amount `{s}`: {e}")))
-            })
-    })
+    Amount::from_str_in(&s, bitcoin::Denomination::Bitcoin)
+        .map_err(|e| CoreError::InvalidTxData(format!("invalid BTC amount `{s}`: {e}")))
 }
 
 fn parse_batch_id(id: &serde_json::Value) -> Result<u64, CoreError> {

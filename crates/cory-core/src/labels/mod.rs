@@ -10,6 +10,4 @@ mod types;
 
 pub use jsonl::normalize_label_file_id;
 pub use store::LabelStore;
-pub use types::{
-    Bip329Record, Bip329Type, LabelFileKind, LabelFileMeta, LabelFileSummary, LabelStoreError,
-};
+pub use types::{Bip329Record, Bip329Type, LabelFile, LabelFileKind, LabelStoreError};

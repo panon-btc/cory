@@ -1,4 +1,4 @@
-//! BIP-329 record types, label file metadata, and store error definitions.
+//! BIP-329 record types, label file definitions, and store error definitions.
 
 use std::collections::HashMap;
 
@@ -60,23 +60,6 @@ pub enum LabelFileKind {
     Pack,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LabelFileMeta {
-    pub id: String,
-    pub name: String,
-    pub kind: LabelFileKind,
-    pub editable: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LabelFileSummary {
-    pub id: String,
-    pub name: String,
-    pub kind: LabelFileKind,
-    pub editable: bool,
-    pub record_count: usize,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum LabelStoreError {
     #[error("label file name cannot be empty")]
@@ -101,8 +84,18 @@ pub enum LabelStoreError {
 /// Composite key for looking up labels: (type, ref_id).
 pub(super) type LabelKey = (Bip329Type, String);
 
-/// Internal representation of a loaded label file (local or pack).
-pub(super) struct LabelFile {
-    pub meta: LabelFileMeta,
-    pub labels: HashMap<LabelKey, Bip329Record>,
+/// A loaded label file (local or pack).
+pub struct LabelFile {
+    pub id: String,
+    pub name: String,
+    pub kind: LabelFileKind,
+    pub editable: bool,
+    pub(super) labels: HashMap<LabelKey, Bip329Record>,
+}
+
+impl LabelFile {
+    /// Number of label records currently contained in this file.
+    pub fn record_count(&self) -> usize {
+        self.labels.len()
+    }
 }

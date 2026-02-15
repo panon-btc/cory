@@ -45,15 +45,15 @@ pub fn classify_script(script: &Script) -> ScriptType {
 /// transaction, or an input whose prevout was not resolved).
 #[must_use]
 pub fn compute_fee(tx: &TxNode) -> Option<Amount> {
-    let mut total_in = Amount::ZERO;
-    for input in &tx.inputs {
-        total_in = total_in.checked_add(input.value?)?;
-    }
+    let total_in = tx
+        .inputs
+        .iter()
+        .try_fold(Amount::ZERO, |acc, input| acc.checked_add(input.value?))?;
 
-    let mut total_out = Amount::ZERO;
-    for output in &tx.outputs {
-        total_out = total_out.checked_add(output.value)?;
-    }
+    let total_out = tx
+        .outputs
+        .iter()
+        .try_fold(Amount::ZERO, |acc, output| acc.checked_add(output.value))?;
 
     total_in.checked_sub(total_out)
 }
