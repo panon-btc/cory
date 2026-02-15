@@ -215,6 +215,9 @@ export default function TargetLabelEditor({
 
   return (
     <div
+      data-testid="target-label-editor"
+      data-label-type={labelType}
+      data-ref-id={refId}
       style={{
         border: "1px solid var(--border)",
         borderRadius: 4,
