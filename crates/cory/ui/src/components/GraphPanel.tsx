@@ -8,42 +8,27 @@ import {
   useNodesState,
   useEdgesState,
 } from "@xyflow/react";
-import type { Node, Edge, NodeMouseHandler } from "@xyflow/react";
+import type { Node, Edge } from "@xyflow/react";
 import TxNode from "./TxNode";
+import { useAppStore } from "../store";
 
-interface GraphPanelProps {
-  nodes: Node[];
-  edges: Edge[];
-  loading: boolean;
-  error: string | null;
-  hasGraph: boolean;
-  truncated: boolean;
-  stats: {
-    node_count: number;
-    edge_count: number;
-    max_depth_reached: number;
-  } | null;
-  onNodeClick: NodeMouseHandler;
-  onNodesUpdate: (nodes: Node[]) => void;
-}
+export default function GraphPanel() {
+  const inputNodes = useAppStore((s) => s.nodes);
+  const inputEdges = useAppStore((s) => s.edges);
+  const loading = useAppStore((s) => s.loading);
+  const error = useAppStore((s) => s.error);
+  const graph = useAppStore((s) => s.graph);
+  const truncated = graph?.truncated ?? false;
+  const stats = graph?.stats ?? null;
+  const setSelectedTxid = useAppStore((s) => s.setSelectedTxid);
+  const storeSetNodes = useAppStore((s) => s.setNodes);
 
-export default function GraphPanel({
-  nodes: inputNodes,
-  edges: inputEdges,
-  loading,
-  error,
-  hasGraph,
-  truncated,
-  stats,
-  onNodeClick,
-  onNodesUpdate,
-}: GraphPanelProps) {
   const nodeTypes = useMemo(() => ({ tx: TxNode }), []);
   const [nodes, setNodes, onNodesChange] = useNodesState([] as Node[]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
   const syncingFromPropsRef = useRef(false);
 
-  // Keep React Flow internal state aligned with upstream graph updates.
+  // Keep React Flow internal state aligned with upstream store updates.
   useEffect(() => {
     syncingFromPropsRef.current = true;
     setNodes(inputNodes);
@@ -52,6 +37,7 @@ export default function GraphPanel({
 
   const minimapNodeColor = useCallback(() => "var(--accent-dim)", []);
 
+  // When user drags nodes, push the updated positions back to the store.
   useEffect(() => {
     if (syncingFromPropsRef.current) {
       syncingFromPropsRef.current = false;
@@ -60,8 +46,15 @@ export default function GraphPanel({
     if (nodes === inputNodes) {
       return;
     }
-    onNodesUpdate(nodes);
-  }, [nodes, inputNodes, onNodesUpdate]);
+    storeSetNodes(nodes);
+  }, [nodes, inputNodes, storeSetNodes]);
+
+  const handleNodeClick = useCallback(
+    (_: React.MouseEvent, node: Node) => {
+      setSelectedTxid(node.id);
+    },
+    [setSelectedTxid],
+  );
 
   if (loading) {
     return (
@@ -75,7 +68,7 @@ export default function GraphPanel({
     return <div style={{ flex: 1, padding: 20, color: "var(--accent)" }}>Error: {error}</div>;
   }
 
-  if (!hasGraph) {
+  if (!graph) {
     return (
       <div style={{ flex: 1, padding: 20, color: "var(--text-muted)" }}>
         Enter a transaction ID above to explore its ancestry.
@@ -108,7 +101,7 @@ export default function GraphPanel({
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        onNodeClick={onNodeClick}
+        onNodeClick={handleNodeClick}
         nodesDraggable={true}
         nodesConnectable={false}
         fitView

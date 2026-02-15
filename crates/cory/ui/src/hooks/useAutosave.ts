@@ -6,7 +6,7 @@
 //
 // State machine:
 //
-//   ┌────────┐  user types   ┌───────┐  debounce expires  ┌────────┐
+//   ┌────────┐  user types   ┌───────┐  debounce expires   ┌────────┐
 //   │ saved  │ ────────────► │ dirty │ ──────────────────► │ saving │
 //   └────────┘               └───────┘                     └────┬───┘
 //       ▲                        ▲                              │

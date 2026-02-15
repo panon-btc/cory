@@ -6,37 +6,22 @@ import {
   exportLabelFile,
   importLabelFile,
 } from "../api";
-import type { Bip329Type, GraphResponse, LabelFileSummary } from "../types";
+import type { LabelFileSummary } from "../types";
+import { useAppStore } from "../store";
 import SelectedTxEditor from "./SelectedTxEditor";
 
 interface LabelPanelProps {
   width: number;
-  labelFiles: LabelFileSummary[];
-  graph: GraphResponse | null;
-  selectedTxid: string | null;
-  onLabelsChanged: (opts?: { refreshGraph?: boolean }) => void | Promise<void>;
-  onSaveLabel: (
-    fileId: string,
-    labelType: Bip329Type,
-    refId: string,
-    label: string,
-  ) => Promise<void>;
-  onDeleteLabel: (fileId: string, labelType: Bip329Type, refId: string) => Promise<void>;
 }
 
 function fileNameWithoutJsonl(fileName: string): string {
   return fileName.toLowerCase().endsWith(".jsonl") ? fileName.slice(0, -6) : fileName;
 }
 
-export default function LabelPanel({
-  width,
-  labelFiles,
-  graph,
-  selectedTxid,
-  onLabelsChanged,
-  onSaveLabel,
-  onDeleteLabel,
-}: LabelPanelProps) {
+export default function LabelPanel({ width }: LabelPanelProps) {
+  const labelFiles = useAppStore((s) => s.labelFiles);
+  const labelsChanged = useAppStore((s) => s.labelsChanged);
+
   const [newFileName, setNewFileName] = useState("");
   const [panelError, setPanelError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -63,11 +48,11 @@ export default function LabelPanel({
       await createLabelFile(trimmed);
       setNewFileName("");
       setPanelError(null);
-      await onLabelsChanged({ refreshGraph: false });
+      await labelsChanged({ refreshGraph: false });
     } catch (err) {
       setPanelError("Create failed: " + (err as Error).message);
     }
-  }, [newFileName, onLabelsChanged]);
+  }, [newFileName, labelsChanged]);
 
   const handleImportClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -83,7 +68,7 @@ export default function LabelPanel({
         const name = fileNameWithoutJsonl(file.name);
         await importLabelFile(name, content);
         setPanelError(null);
-        await onLabelsChanged({ refreshGraph: true });
+        await labelsChanged({ refreshGraph: true });
       } catch (err) {
         const apiErr = err as ApiError;
         if (apiErr.status === 409) {
@@ -98,7 +83,7 @@ export default function LabelPanel({
 
       e.target.value = "";
     },
-    [onLabelsChanged],
+    [labelsChanged],
   );
 
   const handleExport = useCallback(async (file: LabelFileSummary) => {
@@ -167,12 +152,12 @@ export default function LabelPanel({
       try {
         await deleteLabelFile(file.id);
         setPanelError(null);
-        await onLabelsChanged({ refreshGraph: true });
+        await labelsChanged({ refreshGraph: true });
       } catch (err) {
         setPanelError("Delete failed: " + (err as Error).message);
       }
     },
-    [onLabelsChanged],
+    [labelsChanged],
   );
 
   return (
@@ -326,13 +311,7 @@ export default function LabelPanel({
       <details open style={sectionStyle}>
         <summary style={summaryStyle}>Selected Transaction Editor</summary>
         <div style={{ marginTop: 8 }}>
-          <SelectedTxEditor
-            graph={graph}
-            selectedTxid={selectedTxid}
-            localFiles={localFiles}
-            onSaveLabel={onSaveLabel}
-            onDeleteLabel={onDeleteLabel}
-          />
+          <SelectedTxEditor />
         </div>
       </details>
 

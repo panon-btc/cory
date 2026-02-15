@@ -1,33 +1,29 @@
 import { useState, useCallback } from "react";
+import { useAppStore } from "../store";
 
 interface HeaderProps {
-  onSearch: (txid: string) => void;
-  apiToken: string;
-  onTokenChange: (token: string) => void;
   initialTxid?: string;
 }
 
-export default function Header({
-  onSearch,
-  apiToken,
-  onTokenChange,
-  initialTxid = "",
-}: HeaderProps) {
+export default function Header({ initialTxid = "" }: HeaderProps) {
   const [txid, setTxid] = useState(initialTxid);
+  const doSearch = useAppStore((s) => s.doSearch);
+  const apiToken = useAppStore((s) => s.apiToken);
+  const setApiToken = useAppStore((s) => s.setApiToken);
 
   const handleSearch = useCallback(() => {
     const trimmed = txid.trim();
-    if (trimmed) onSearch(trimmed);
-  }, [txid, onSearch]);
+    if (trimmed) doSearch(trimmed);
+  }, [txid, doSearch]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter") {
         const trimmed = txid.trim();
-        if (trimmed) onSearch(trimmed);
+        if (trimmed) doSearch(trimmed);
       }
     },
-    [txid, onSearch],
+    [txid, doSearch],
   );
 
   return (
@@ -60,9 +56,9 @@ export default function Header({
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <label style={{ color: "var(--muted-foreground)", fontSize: 11 }}>API Token:</label>
         <input
-          type="password"
+          type="text"
           value={apiToken}
-          onChange={(e) => onTokenChange(e.target.value)}
+          onChange={(e) => setApiToken(e.target.value)}
           placeholder="paste token from terminal"
           autoComplete="off"
           spellCheck={false}

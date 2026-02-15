@@ -1,18 +1,6 @@
-import type { Bip329Type, GraphResponse, LabelEntry, LabelFileSummary } from "../types";
+import type { GraphResponse, LabelEntry } from "../types";
+import { useAppStore } from "../store";
 import TargetLabelEditor from "./TargetLabelEditor";
-
-interface SelectedTxEditorProps {
-  graph: GraphResponse | null;
-  selectedTxid: string | null;
-  localFiles: LabelFileSummary[];
-  onSaveLabel: (
-    fileId: string,
-    labelType: Bip329Type,
-    refId: string,
-    label: string,
-  ) => Promise<void>;
-  onDeleteLabel: (fileId: string, labelType: Bip329Type, refId: string) => Promise<void>;
-}
 
 function labelsFor(
   graph: GraphResponse,
@@ -22,13 +10,15 @@ function labelsFor(
   return graph.labels_by_type[labelType][refId] ?? [];
 }
 
-export default function SelectedTxEditor({
-  graph,
-  selectedTxid,
-  localFiles,
-  onSaveLabel,
-  onDeleteLabel,
-}: SelectedTxEditorProps) {
+export default function SelectedTxEditor() {
+  const graph = useAppStore((s) => s.graph);
+  const selectedTxid = useAppStore((s) => s.selectedTxid);
+  const labelFiles = useAppStore((s) => s.labelFiles);
+  const saveLabel = useAppStore((s) => s.saveLabel);
+  const deleteLabel = useAppStore((s) => s.deleteLabel);
+
+  const localFiles = labelFiles.filter((file) => file.kind === "local");
+
   if (!graph || !selectedTxid || !graph.nodes[selectedTxid]) {
     return (
       <p style={{ color: "var(--text-muted)", fontSize: 11 }}>
@@ -64,8 +54,8 @@ export default function SelectedTxEditor({
         refId={selectedTxid}
         labels={labelsFor(graph, "tx", selectedTxid)}
         localFiles={localFiles}
-        onSaveLabel={onSaveLabel}
-        onDeleteLabel={onDeleteLabel}
+        onSaveLabel={saveLabel}
+        onDeleteLabel={deleteLabel}
       />
 
       <div
@@ -104,8 +94,8 @@ export default function SelectedTxEditor({
                   refId={inputRef}
                   labels={labelsFor(graph, "input", inputRef)}
                   localFiles={localFiles}
-                  onSaveLabel={onSaveLabel}
-                  onDeleteLabel={onDeleteLabel}
+                  onSaveLabel={saveLabel}
+                  onDeleteLabel={deleteLabel}
                 />
                 {inputAddress && (
                   <TargetLabelEditor
@@ -119,8 +109,8 @@ export default function SelectedTxEditor({
                     refId={inputAddress}
                     labels={labelsFor(graph, "addr", inputAddress)}
                     localFiles={localFiles}
-                    onSaveLabel={onSaveLabel}
-                    onDeleteLabel={onDeleteLabel}
+                    onSaveLabel={saveLabel}
+                    onDeleteLabel={deleteLabel}
                     note={inputAddressNote}
                   />
                 )}
@@ -156,8 +146,8 @@ export default function SelectedTxEditor({
                   refId={outputRef}
                   labels={labelsFor(graph, "output", outputRef)}
                   localFiles={localFiles}
-                  onSaveLabel={onSaveLabel}
-                  onDeleteLabel={onDeleteLabel}
+                  onSaveLabel={saveLabel}
+                  onDeleteLabel={deleteLabel}
                 />
 
                 <TargetLabelEditor
@@ -171,8 +161,8 @@ export default function SelectedTxEditor({
                   refId={addressRef ?? ""}
                   labels={addressRef ? labelsFor(graph, "addr", addressRef) : []}
                   localFiles={localFiles}
-                  onSaveLabel={onSaveLabel}
-                  onDeleteLabel={onDeleteLabel}
+                  onSaveLabel={saveLabel}
+                  onDeleteLabel={deleteLabel}
                   disabled={!addressRef}
                   disabledMessage="No canonical address can be derived for this script."
                   note={addressNote}
