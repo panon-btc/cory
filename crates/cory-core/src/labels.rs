@@ -10,7 +10,7 @@ use crate::error::CoreError;
 // ==============================================================================
 
 /// The type of entity a BIP-329 label refers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Bip329Type {
     Tx,
@@ -467,11 +467,7 @@ pub fn normalize_label_file_id(name: &str) -> String {
 fn export_map_to_jsonl(map: &HashMap<LabelKey, Bip329Record>) -> String {
     // Sort by (type, ref) for deterministic export order.
     let mut entries: Vec<_> = map.iter().collect();
-    entries.sort_by(|(k1, _), (k2, _)| {
-        k1.0.to_string()
-            .cmp(&k2.0.to_string())
-            .then_with(|| k1.1.cmp(&k2.1))
-    });
+    entries.sort_by(|(k1, _), (k2, _)| k1.0.cmp(&k2.0).then_with(|| k1.1.cmp(&k2.1)));
 
     let mut lines = Vec::new();
     for (_, record) in entries {
