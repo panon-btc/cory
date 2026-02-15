@@ -5,7 +5,7 @@ import { setApiToken } from "./api";
 import { useSidebarResize } from "./hooks/useSidebarResize";
 import Header from "./components/Header";
 import GraphPanel from "./components/GraphPanel";
-import LabelPanel from "./components/LabelPanel";
+import LabelPanel from "./components/label_panel/Panel";
 
 export default function App() {
   const initialParams = new URLSearchParams(window.location.search);

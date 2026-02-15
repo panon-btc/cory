@@ -1,7 +1,7 @@
-import type { TxOutputDisplayRow } from "../layout";
-import { shortAddress, formatSats, copyToClipboard } from "../format";
+import type { TxOutputDisplayRow } from "../../layout";
+import { shortAddress, formatSats, copyToClipboard } from "../../format";
 
-interface TxNodeOutputRowProps {
+interface OutputRowProps {
   row: TxOutputDisplayRow;
   txid: string;
   refCallback: (index: number, el: HTMLDivElement | null) => void;
@@ -9,7 +9,7 @@ interface TxNodeOutputRowProps {
 
 // Renders a single output row (address + value + labels) or a gap
 // placeholder ("... N hidden ...") for collapsed output ranges.
-export function TxNodeOutputRow({ row, txid, refCallback }: TxNodeOutputRowProps) {
+export function OutputRow({ row, txid, refCallback }: OutputRowProps) {
   if (row.kind === "gap") {
     return (
       <div

@@ -1,11 +1,11 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
-import type { TxNodeData, TxOutputDisplayRow } from "../layout";
-import { IO_START_TOP, PRIMARY_ROW_HEIGHT, IO_ROW_GAP } from "../constants";
-import { formatFeerate, copyToClipboard } from "../format";
-import { TxNodeInputRow } from "./TxNodeInputRow";
-import { TxNodeOutputRow } from "./TxNodeOutputRow";
+import type { TxNodeData, TxOutputDisplayRow } from "../../layout";
+import { IO_START_TOP, PRIMARY_ROW_HEIGHT, IO_ROW_GAP } from "../../constants";
+import { formatFeerate, copyToClipboard } from "../../format";
+import { InputRow } from "./InputRow";
+import { OutputRow } from "./OutputRow";
 
 type TxNodeProps = NodeProps & { data: TxNodeData };
 
@@ -230,7 +230,7 @@ export default memo(function TxNode({ data, selected }: TxNodeProps) {
           <div style={{ color: "var(--text-muted)", fontSize: 10 }}>Inputs</div>
           <div style={{ display: "grid", gap: 2, marginTop: 3 }}>
             {data.inputRows.map((row) => (
-              <TxNodeInputRow
+              <InputRow
                 key={`input-row-${row.index}`}
                 row={row}
                 txid={data.txid}
@@ -244,7 +244,7 @@ export default memo(function TxNode({ data, selected }: TxNodeProps) {
           <div style={{ color: "var(--text-muted)", fontSize: 10 }}>Outputs</div>
           <div style={{ display: "grid", gap: 2, marginTop: 3 }}>
             {data.outputRows.map((row, rowIndex) => (
-              <TxNodeOutputRow
+              <OutputRow
                 key={row.kind === "gap" ? `output-gap-${rowIndex}` : `output-row-${row.index}`}
                 row={row}
                 txid={data.txid}

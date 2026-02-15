@@ -1,5 +1,5 @@
-import type { GraphResponse, LabelEntry } from "../types";
-import { useAppStore } from "../store";
+import type { GraphResponse, LabelEntry } from "../../types";
+import { useAppStore } from "../../store";
 import TargetLabelEditor from "./TargetLabelEditor";
 
 function labelsFor(

@@ -1,8 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { errorMessage, isAuthError } from "../api";
-import type { Bip329Type, LabelEntry, LabelFileSummary } from "../types";
-import { AUTOSAVE_DEBOUNCE_MS } from "../constants";
-import { useAutosave, type SaveState } from "../hooks/useAutosave";
+import { errorMessage, isAuthError } from "../../api";
+import type { Bip329Type, LabelEntry, LabelFileSummary } from "../../types";
+import { AUTOSAVE_DEBOUNCE_MS } from "../../constants";
+import { useAutosave, type SaveState } from "../../hooks/useAutosave";
 
 interface TargetLabelEditorProps {
   title: ReactNode;

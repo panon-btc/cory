@@ -1,13 +1,13 @@
-import type { TxInputView } from "../layout";
-import { shortOutpoint, shortAddress, copyToClipboard } from "../format";
+import type { TxInputView } from "../../layout";
+import { shortOutpoint, shortAddress, copyToClipboard } from "../../format";
 
-interface TxNodeInputRowProps {
+interface InputRowProps {
   row: TxInputView;
   txid: string;
   refCallback: (index: number, el: HTMLDivElement | null) => void;
 }
 
-export function TxNodeInputRow({ row, txid, refCallback }: TxNodeInputRowProps) {
+export function InputRow({ row, txid, refCallback }: InputRowProps) {
   return (
     <div
       ref={(el) => refCallback(row.index, el)}

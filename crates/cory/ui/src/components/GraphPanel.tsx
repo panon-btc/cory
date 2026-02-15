@@ -9,7 +9,7 @@ import {
   useEdgesState,
 } from "@xyflow/react";
 import type { Node, Edge } from "@xyflow/react";
-import TxNode from "./TxNode";
+import TxNode from "./txnode/Node";
 import { useAppStore } from "../store";
 
 export default function GraphPanel() {

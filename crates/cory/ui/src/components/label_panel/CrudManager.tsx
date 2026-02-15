@@ -7,11 +7,11 @@ import {
   exportLabelFile,
   importLabelFile,
   isAuthError,
-} from "../api";
-import type { LabelFileSummary } from "../types";
-import { useAppStore } from "../store";
+} from "../../api";
+import type { LabelFileSummary } from "../../types";
+import { useAppStore } from "../../store";
 
-interface LabelCrudManagerProps {
+interface CrudManagerProps {
   localFiles: LabelFileSummary[];
   sectionStyle: CSSProperties;
   summaryStyle: CSSProperties;
@@ -24,12 +24,12 @@ function fileNameWithoutJsonl(fileName: string): string {
 
 // Manages local label file CRUD: create, import (from .jsonl), export
 // (via File System Access API or fallback download), and remove.
-export function LabelCrudManager({
+export function CrudManager({
   localFiles,
   sectionStyle,
   summaryStyle,
   setPanelError,
-}: LabelCrudManagerProps) {
+}: CrudManagerProps) {
   const labelsChanged = useAppStore((s) => s.labelsChanged);
   const setAuthError = useAppStore((s) => s.setAuthError);
 

@@ -1,7 +1,7 @@
 import { type CSSProperties, useState } from "react";
-import { useAppStore } from "../store";
+import { useAppStore } from "../../store";
 import SelectedTxEditor from "./SelectedTxEditor";
-import { LabelCrudManager } from "./LabelCrudManager";
+import { CrudManager } from "./CrudManager";
 
 interface LabelPanelProps {
   width: number;
@@ -69,7 +69,7 @@ export default function LabelPanel({ width }: LabelPanelProps) {
         </div>
       </details>
 
-      <LabelCrudManager
+      <CrudManager
         localFiles={localFiles}
         sectionStyle={sectionStyle}
         summaryStyle={summaryStyle}
