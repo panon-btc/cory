@@ -1,109 +1,22 @@
+//! `LabelStore` — the central in-memory store for BIP-329 label data.
+//!
+//! Manages both editable local label files (backed by on-disk JSONL) and
+//! read-only pack files. Queries merge results across all loaded files
+//! with deterministic precedence: local files first, then pack files.
+
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-
 use crate::error::CoreError;
 
-// ==============================================================================
-// BIP-329 Record Types
-// ==============================================================================
-
-/// The type of entity a BIP-329 label refers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Bip329Type {
-    Tx,
-    Addr,
-    Pubkey,
-    Input,
-    Output,
-    Xpub,
-}
-
-impl std::fmt::Display for Bip329Type {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Tx => write!(f, "tx"),
-            Self::Addr => write!(f, "addr"),
-            Self::Pubkey => write!(f, "pubkey"),
-            Self::Input => write!(f, "input"),
-            Self::Output => write!(f, "output"),
-            Self::Xpub => write!(f, "xpub"),
-        }
-    }
-}
-
-/// A single BIP-329 label record, as defined by the specification.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Bip329Record {
-    #[serde(rename = "type")]
-    pub label_type: Bip329Type,
-    #[serde(rename = "ref")]
-    pub ref_id: String,
-    pub label: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub origin: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub spendable: Option<bool>,
-}
-
-// ==============================================================================
-// Label Files
-// ==============================================================================
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum LabelFileKind {
-    Local,
-    Pack,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LabelFileMeta {
-    pub id: String,
-    pub name: String,
-    pub kind: LabelFileKind,
-    pub editable: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LabelFileSummary {
-    pub id: String,
-    pub name: String,
-    pub kind: LabelFileKind,
-    pub editable: bool,
-    pub record_count: usize,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum LabelStoreError {
-    #[error("label file name cannot be empty")]
-    EmptyFileName,
-
-    #[error("ref must not be empty")]
-    EmptyRef,
-
-    #[error("label must not be empty")]
-    EmptyLabel,
-
-    #[error("label file already exists: {0}")]
-    DuplicateLocalFile(String),
-
-    #[error("local label file not found: {0}")]
-    LocalFileNotFound(String),
-
-    #[error(transparent)]
-    Core(#[from] CoreError),
-}
-
-/// Composite key for looking up labels: (type, ref_id).
-type LabelKey = (Bip329Type, String);
-
-struct LabelFile {
-    meta: LabelFileMeta,
-    labels: HashMap<LabelKey, Bip329Record>,
-}
+use super::jsonl::{
+    export_map_to_jsonl, normalize_label_file_id, parse_jsonl_records, parse_local_file_name,
+};
+use super::pack::walk_pack_dir;
+use super::types::{
+    Bip329Record, Bip329Type, LabelFile, LabelFileKind, LabelFileMeta, LabelFileSummary,
+    LabelStoreError,
+};
 
 pub struct LabelStore {
     local_files: Vec<LabelFile>,
@@ -423,171 +336,6 @@ impl LabelStore {
             let _ = std::fs::remove_file(path);
         }
     }
-}
-
-struct ParsedLocalFileName {
-    id: String,
-    name: String,
-}
-
-fn parse_local_file_name(raw: &str) -> Result<ParsedLocalFileName, LabelStoreError> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(LabelStoreError::EmptyFileName);
-    }
-
-    let name = trimmed
-        .strip_suffix(".jsonl")
-        .unwrap_or(trimmed)
-        .trim()
-        .to_string();
-    if name.is_empty() {
-        return Err(LabelStoreError::EmptyFileName);
-    }
-
-    let id = normalize_label_file_id(&name);
-    if id.is_empty() {
-        return Err(LabelStoreError::EmptyFileName);
-    }
-
-    Ok(ParsedLocalFileName { id, name })
-}
-
-pub fn normalize_label_file_id(name: &str) -> String {
-    name.chars()
-        .flat_map(|c| c.to_lowercase())
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect::<String>()
-        .split('-')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
-}
-
-fn export_map_to_jsonl(map: &HashMap<LabelKey, Bip329Record>) -> String {
-    // Sort by (type, ref) for deterministic export order.
-    let mut entries: Vec<_> = map.iter().collect();
-    entries.sort_by(|(k1, _), (k2, _)| k1.0.cmp(&k2.0).then_with(|| k1.1.cmp(&k2.1)));
-
-    let mut lines = Vec::new();
-    for (_, record) in entries {
-        lines.push(serde_json::to_string(record).expect("valid JSON"));
-    }
-    if lines.is_empty() {
-        return String::new();
-    }
-    let mut result = lines.join("\n");
-    result.push('\n');
-    result
-}
-
-/// Parse JSONL content into a label map, skipping empty lines.
-/// Duplicate entries (same type+ref) are accepted but logged as warnings.
-fn parse_jsonl_records(
-    content: &str,
-    map: &mut HashMap<LabelKey, Bip329Record>,
-) -> Result<(), CoreError> {
-    for (line_num, line) in content.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let record: Bip329Record =
-            serde_json::from_str(line).map_err(|e| CoreError::LabelParse {
-                line: line_num + 1,
-                message: e.to_string(),
-            })?;
-        let key = (record.label_type, record.ref_id.clone());
-        if map.contains_key(&key) {
-            tracing::warn!(
-                line = line_num + 1,
-                label_type = %record.label_type,
-                ref_id = %record.ref_id,
-                "duplicate JSONL entry overwrites previous value"
-            );
-        }
-        map.insert(key, record);
-    }
-    Ok(())
-}
-
-/// Recursively walk a directory, loading `.jsonl` files as pack files.
-fn walk_pack_dir(
-    base: &Path,
-    current: &Path,
-    pack_files: &mut Vec<LabelFile>,
-    seen_ids: &mut HashSet<String>,
-) -> Result<(), CoreError> {
-    // Sort directory entries by path for deterministic load order across
-    // platforms and filesystems.
-    let mut entries: Vec<_> = std::fs::read_dir(current)?.collect::<Result<Vec<_>, _>>()?;
-    entries.sort_by_key(|e| e.path());
-
-    for entry in entries {
-        let path = entry.path();
-        if path.is_dir() {
-            walk_pack_dir(base, &path, pack_files, seen_ids)?;
-            continue;
-        }
-
-        if path.extension().is_none_or(|ext| ext != "jsonl") {
-            continue;
-        }
-
-        load_single_pack_file(base, &path, pack_files, seen_ids)?;
-    }
-    Ok(())
-}
-
-/// Load a single `.jsonl` file as a read-only pack label file.
-///
-/// The file ID is derived from its path relative to `base`, prefixed
-/// with `pack:`. Duplicate IDs are rejected.
-fn load_single_pack_file(
-    base: &Path,
-    path: &Path,
-    pack_files: &mut Vec<LabelFile>,
-    seen_ids: &mut HashSet<String>,
-) -> Result<(), CoreError> {
-    let relative = path
-        .strip_prefix(base)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .to_string();
-    let file_name = path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("pack")
-        .to_string();
-
-    let content = std::fs::read_to_string(path)?;
-    let mut labels = HashMap::new();
-    parse_jsonl_records(&content, &mut labels)?;
-
-    let id_core = normalize_label_file_id(&relative);
-    let file_id = if id_core.is_empty() {
-        "pack".to_string()
-    } else {
-        format!("pack:{id_core}")
-    };
-
-    if !seen_ids.insert(file_id.clone()) {
-        return Err(CoreError::LabelParse {
-            line: 0,
-            message: format!("duplicate pack file ID `{file_id}` from {}", path.display()),
-        });
-    }
-
-    pack_files.push(LabelFile {
-        meta: LabelFileMeta {
-            id: file_id,
-            name: file_name,
-            kind: LabelFileKind::Pack,
-            editable: false,
-        },
-        labels,
-    });
-    Ok(())
 }
 
 #[cfg(test)]
