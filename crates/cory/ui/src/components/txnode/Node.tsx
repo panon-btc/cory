@@ -165,6 +165,7 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
           type="button"
           className="nodrag nopan"
           onClick={() => copyToClipboard(data.txid)}
+          aria-label="Copy transaction ID"
           title={`Copy txid: ${data.txid}`}
           style={{
             border: "1px solid var(--border)",

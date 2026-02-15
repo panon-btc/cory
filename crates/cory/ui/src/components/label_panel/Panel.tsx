@@ -17,7 +17,7 @@ export default function LabelPanel({ width }: LabelPanelProps) {
   const sectionStyle: CSSProperties = {
     border: "1px solid var(--border)",
     borderRadius: 4,
-    background: "rgba(0, 0, 0, 0.12)",
+    background: "var(--overlay-subtle)",
     padding: "6px 8px",
   };
   const summaryStyle: CSSProperties = {

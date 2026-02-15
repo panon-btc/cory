@@ -80,7 +80,6 @@ export function CrudManager({
           const name = fileNameWithoutJsonl(file.name);
           const message = `Label file '${name}' already exists. Choose a different file name and import again.`;
           setPanelError(message);
-          window.alert(message);
         } else {
           setPanelError("Import failed: " + errorMessage(err, "request failed"));
         }

@@ -87,6 +87,7 @@ export default function GraphPanel() {
             color: "var(--text-muted)",
             fontSize: 11,
             fontFamily: "var(--mono)",
+            maxWidth: "calc(100% - 20px)",
           }}
         >
           {stats.node_count} transactions, {stats.edge_count} edges, max depth{" "}
@@ -108,7 +109,7 @@ export default function GraphPanel() {
         proOptions={{ hideAttribution: true }}
       >
         <Controls />
-        <MiniMap nodeColor={minimapNodeColor} maskColor="rgba(0, 0, 0, 0.6)" />
+        <MiniMap nodeColor={minimapNodeColor} maskColor="var(--overlay-mask)" />
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--border)" />
       </ReactFlow>
     </div>

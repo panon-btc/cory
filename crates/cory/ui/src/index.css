@@ -10,6 +10,8 @@
   --ok: #54b689;
   --warning: #f0a500;
   --accent-dim: #533483;
+  --overlay-subtle: rgba(0, 0, 0, 0.12);
+  --overlay-mask: rgba(0, 0, 0, 0.6);
   --mono: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
 }
 
@@ -41,6 +43,20 @@ button {
 
 input:focus {
   outline: 1px solid var(--accent);
+}
+
+select:focus {
+  outline: 1px solid var(--accent);
+}
+
+button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+summary:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
 }
 
 button {
