@@ -1,7 +1,130 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Bip329Type, LabelEntry, LabelFileSummary } from "../types";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { errorMessage, isAuthError } from "../../api";
+import type { Bip329Type, LabelEntry, LabelFileSummary } from "../../types";
+import { useAutosave, type SaveState } from "../../hooks/useAutosave";
 
-type SaveState = "saved" | "dirty" | "saving" | "error";
+// ==============================================================================
+// Shared helpers
+// ==============================================================================
+
+function stateColor(state: SaveState): string {
+  if (state === "saved") return "var(--ok)";
+  if (state === "error") return "var(--accent)";
+  return "var(--text-muted)";
+}
+
+// Suppress auth errors (the store's handleAuthError already surfaces them
+// in the header) and surface everything else as a local error string.
+function autosaveErrorHandler(err: unknown): string | null {
+  return isAuthError(err) ? null : errorMessage(err, "request failed");
+}
+
+// ==============================================================================
+// EditableLabelRow — one row per editable label, each with its own useAutosave
+// ==============================================================================
+
+interface EditableLabelRowProps {
+  entry: LabelEntry;
+  labelType: Bip329Type;
+  refId: string;
+  onSaveLabel: (
+    fileId: string,
+    labelType: Bip329Type,
+    refId: string,
+    label: string,
+  ) => Promise<void>;
+  onDeleteLabel: (fileId: string, labelType: Bip329Type, refId: string) => Promise<void>;
+  onError: (error: string | null) => void;
+}
+
+function EditableLabelRow({
+  entry,
+  labelType,
+  refId,
+  onSaveLabel,
+  onDeleteLabel,
+  onError,
+}: EditableLabelRowProps) {
+  const [draft, setDraft] = useState(entry.label);
+
+  // Reset draft when the upstream label changes (e.g. after save round-trips
+  // through the store and graph refresh).
+  useEffect(() => {
+    setDraft(entry.label);
+  }, [entry.label]);
+
+  const handleSave = useCallback(
+    async (value: string) => {
+      await onSaveLabel(entry.file_id, labelType, refId, value);
+    },
+    [entry.file_id, labelType, refId, onSaveLabel],
+  );
+
+  const { state, error, setState } = useAutosave(draft, true, handleSave, autosaveErrorHandler);
+
+  // Bubble save errors up to the parent for unified display.
+  useEffect(() => {
+    onError(error);
+  }, [error, onError]);
+
+  const handleDelete = useCallback(async () => {
+    try {
+      onError(null);
+      await onDeleteLabel(entry.file_id, labelType, refId);
+    } catch (err) {
+      if (isAuthError(err)) return;
+      onError(errorMessage(err, "request failed"));
+    }
+  }, [entry.file_id, labelType, refId, onDeleteLabel, onError]);
+
+  return (
+    <div style={{ display: "flex", gap: 4 }}>
+      <span
+        style={{
+          fontSize: 10,
+          color: "var(--accent)",
+          alignSelf: "center",
+          minWidth: 56,
+        }}
+        title={entry.file_id}
+      >
+        {entry.file_name}
+      </span>
+      <input
+        type="text"
+        value={draft}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          setState("dirty");
+        }}
+        autoComplete="off"
+        spellCheck={false}
+        style={{ flex: 1, fontSize: 10, padding: "2px 6px" }}
+      />
+      <span
+        style={{
+          fontSize: 12,
+          color: stateColor(state),
+          alignSelf: "center",
+        }}
+        title={state}
+      >
+        ✓
+      </span>
+      <button
+        onClick={() => void handleDelete()}
+        style={{ fontSize: 10, padding: "2px 6px" }}
+        title="Delete label"
+      >
+        🗑
+      </button>
+    </div>
+  );
+}
+
+// ==============================================================================
+// TargetLabelEditor — main component
+// ==============================================================================
 
 interface TargetLabelEditorProps {
   title: ReactNode;
@@ -35,12 +158,9 @@ export default function TargetLabelEditor({
   disabledMessage,
   note,
 }: TargetLabelEditorProps) {
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [states, setStates] = useState<Record<string, SaveState>>({});
   const [isAdding, setIsAdding] = useState(false);
   const [newFileId, setNewFileId] = useState("");
   const [newLabel, setNewLabel] = useState("");
-  const [newLabelState, setNewLabelState] = useState<SaveState>("saved");
   const [editorError, setEditorError] = useState<string | null>(null);
 
   const editableEntries = useMemo(() => labels.filter((entry) => entry.editable), [labels]);
@@ -57,20 +177,12 @@ export default function TargetLabelEditor({
     [localFiles, editableFileIds],
   );
 
+  // Reset the "add new label" form when the target changes.
   useEffect(() => {
-    const nextDrafts: Record<string, string> = {};
-    const nextStates: Record<string, SaveState> = {};
-    for (const entry of editableEntries) {
-      nextDrafts[entry.file_id] = entry.label;
-      nextStates[entry.file_id] = "saved";
-    }
-    setDrafts(nextDrafts);
-    setStates(nextStates);
     setIsAdding(false);
     setNewLabel("");
-    setNewLabelState("saved");
     setEditorError(null);
-  }, [editableEntries, refId, labelType]);
+  }, [refId, labelType]);
 
   useEffect(() => {
     const hasCurrentSelection = addableFiles.some((file) => file.id === newFileId);
@@ -81,87 +193,31 @@ export default function TargetLabelEditor({
     setNewFileId(firstLocalFile?.id ?? "");
   }, [newFileId, addableFiles]);
 
-  const handleDelete = useCallback(
-    async (fileId: string) => {
-      try {
-        setEditorError(null);
-        await onDeleteLabel(fileId, labelType, refId);
-      } catch (err) {
-        setEditorError((err as Error).message);
-      }
+  // Autosave for the new-label form: save after typing stops, then
+  // close the form on success.
+  const newLabelSave = useCallback(
+    async (value: string) => {
+      await onSaveLabel(newFileId, labelType, refId, value);
+      setNewLabel("");
+      setIsAdding(false);
     },
-    [labelType, onDeleteLabel, refId],
+    [newFileId, labelType, refId, onSaveLabel],
   );
 
-  // Debounce autosave: reset a 2s timeout each time drafts or states change,
-  // so we only save after the user stops typing for 2 seconds.
-  const savingRef = useRef(false);
-  useEffect(() => {
-    const dirtyFileIds = Object.entries(states)
-      .filter(([, state]) => state === "dirty")
-      .map(([fileId]) => fileId);
+  const {
+    state: newLabelState,
+    error: newLabelError,
+    setState: setNewLabelState,
+  } = useAutosave(newLabel, isAdding && !!newFileId, newLabelSave, autosaveErrorHandler);
 
-    if (dirtyFileIds.length === 0 || savingRef.current) return;
-
-    const timer = window.setTimeout(() => {
-      savingRef.current = true;
-      for (const fileId of dirtyFileIds) {
-        const next = drafts[fileId]?.trim();
-        if (!next) continue;
-
-        setStates((prev) => ({ ...prev, [fileId]: "saving" }));
-        void onSaveLabel(fileId, labelType, refId, next)
-          .then(() => {
-            setEditorError(null);
-            setStates((prev) => ({ ...prev, [fileId]: "saved" }));
-          })
-          .catch((err) => {
-            setEditorError((err as Error).message);
-            setStates((prev) => ({ ...prev, [fileId]: "error" }));
-          })
-          .finally(() => {
-            savingRef.current = false;
-          });
-      }
-    }, 2000);
-
-    return () => window.clearTimeout(timer);
-  }, [states, drafts, labelType, onSaveLabel, refId]);
-
-  useEffect(() => {
-    if (!isAdding || !newFileId || !newLabel.trim()) {
-      return;
-    }
-    if (newLabelState !== "dirty" && newLabelState !== "error") {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      setNewLabelState("saving");
-      void onSaveLabel(newFileId, labelType, refId, newLabel.trim())
-        .then(() => {
-          setEditorError(null);
-          setNewLabel("");
-          setNewLabelState("saved");
-          setIsAdding(false);
-        })
-        .catch((err) => {
-          setEditorError((err as Error).message);
-          setNewLabelState("error");
-        });
-    }, 2000);
-
-    return () => window.clearTimeout(timer);
-  }, [isAdding, labelType, newFileId, newLabel, newLabelState, onSaveLabel, refId]);
-
-  function stateColor(state: SaveState): string {
-    if (state === "saved") return "var(--ok)";
-    if (state === "error") return "var(--accent)";
-    return "var(--text-muted)";
-  }
+  // Surface errors from both save paths in a single place.
+  const displayError = editorError ?? newLabelError;
 
   return (
     <div
+      data-testid="target-label-editor"
+      data-label-type={labelType}
+      data-ref-id={refId}
       style={{
         border: "1px solid var(--border)",
         borderRadius: 4,
@@ -197,50 +253,15 @@ export default function TargetLabelEditor({
       ) : (
         <>
           {editableEntries.map((entry) => (
-            <div key={entry.file_id} style={{ display: "flex", gap: 4 }}>
-              <span
-                style={{
-                  fontSize: 10,
-                  color: "var(--accent)",
-                  alignSelf: "center",
-                  minWidth: 56,
-                }}
-                title={entry.file_id}
-              >
-                {entry.file_name}
-              </span>
-              <input
-                type="text"
-                value={drafts[entry.file_id] ?? ""}
-                onChange={(e) => {
-                  setDrafts((prev) => ({
-                    ...prev,
-                    [entry.file_id]: e.target.value,
-                  }));
-                  setStates((prev) => ({ ...prev, [entry.file_id]: "dirty" }));
-                }}
-                autoComplete="off"
-                spellCheck={false}
-                style={{ flex: 1, fontSize: 10, padding: "2px 6px" }}
-              />
-              <span
-                style={{
-                  fontSize: 12,
-                  color: stateColor(states[entry.file_id] ?? "saved"),
-                  alignSelf: "center",
-                }}
-                title={states[entry.file_id] ?? "saved"}
-              >
-                ✓
-              </span>
-              <button
-                onClick={() => void handleDelete(entry.file_id)}
-                style={{ fontSize: 10, padding: "2px 6px" }}
-                title="Delete label"
-              >
-                🗑
-              </button>
-            </div>
+            <EditableLabelRow
+              key={entry.file_id}
+              entry={entry}
+              labelType={labelType}
+              refId={refId}
+              onSaveLabel={onSaveLabel}
+              onDeleteLabel={onDeleteLabel}
+              onError={setEditorError}
+            />
           ))}
 
           {!isAdding ? (
@@ -328,7 +349,9 @@ export default function TargetLabelEditor({
             </div>
           )}
 
-          {editorError && <div style={{ color: "var(--accent)", fontSize: 10 }}>{editorError}</div>}
+          {displayError && (
+            <div style={{ color: "var(--accent)", fontSize: 10 }}>{displayError}</div>
+          )}
         </>
       )}
     </div>

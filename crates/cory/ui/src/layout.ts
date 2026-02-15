@@ -1,6 +1,30 @@
+// ==============================================================================
+// ELK Layout Engine
+// ==============================================================================
+//
+// Runs the ELK.js layered layout algorithm on the transaction graph to
+// compute node positions. Delegates render-model construction to model.ts.
+
 import type { ElkNode, ElkExtendedEdge } from "elkjs/lib/elk.bundled.js";
 import type { Node, Edge } from "@xyflow/react";
-import type { GraphResponse, LabelEntry } from "./types";
+import type { GraphResponse } from "./types";
+import { NODE_WIDTH } from "./constants";
+import { buildConnectedOutputsByTx, buildNodeRenderModel } from "./model";
+import type { TxNodeData } from "./model";
+
+// Typed React Flow node carrying our view-model data.
+export type TxFlowNode = Node<TxNodeData>;
+
+// Re-export view-model types so consumers import from "./layout" (the
+// public API) rather than reaching into "./model" (implementation detail).
+export type {
+  TxInputView,
+  TxOutputView,
+  TxOutputGapView,
+  TxOutputRowView,
+  TxOutputDisplayRow,
+  TxNodeData,
+} from "./model";
 
 // Lazily import ELK so Vite can code-split the ~1MB WASM bundle into a
 // separate chunk, keeping the initial page load fast.
@@ -12,223 +36,16 @@ function getElk() {
   return elkPromise;
 }
 
-const NODE_WIDTH = 360;
-const NODE_MIN_HEIGHT = 140;
-const NODE_BASE_HEIGHT = 110;
-const PRIMARY_ROW_HEIGHT = 18;
-const LABEL_LINE_HEIGHT = 10;
-
-export interface TxInputView {
-  index: number;
-  prevout: string | null;
-  address: string | null;
-  labelLines: string[];
-  rowHeight: number;
-}
-
-export interface TxOutputView {
-  index: number;
-  value: number;
-  scriptType: string;
-  connected: boolean;
-  address: string | null;
-  labelLines: string[];
-  rowHeight: number;
-}
-
-export interface TxOutputGapView {
-  kind: "gap";
-  hiddenCount: number;
-  rowHeight: number;
-}
-
-export interface TxOutputRowView extends TxOutputView {
-  kind: "output";
-}
-
-export type TxOutputDisplayRow = TxOutputGapView | TxOutputRowView;
-
-export interface TxNodeData {
-  txid: string;
-  shortTxid: string;
-  blockHeight: number | null;
-  feeSats: number | null;
-  feerateSatVb: number | null;
-  rbfSignaling: boolean;
-  isCoinbase: boolean;
-  txLabels: string[];
-  inputRows: TxInputView[];
-  outputRows: TxOutputDisplayRow[];
-  [key: string]: unknown;
-}
-
-function shortTxid(txid: string): string {
-  if (txid.length <= 36) return txid;
-  return txid.substring(0, 18) + "\u2026" + txid.substring(txid.length - 18);
-}
-
-function estimateNodeHeight(inputRowsHeight: number, outputRowsHeight: number): number {
-  const rowsHeight = Math.max(inputRowsHeight, outputRowsHeight);
-  return Math.max(NODE_MIN_HEIGHT, NODE_BASE_HEIGHT + rowsHeight);
-}
-
-function formatLabelEntry(entry: LabelEntry): string {
-  return `${entry.file_name}/${entry.label}`;
-}
-
-// Build a compact, deterministic output index set:
-// - always include connected outputs
-// - include first/last 3 outputs for boundary context
-// - include one neighbor on each side of connected outputs
-function buildVisibleOutputIndices(outputCount: number, connectedIndices: Set<number>): number[] {
-  const visible = new Set<number>();
-
-  for (let i = 0; i < Math.min(3, outputCount); i += 1) {
-    visible.add(i);
-  }
-
-  for (let i = Math.max(0, outputCount - 3); i < outputCount; i += 1) {
-    visible.add(i);
-  }
-
-  for (const index of connectedIndices) {
-    visible.add(index);
-    if (index > 0) {
-      visible.add(index - 1);
-    }
-    if (index + 1 < outputCount) {
-      visible.add(index + 1);
-    }
-  }
-
-  return [...visible].sort((a, b) => a - b);
-}
-
-function buildConnectedOutputsByTx(
-  response: GraphResponse,
-  nodeIds: Set<string>,
-): Map<string, Set<number>> {
-  const connectedOutputsByTx = new Map<string, Set<number>>();
-  for (const edge of response.edges) {
-    if (!nodeIds.has(edge.funding_txid) || !nodeIds.has(edge.spending_txid)) {
-      continue;
-    }
-    const existing = connectedOutputsByTx.get(edge.funding_txid) ?? new Set<number>();
-    existing.add(edge.funding_vout);
-    connectedOutputsByTx.set(edge.funding_txid, existing);
-  }
-  return connectedOutputsByTx;
-}
-
-function buildNodeRenderModel(
-  response: GraphResponse,
-  txid: string,
-  connectedOutputsByTx: Map<string, Set<number>>,
-): { data: TxNodeData; nodeHeight: number } {
-  const nodeData = response.nodes[txid]!;
-  const enrichment = response.enrichments[txid];
-  const isCoinbase = nodeData.inputs.length === 1 && nodeData.inputs[0]?.prevout === null;
-
-  const inputRows: TxInputView[] = nodeData.inputs.map((input, index) => {
-    const inputRef = `${txid}:${index}`;
-    const inputLabels = response.labels_by_type.input[inputRef] ?? [];
-    const address = response.input_address_refs[inputRef] ?? null;
-    const addrLabels = address ? (response.labels_by_type.addr[address] ?? []) : [];
-    const labelLines = [...addrLabels.map(formatLabelEntry), ...inputLabels.map(formatLabelEntry)];
-    return {
-      index,
-      prevout: input.prevout,
-      address,
-      labelLines,
-      rowHeight: PRIMARY_ROW_HEIGHT + labelLines.length * LABEL_LINE_HEIGHT,
-    };
-  });
-
-  const connectedIndices = connectedOutputsByTx.get(txid) ?? new Set<number>();
-  const allOutputRows: TxOutputRowView[] = nodeData.outputs.map((output, index) => {
-    const outputRef = `${txid}:${index}`;
-    const outputLabels = response.labels_by_type.output[outputRef] ?? [];
-    const address = response.output_address_refs[outputRef] ?? null;
-    const addrLabels = address ? (response.labels_by_type.addr[address] ?? []) : [];
-    const labelLines = [...addrLabels.map(formatLabelEntry), ...outputLabels.map(formatLabelEntry)];
-
-    return {
-      kind: "output",
-      index,
-      value: output.value,
-      scriptType: output.script_type,
-      connected: connectedIndices.has(index),
-      address,
-      labelLines,
-      rowHeight: PRIMARY_ROW_HEIGHT + labelLines.length * LABEL_LINE_HEIGHT,
-    };
-  });
-
-  const visibleOutputIndices = buildVisibleOutputIndices(allOutputRows.length, connectedIndices);
-  const outputRows: TxOutputDisplayRow[] = [];
-  let prevVisibleIndex = -1;
-  for (const visibleIndex of visibleOutputIndices) {
-    const hiddenCount = visibleIndex - prevVisibleIndex - 1;
-    if (hiddenCount > 0) {
-      outputRows.push({
-        kind: "gap",
-        hiddenCount,
-        rowHeight: PRIMARY_ROW_HEIGHT,
-      });
-    }
-
-    outputRows.push(allOutputRows[visibleIndex]!);
-    prevVisibleIndex = visibleIndex;
-  }
-
-  const txLabels = (response.labels_by_type.tx[txid] ?? []).map(formatLabelEntry);
-  const inputTotalHeight = inputRows.reduce((sum, row) => sum + row.rowHeight, 0);
-  const outputTotalHeight = outputRows.reduce((sum, row) => sum + row.rowHeight, 0);
-
-  const data: TxNodeData = {
-    txid,
-    shortTxid: shortTxid(txid),
-    blockHeight: nodeData.block_height,
-    feeSats: enrichment?.fee_sats ?? null,
-    feerateSatVb: enrichment?.feerate_sat_vb ?? null,
-    rbfSignaling: enrichment?.rbf_signaling ?? false,
-    isCoinbase,
-    txLabels,
-    inputRows,
-    outputRows,
-  };
-
-  return {
-    data,
-    nodeHeight: estimateNodeHeight(inputTotalHeight, outputTotalHeight),
-  };
-}
-
-export function refreshNodesFromGraph(response: GraphResponse, nodes: Node[]): Node[] {
-  const nodeIds = new Set(Object.keys(response.nodes));
-  const connectedOutputsByTx = buildConnectedOutputsByTx(response, nodeIds);
-
-  return nodes.map((node) => {
-    if (!nodeIds.has(node.id)) {
-      return node;
-    }
-
-    const { data, nodeHeight } = buildNodeRenderModel(response, node.id, connectedOutputsByTx);
-
-    return {
-      ...node,
-      data,
-      style: {
-        ...(node.style ?? {}),
-        height: nodeHeight,
-      },
-    };
-  });
-}
-
+// Lay out the transaction ancestry graph using ELK's layered algorithm.
+//
+// RIGHT direction: ancestry flows spending → funding (left-to-right),
+// matching the mental model of "where did the money come from?"
+//
+// ORTHOGONAL edge routing: avoids diagonal lines that cross over nodes,
+// producing cleaner visuals for dense graphs with many edges.
 export async function computeLayout(
   response: GraphResponse,
-): Promise<{ nodes: Node[]; edges: Edge[] }> {
+): Promise<{ nodes: TxFlowNode[]; edges: Edge[] }> {
   const nodeIds = new Set(Object.keys(response.nodes));
   const connectedOutputsByTx = buildConnectedOutputsByTx(response, nodeIds);
 
@@ -277,7 +94,7 @@ export async function computeLayout(
   const elk = new ELK();
   const laid = await elk.layout(graph);
 
-  const nodes: Node[] = (laid.children ?? []).map((n: ElkNode) => {
+  const nodes: TxFlowNode[] = (laid.children ?? []).map((n: ElkNode) => {
     const txid = n.id;
     const model = renderModels.get(txid)!;
 

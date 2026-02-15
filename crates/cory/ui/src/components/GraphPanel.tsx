@@ -1,67 +1,59 @@
-import { useMemo, useCallback, useEffect, useRef } from "react";
+import { useMemo, useCallback } from "react";
 import {
   ReactFlow,
   Controls,
   MiniMap,
   Background,
   BackgroundVariant,
-  useNodesState,
-  useEdgesState,
+  applyNodeChanges,
+  applyEdgeChanges,
 } from "@xyflow/react";
-import type { Node, Edge, NodeMouseHandler } from "@xyflow/react";
-import TxNode from "./TxNode";
+import type { NodeChange, EdgeChange } from "@xyflow/react";
+import TxNode from "./txnode/Node";
+import { useAppStore } from "../store";
+import type { TxFlowNode } from "../layout";
 
-interface GraphPanelProps {
-  nodes: Node[];
-  edges: Edge[];
-  loading: boolean;
-  error: string | null;
-  hasGraph: boolean;
-  truncated: boolean;
-  stats: {
-    node_count: number;
-    edge_count: number;
-    max_depth_reached: number;
-  } | null;
-  onNodeClick: NodeMouseHandler;
-  onNodesUpdate: (nodes: Node[]) => void;
-}
+// Controlled React Flow: the Zustand store is the single source of truth
+// for nodes and edges. User interactions (drags, selections) flow through
+// onNodesChange/onEdgesChange, which apply changes to the store directly.
+// This eliminates the previous two-state sync pattern (useNodesState +
+// useEffect + syncingFromPropsRef) that was fragile and order-dependent.
+export default function GraphPanel() {
+  const nodes = useAppStore((s) => s.nodes);
+  const edges = useAppStore((s) => s.edges);
+  const loading = useAppStore((s) => s.loading);
+  const error = useAppStore((s) => s.error);
+  const graph = useAppStore((s) => s.graph);
+  const truncated = graph?.truncated ?? false;
+  const stats = graph?.stats ?? null;
+  const setSelectedTxid = useAppStore((s) => s.setSelectedTxid);
+  const setNodes = useAppStore((s) => s.setNodes);
+  const setEdges = useAppStore((s) => s.setEdges);
 
-export default function GraphPanel({
-  nodes: inputNodes,
-  edges: inputEdges,
-  loading,
-  error,
-  hasGraph,
-  truncated,
-  stats,
-  onNodeClick,
-  onNodesUpdate,
-}: GraphPanelProps) {
   const nodeTypes = useMemo(() => ({ tx: TxNode }), []);
-  const [nodes, setNodes, onNodesChange] = useNodesState([] as Node[]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
-  const syncingFromPropsRef = useRef(false);
 
-  // Keep React Flow internal state aligned with upstream graph updates.
-  useEffect(() => {
-    syncingFromPropsRef.current = true;
-    setNodes(inputNodes);
-    setEdges(inputEdges);
-  }, [inputNodes, inputEdges, setNodes, setEdges]);
+  const onNodesChange = useCallback(
+    (changes: NodeChange<TxFlowNode>[]) => {
+      setNodes((prev) => applyNodeChanges(changes, prev));
+    },
+    [setNodes],
+  );
+
+  const onEdgesChange = useCallback(
+    (changes: EdgeChange[]) => {
+      setEdges((prev) => applyEdgeChanges(changes, prev));
+    },
+    [setEdges],
+  );
 
   const minimapNodeColor = useCallback(() => "var(--accent-dim)", []);
 
-  useEffect(() => {
-    if (syncingFromPropsRef.current) {
-      syncingFromPropsRef.current = false;
-      return;
-    }
-    if (nodes === inputNodes) {
-      return;
-    }
-    onNodesUpdate(nodes);
-  }, [nodes, inputNodes, onNodesUpdate]);
+  const handleNodeClick = useCallback(
+    (_: React.MouseEvent, node: TxFlowNode) => {
+      setSelectedTxid(node.id);
+    },
+    [setSelectedTxid],
+  );
 
   if (loading) {
     return (
@@ -75,7 +67,7 @@ export default function GraphPanel({
     return <div style={{ flex: 1, padding: 20, color: "var(--accent)" }}>Error: {error}</div>;
   }
 
-  if (!hasGraph) {
+  if (!graph) {
     return (
       <div style={{ flex: 1, padding: 20, color: "var(--text-muted)" }}>
         Enter a transaction ID above to explore its ancestry.
@@ -95,11 +87,12 @@ export default function GraphPanel({
             color: "var(--text-muted)",
             fontSize: 11,
             fontFamily: "var(--mono)",
+            maxWidth: "calc(100% - 20px)",
           }}
         >
           {stats.node_count} transactions, {stats.edge_count} edges, max depth{" "}
           {stats.max_depth_reached}
-          {truncated && <span style={{ color: "#f0a500", marginLeft: 8 }}>(truncated)</span>}
+          {truncated && <span style={{ color: "var(--warning)", marginLeft: 8 }}>(truncated)</span>}
         </div>
       )}
       <ReactFlow
@@ -108,7 +101,7 @@ export default function GraphPanel({
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        onNodeClick={onNodeClick}
+        onNodeClick={handleNodeClick}
         nodesDraggable={true}
         nodesConnectable={false}
         fitView
@@ -116,7 +109,7 @@ export default function GraphPanel({
         proOptions={{ hideAttribution: true }}
       >
         <Controls />
-        <MiniMap nodeColor={minimapNodeColor} maskColor="rgba(0, 0, 0, 0.6)" />
+        <MiniMap nodeColor={minimapNodeColor} maskColor="var(--overlay-mask)" />
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--border)" />
       </ReactFlow>
     </div>
