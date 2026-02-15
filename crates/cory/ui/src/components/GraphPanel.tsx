@@ -1,56 +1,55 @@
-import { useMemo, useCallback, useEffect, useRef } from "react";
+import { useMemo, useCallback } from "react";
 import {
   ReactFlow,
   Controls,
   MiniMap,
   Background,
   BackgroundVariant,
-  useNodesState,
-  useEdgesState,
+  applyNodeChanges,
+  applyEdgeChanges,
 } from "@xyflow/react";
-import type { Node, Edge } from "@xyflow/react";
+import type { NodeChange, EdgeChange } from "@xyflow/react";
 import TxNode from "./txnode/Node";
 import { useAppStore } from "../store";
+import type { TxFlowNode } from "../layout";
 
+// Controlled React Flow: the Zustand store is the single source of truth
+// for nodes and edges. User interactions (drags, selections) flow through
+// onNodesChange/onEdgesChange, which apply changes to the store directly.
+// This eliminates the previous two-state sync pattern (useNodesState +
+// useEffect + syncingFromPropsRef) that was fragile and order-dependent.
 export default function GraphPanel() {
-  const inputNodes = useAppStore((s) => s.nodes);
-  const inputEdges = useAppStore((s) => s.edges);
+  const nodes = useAppStore((s) => s.nodes);
+  const edges = useAppStore((s) => s.edges);
   const loading = useAppStore((s) => s.loading);
   const error = useAppStore((s) => s.error);
   const graph = useAppStore((s) => s.graph);
   const truncated = graph?.truncated ?? false;
   const stats = graph?.stats ?? null;
   const setSelectedTxid = useAppStore((s) => s.setSelectedTxid);
-  const storeSetNodes = useAppStore((s) => s.setNodes);
+  const setNodes = useAppStore((s) => s.setNodes);
+  const setEdges = useAppStore((s) => s.setEdges);
 
   const nodeTypes = useMemo(() => ({ tx: TxNode }), []);
-  const [nodes, setNodes, onNodesChange] = useNodesState([] as Node[]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
-  const syncingFromPropsRef = useRef(false);
 
-  // Keep React Flow internal state aligned with upstream store updates.
-  useEffect(() => {
-    syncingFromPropsRef.current = true;
-    setNodes(inputNodes);
-    setEdges(inputEdges);
-  }, [inputNodes, inputEdges, setNodes, setEdges]);
+  const onNodesChange = useCallback(
+    (changes: NodeChange<TxFlowNode>[]) => {
+      setNodes((prev) => applyNodeChanges(changes, prev));
+    },
+    [setNodes],
+  );
+
+  const onEdgesChange = useCallback(
+    (changes: EdgeChange[]) => {
+      setEdges((prev) => applyEdgeChanges(changes, prev));
+    },
+    [setEdges],
+  );
 
   const minimapNodeColor = useCallback(() => "var(--accent-dim)", []);
 
-  // When user drags nodes, push the updated positions back to the store.
-  useEffect(() => {
-    if (syncingFromPropsRef.current) {
-      syncingFromPropsRef.current = false;
-      return;
-    }
-    if (nodes === inputNodes) {
-      return;
-    }
-    storeSetNodes(nodes);
-  }, [nodes, inputNodes, storeSetNodes]);
-
   const handleNodeClick = useCallback(
-    (_: React.MouseEvent, node: Node) => {
+    (_: React.MouseEvent, node: TxFlowNode) => {
       setSelectedTxid(node.id);
     },
     [setSelectedTxid],

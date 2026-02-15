@@ -12,8 +12,11 @@ import { NODE_WIDTH } from "./constants";
 import { buildConnectedOutputsByTx, buildNodeRenderModel } from "./model";
 import type { TxNodeData } from "./model";
 
-// Re-export view-model types so existing consumers (TxNode.tsx, App.tsx)
-// can import from "./layout" without updating every import site yet.
+// Typed React Flow node carrying our view-model data.
+export type TxFlowNode = Node<TxNodeData>;
+
+// Re-export view-model types so consumers import from "./layout" (the
+// public API) rather than reaching into "./model" (implementation detail).
 export type {
   TxInputView,
   TxOutputView,
@@ -42,7 +45,7 @@ function getElk() {
 // producing cleaner visuals for dense graphs with many edges.
 export async function computeLayout(
   response: GraphResponse,
-): Promise<{ nodes: Node[]; edges: Edge[] }> {
+): Promise<{ nodes: TxFlowNode[]; edges: Edge[] }> {
   const nodeIds = new Set(Object.keys(response.nodes));
   const connectedOutputsByTx = buildConnectedOutputsByTx(response, nodeIds);
 
@@ -91,7 +94,7 @@ export async function computeLayout(
   const elk = new ELK();
   const laid = await elk.layout(graph);
 
-  const nodes: Node[] = (laid.children ?? []).map((n: ElkNode) => {
+  const nodes: TxFlowNode[] = (laid.children ?? []).map((n: ElkNode) => {
     const txid = n.id;
     const model = renderModels.get(txid)!;
 

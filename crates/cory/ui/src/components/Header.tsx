@@ -19,12 +19,9 @@ export default function Header({ initialTxid = "" }: HeaderProps) {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === "Enter") {
-        const trimmed = txid.trim();
-        if (trimmed) doSearch(trimmed);
-      }
+      if (e.key === "Enter") handleSearch();
     },
-    [txid, doSearch],
+    [handleSearch],
   );
 
   return (

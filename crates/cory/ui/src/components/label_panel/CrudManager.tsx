@@ -6,7 +6,6 @@ import {
   errorMessage,
   exportLabelFile,
   importLabelFile,
-  isAuthError,
 } from "../../api";
 import type { LabelFileSummary } from "../../types";
 import { useAppStore } from "../../store";
@@ -31,19 +30,18 @@ export function CrudManager({
   setPanelError,
 }: CrudManagerProps) {
   const labelsChanged = useAppStore((s) => s.labelsChanged);
-  const setAuthError = useAppStore((s) => s.setAuthError);
+  const storeHandleAuthError = useAppStore((s) => s.handleAuthError);
 
   const [newFileName, setNewFileName] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleAuthError = useCallback(
     (err: unknown): boolean => {
-      if (!isAuthError(err)) return false;
-      setAuthError(errorMessage(err, "request failed"));
+      if (!storeHandleAuthError(err)) return false;
       setPanelError(null);
       return true;
     },
-    [setAuthError, setPanelError],
+    [storeHandleAuthError, setPanelError],
   );
 
   const handleCreateFile = useCallback(async () => {

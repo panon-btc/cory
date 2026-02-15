@@ -3,8 +3,8 @@
 // ==============================================================================
 //
 // Transforms raw GraphResponse data into the TxNodeData structures that
-// TxNode.tsx renders. This module owns all the view-model interfaces and
-// the logic for deciding which outputs to show vs. collapse.
+// txnode/Node.tsx renders. This module owns all the view-model interfaces
+// and the logic for deciding which outputs to show vs. collapse.
 
 import type { Node } from "@xyflow/react";
 import type { GraphResponse } from "./types";
@@ -50,7 +50,9 @@ export interface TxOutputRowView extends TxOutputView {
 
 export type TxOutputDisplayRow = TxOutputGapView | TxOutputRowView;
 
-export interface TxNodeData {
+// Extends Record<string, unknown> to satisfy React Flow's Node<D> constraint,
+// which requires an index signature that plain interfaces lack.
+export interface TxNodeData extends Record<string, unknown> {
   txid: string;
   shortTxid: string;
   blockHeight: number | null;
@@ -61,7 +63,6 @@ export interface TxNodeData {
   txLabels: string[];
   inputRows: TxInputView[];
   outputRows: TxOutputDisplayRow[];
-  [key: string]: unknown;
 }
 
 // ==============================================================================
@@ -235,7 +236,10 @@ export function buildNodeRenderModel(
 // Recompute render models for existing nodes without running ELK layout.
 // Used when labels change — the node positions stay the same, but the
 // data and estimated heights are refreshed.
-export function refreshNodesFromGraph(response: GraphResponse, nodes: Node[]): Node[] {
+export function refreshNodesFromGraph(
+  response: GraphResponse,
+  nodes: Node<TxNodeData>[],
+): Node<TxNodeData>[] {
   const nodeIds = new Set(Object.keys(response.nodes));
   const connectedOutputsByTx = buildConnectedOutputsByTx(response, nodeIds);
 

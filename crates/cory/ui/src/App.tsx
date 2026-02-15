@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { useAppStore, relayoutIfHeightsChanged } from "./store";
 import { setApiToken } from "./api";
@@ -14,33 +14,25 @@ export default function App() {
 
   const { width: sidebarWidth, onResizeStart: handleSidebarResizeStart } = useSidebarResize();
   const graph = useAppStore((s) => s.graph);
-  const ranInitialSearchRef = useRef(false);
 
-  // Sync API token from URL or localStorage on mount.
+  // On mount: sync API token, load label files, and kick off the initial
+  // search from the URL param. All three are independent, fire-and-forget
+  // operations that only need to run once.
   useEffect(() => {
     const token = initialToken || localStorage.getItem("cory:apiToken") || "";
     if (token) {
-      // Seed the api module and store without triggering a URL rewrite
-      // loop — the URL already contains the token.
       setApiToken(token);
       useAppStore.setState({ apiToken: token, searchParamTxid: initialSearch });
       localStorage.setItem("cory:apiToken", token);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
-  // Load label files on mount.
-  useEffect(() => {
     void useAppStore.getState().refreshLabelFiles();
-  }, []);
 
-  // Kick off the initial search from the URL param.
-  useEffect(() => {
-    if (ranInitialSearchRef.current) return;
-    ranInitialSearchRef.current = true;
     if (initialSearch) {
       void useAppStore.getState().doSearch(initialSearch);
     }
+    // Intentionally empty: all values come from URL params parsed once at
+    // module evaluation time. Re-running on changes would cause loops.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

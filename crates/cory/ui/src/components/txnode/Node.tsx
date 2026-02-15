@@ -1,13 +1,11 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
-import type { TxNodeData, TxOutputDisplayRow } from "../../layout";
+import type { TxOutputDisplayRow, TxFlowNode } from "../../layout";
 import { IO_START_TOP, PRIMARY_ROW_HEIGHT, IO_ROW_GAP } from "../../constants";
 import { formatFeerate, copyToClipboard } from "../../format";
 import { InputRow } from "./InputRow";
 import { OutputRow } from "./OutputRow";
-
-type TxNodeProps = NodeProps & { data: TxNodeData };
 
 // Two-pass handle positioning:
 //
@@ -20,7 +18,7 @@ type TxNodeProps = NodeProps & { data: TxNodeData };
 // row's actual offsetTop to correct for any discrepancy between estimated
 // and real heights (e.g. from font rendering differences or collapsed
 // output gaps). The measured values take priority in the Handle `top` prop.
-export default memo(function TxNode({ data, selected }: TxNodeProps) {
+export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
   const inputRowRefs = useRef(new Map<number, HTMLDivElement>());
   const outputRowRefs = useRef(new Map<number, HTMLDivElement>());
   const [measuredInputHandleTops, setMeasuredInputHandleTops] = useState<Record<number, number>>(

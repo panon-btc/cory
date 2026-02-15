@@ -2,13 +2,11 @@
 // Zustand Store
 // ==============================================================================
 //
-// Central state store that replaces the useCallback/useRef boilerplate in
-// App.tsx and the pure mutation helpers in labels.ts. Store methods are
-// inherently stable references and live outside React's render cycle,
-// eliminating stale-closure problems.
+// Central state store. Store methods are inherently stable references and
+// live outside React's render cycle, eliminating stale-closure problems.
 
 import { create } from "zustand";
-import type { Node, Edge } from "@xyflow/react";
+import type { Edge } from "@xyflow/react";
 import type {
   Bip329Type,
   GraphResponse,
@@ -26,6 +24,7 @@ import {
   setLabelInFile,
 } from "./api";
 import { computeLayout } from "./layout";
+import type { TxFlowNode } from "./layout";
 import { refreshNodesFromGraph } from "./model";
 
 // ==========================================================================
@@ -87,7 +86,7 @@ function labelBucket(
 
 interface AppState {
   // Graph display
-  nodes: Node[];
+  nodes: TxFlowNode[];
   edges: Edge[];
   graph: GraphResponse | null;
   selectedTxid: string | null;
@@ -110,9 +109,12 @@ interface AppState {
     opts?: { preserveSelectedTxid?: string | null; quietErrors?: boolean },
   ) => Promise<void>;
   setSelectedTxid: (txid: string | null) => void;
-  setNodes: (updater: Node[] | ((prev: Node[]) => Node[])) => void;
-  setEdges: (edges: Edge[]) => void;
+  setNodes: (updater: TxFlowNode[] | ((prev: TxFlowNode[]) => TxFlowNode[])) => void;
+  setEdges: (updater: Edge[] | ((prev: Edge[]) => Edge[])) => void;
   setAuthError: (message: string | null) => void;
+  /** Returns true (and sets authError) if err is a 401. Callers can
+   *  short-circuit their own error handling when this returns true. */
+  handleAuthError: (err: unknown) => boolean;
   setApiToken: (token: string) => void;
   refreshLabelFiles: () => Promise<LabelFileSummary[]>;
   saveLabel: (fileId: string, labelType: Bip329Type, refId: string, label: string) => Promise<void>;
@@ -124,203 +126,204 @@ interface AppState {
 // Store creation
 // ==========================================================================
 
-export const useAppStore = create<AppState>((set, get) => {
-  const setAuthErrorFrom = (err: unknown): boolean => {
+export const useAppStore = create<AppState>((set, get) => ({
+  nodes: [],
+  edges: [],
+  graph: null,
+  selectedTxid: null,
+  loading: false,
+  error: null,
+  authError: null,
+  labelFiles: [],
+  apiToken: "",
+  searchParamTxid: "",
+
+  setSelectedTxid: (txid) => set({ selectedTxid: txid }),
+
+  setNodes: (updater) =>
+    set((state) => ({
+      nodes: typeof updater === "function" ? updater(state.nodes) : updater,
+    })),
+
+  setEdges: (updater) =>
+    set((state) => ({
+      edges: typeof updater === "function" ? updater(state.edges) : updater,
+    })),
+
+  setAuthError: (message) => set({ authError: message }),
+
+  handleAuthError: (err) => {
     if (!isAuthError(err)) return false;
     set({ authError: errorMessage(err, "request failed") });
     return true;
-  };
+  },
 
-  return {
-    nodes: [],
-    edges: [],
-    graph: null,
-    selectedTxid: null,
-    loading: false,
-    error: null,
-    authError: null,
-    labelFiles: [],
-    apiToken: "",
-    searchParamTxid: "",
+  setApiToken: (token) => {
+    set({ apiToken: token, authError: null });
+    localStorage.setItem("cory:apiToken", token);
+    setApiTokenInModule(token);
+    replaceUrlParams(token, get().searchParamTxid);
+  },
 
-    setSelectedTxid: (txid) => set({ selectedTxid: txid }),
+  refreshLabelFiles: async () => {
+    try {
+      const files = await fetchLabelFiles();
+      set({ labelFiles: files, authError: null });
+      return files;
+    } catch (e) {
+      get().handleAuthError(e);
+      // Keep current list if label file metadata request fails.
+      return get().labelFiles;
+    }
+  },
 
-    setNodes: (updater) =>
-      set((state) => ({
-        nodes: typeof updater === "function" ? updater(state.nodes) : updater,
-      })),
+  doSearch: async (txid, opts) => {
+    // Abort any in-flight search request so we don't apply stale results.
+    searchAbortController?.abort();
+    const controller = new AbortController();
+    searchAbortController = controller;
+    const thisSearchId = ++searchId;
 
-    setEdges: (edges) => set({ edges }),
+    lastSearchTxid = txid;
+    set({ searchParamTxid: txid, loading: true, error: null });
+    replaceUrlParams(get().apiToken, txid);
 
-    setAuthError: (message) => set({ authError: message }),
+    try {
+      const resp = await fetchGraph(txid, controller.signal);
+      const { nodes: n, edges: e } = await computeLayout(resp);
 
-    setApiToken: (token) => {
-      set({ apiToken: token, authError: null });
-      localStorage.setItem("cory:apiToken", token);
-      setApiTokenInModule(token);
-      replaceUrlParams(token, get().searchParamTxid);
-    },
+      // Guard: if another search was started while we were awaiting,
+      // discard these results silently.
+      if (searchId !== thisSearchId) return;
 
-    refreshLabelFiles: async () => {
-      try {
-        const files = await fetchLabelFiles();
-        set({ labelFiles: files, authError: null });
-        return files;
-      } catch (e) {
-        setAuthErrorFrom(e);
-        // Keep current list if label file metadata request fails.
-        return get().labelFiles;
-      }
-    },
+      const preservedTxid = opts?.preserveSelectedTxid;
+      const nextSelectedTxid =
+        preservedTxid && resp.nodes[preservedTxid] ? preservedTxid : resp.root_txid;
 
-    doSearch: async (txid, opts) => {
-      // Abort any in-flight search request so we don't apply stale results.
-      searchAbortController?.abort();
-      const controller = new AbortController();
-      searchAbortController = controller;
-      const thisSearchId = ++searchId;
+      set({ graph: resp, nodes: n, edges: e, selectedTxid: nextSelectedTxid, authError: null });
+    } catch (e) {
+      // Aborted requests are not errors — just ignore them.
+      if ((e as Error).name === "AbortError") return;
+      if (searchId !== thisSearchId) return;
 
-      lastSearchTxid = txid;
-      set({ searchParamTxid: txid, loading: true, error: null });
-      replaceUrlParams(get().apiToken, txid);
-
-      try {
-        const resp = await fetchGraph(txid, controller.signal);
-        const { nodes: n, edges: e } = await computeLayout(resp);
-
-        // Guard: if another search was started while we were awaiting,
-        // discard these results silently.
-        if (searchId !== thisSearchId) return;
-
-        const preservedTxid = opts?.preserveSelectedTxid;
-        const nextSelectedTxid =
-          preservedTxid && resp.nodes[preservedTxid] ? preservedTxid : resp.root_txid;
-
-        set({ graph: resp, nodes: n, edges: e, selectedTxid: nextSelectedTxid, authError: null });
-      } catch (e) {
-        // Aborted requests are not errors — just ignore them.
-        if ((e as Error).name === "AbortError") return;
-        if (searchId !== thisSearchId) return;
-
-        if (setAuthErrorFrom(e)) {
-          window.alert(errorMessage(e, "request failed"));
-          return;
-        }
-
-        if (!opts?.quietErrors) {
-          set({
-            error: errorMessage(e, "Failed to load graph"),
-            graph: null,
-            nodes: [],
-            edges: [],
-          });
-        }
-      } finally {
-        if (searchId === thisSearchId) {
-          set({ loading: false });
-        }
-      }
-    },
-
-    saveLabel: async (fileId, labelType, refId, label) => {
-      let summary;
-      try {
-        summary = await setLabelInFile(fileId, labelType, refId, label);
-        set({ authError: null });
-      } catch (e) {
-        setAuthErrorFrom(e);
-        throw e;
+      if (get().handleAuthError(e)) {
+        window.alert(errorMessage(e, "request failed"));
+        return;
       }
 
-      // Inline upsert into graph state (replaces labels.ts:upsertLabel).
-      set((state) => {
-        const { graph } = state;
-        if (!graph) return state;
-
-        const next = {
-          ...graph,
-          labels_by_type: {
-            tx: { ...graph.labels_by_type.tx },
-            input: { ...graph.labels_by_type.input },
-            output: { ...graph.labels_by_type.output },
-            addr: { ...graph.labels_by_type.addr },
-          },
-        };
-
-        const bucket = labelBucket(next.labels_by_type, labelType);
-        if (!bucket) return state;
-
-        const existing = [...(bucket[refId] ?? [])];
-        const idx = existing.findIndex((entry) => entry.file_id === fileId);
-        const row: LabelEntry = {
-          file_id: fileId,
-          file_name: summary.name,
-          file_kind: "local",
-          editable: true,
-          label,
-        };
-        if (idx >= 0) {
-          existing[idx] = row;
-        } else {
-          existing.push(row);
-        }
-        bucket[refId] = existing;
-
-        return { graph: next };
-      });
-
-      await get().refreshLabelFiles();
-    },
-
-    deleteLabel: async (fileId, labelType, refId) => {
-      try {
-        await deleteLabelInFile(fileId, labelType, refId);
-        set({ authError: null });
-      } catch (e) {
-        setAuthErrorFrom(e);
-        throw e;
-      }
-
-      // Inline removal from graph state (replaces labels.ts:removeLabel).
-      set((state) => {
-        const { graph } = state;
-        if (!graph) return state;
-
-        const next = {
-          ...graph,
-          labels_by_type: {
-            tx: { ...graph.labels_by_type.tx },
-            input: { ...graph.labels_by_type.input },
-            output: { ...graph.labels_by_type.output },
-            addr: { ...graph.labels_by_type.addr },
-          },
-        };
-
-        const bucket = labelBucket(next.labels_by_type, labelType);
-        if (!bucket) return state;
-
-        const existing = bucket[refId] ?? [];
-        bucket[refId] = existing.filter((entry) => entry.file_id !== fileId);
-
-        return { graph: next };
-      });
-
-      await get().refreshLabelFiles();
-    },
-
-    labelsChanged: async (opts) => {
-      await get().refreshLabelFiles();
-      if (opts?.refreshGraph === false) return;
-
-      if (lastSearchTxid) {
-        await get().doSearch(lastSearchTxid, {
-          preserveSelectedTxid: get().selectedTxid,
-          quietErrors: true,
+      if (!opts?.quietErrors) {
+        set({
+          error: errorMessage(e, "Failed to load graph"),
+          graph: null,
+          nodes: [],
+          edges: [],
         });
       }
-    },
-  };
-});
+    } finally {
+      if (searchId === thisSearchId) {
+        set({ loading: false });
+      }
+    }
+  },
+
+  saveLabel: async (fileId, labelType, refId, label) => {
+    let summary;
+    try {
+      summary = await setLabelInFile(fileId, labelType, refId, label);
+      set({ authError: null });
+    } catch (e) {
+      get().handleAuthError(e);
+      throw e;
+    }
+
+    // Inline upsert into graph state (replaces labels.ts:upsertLabel).
+    set((state) => {
+      const { graph } = state;
+      if (!graph) return state;
+
+      const next = {
+        ...graph,
+        labels_by_type: {
+          tx: { ...graph.labels_by_type.tx },
+          input: { ...graph.labels_by_type.input },
+          output: { ...graph.labels_by_type.output },
+          addr: { ...graph.labels_by_type.addr },
+        },
+      };
+
+      const bucket = labelBucket(next.labels_by_type, labelType);
+      if (!bucket) return state;
+
+      const existing = [...(bucket[refId] ?? [])];
+      const idx = existing.findIndex((entry) => entry.file_id === fileId);
+      const row: LabelEntry = {
+        file_id: fileId,
+        file_name: summary.name,
+        file_kind: "local",
+        editable: true,
+        label,
+      };
+      if (idx >= 0) {
+        existing[idx] = row;
+      } else {
+        existing.push(row);
+      }
+      bucket[refId] = existing;
+
+      return { graph: next };
+    });
+
+    await get().refreshLabelFiles();
+  },
+
+  deleteLabel: async (fileId, labelType, refId) => {
+    try {
+      await deleteLabelInFile(fileId, labelType, refId);
+      set({ authError: null });
+    } catch (e) {
+      get().handleAuthError(e);
+      throw e;
+    }
+
+    // Inline removal from graph state (replaces labels.ts:removeLabel).
+    set((state) => {
+      const { graph } = state;
+      if (!graph) return state;
+
+      const next = {
+        ...graph,
+        labels_by_type: {
+          tx: { ...graph.labels_by_type.tx },
+          input: { ...graph.labels_by_type.input },
+          output: { ...graph.labels_by_type.output },
+          addr: { ...graph.labels_by_type.addr },
+        },
+      };
+
+      const bucket = labelBucket(next.labels_by_type, labelType);
+      if (!bucket) return state;
+
+      const existing = bucket[refId] ?? [];
+      bucket[refId] = existing.filter((entry) => entry.file_id !== fileId);
+
+      return { graph: next };
+    });
+
+    await get().refreshLabelFiles();
+  },
+
+  labelsChanged: async (opts) => {
+    await get().refreshLabelFiles();
+    if (opts?.refreshGraph === false) return;
+
+    if (lastSearchTxid) {
+      await get().doSearch(lastSearchTxid, {
+        preserveSelectedTxid: get().selectedTxid,
+        quietErrors: true,
+      });
+    }
+  },
+}));
 
 // ==========================================================================
 // Height-change relayout helper
@@ -346,9 +349,13 @@ export function relayoutIfHeightsChanged(graph: GraphResponse): void {
   setNodes(nextNodes);
 
   if (heightChanged) {
-    void computeLayout(graph).then(({ nodes: n, edges: e }) => {
-      setNodes(n);
-      setEdges(e);
-    });
+    void computeLayout(graph)
+      .then(({ nodes: n, edges: e }) => {
+        setNodes(n);
+        setEdges(e);
+      })
+      .catch((err) => {
+        console.error("relayout after height change failed:", err);
+      });
   }
 }
