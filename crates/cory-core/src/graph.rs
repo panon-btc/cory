@@ -180,134 +180,28 @@ async fn fetch_and_convert(
 /// prevout data (verbosity=2), we use that directly; otherwise we look
 /// up the funding transaction from the cache (which will have been fetched
 /// during earlier BFS levels) or fall back to the prevout cache.
+///
+/// The conversion proceeds in three phases:
+/// 1. Build initial inputs from cache/local data, collecting unresolved
+///    outpoints.
+/// 2. Resolve unresolved prevouts via batched RPC, then individual
+///    parent-tx fallback.
+/// 3. Convert raw outputs to domain `TxOutput` with script classification.
 async fn convert_raw_tx(
     rpc: &dyn BitcoinRpc,
     cache: &Cache,
     raw: RawTxInfo,
 ) -> Result<TxNode, CoreError> {
-    let mut inputs = Vec::with_capacity(raw.inputs.len());
-    let mut unresolved_outpoints: Vec<(usize, bitcoin::OutPoint)> = Vec::new();
+    // Phase 1: build inputs from local data, track what still needs RPC.
+    let (mut inputs, unresolved) = build_inputs_initial(cache, &raw.inputs).await;
 
-    for (idx, raw_input) in raw.inputs.iter().enumerate() {
-        let (value, script_type) = match &raw_input.prevout {
-            None => {
-                // Coinbase input — no prevout to resolve.
-                (None, None)
-            }
-            Some(outpoint) => match resolve_prevout_without_rpc(cache, raw_input, outpoint).await {
-                Some((value, script_type)) => (Some(value), Some(script_type)),
-                None => {
-                    unresolved_outpoints.push((idx, *outpoint));
-                    (None, None)
-                }
-            },
-        };
-
-        inputs.push(TxInput {
-            prevout: raw_input.prevout,
-            sequence: raw_input.sequence,
-            value,
-            script_type,
-        });
+    // Phase 2: resolve remaining inputs via batched gettxout + parent tx fallback.
+    if !unresolved.is_empty() {
+        resolve_unresolved_prevouts(rpc, cache, &mut inputs, &unresolved, &raw.txid).await;
     }
 
-    // For unresolved prevouts, batch `gettxout` requests in one JSON-RPC call
-    // when possible. This reduces per-input HTTP overhead on high-fan-in txs.
-    if !unresolved_outpoints.is_empty() {
-        let outpoints: Vec<bitcoin::OutPoint> = unresolved_outpoints
-            .iter()
-            .map(|(_, outpoint)| *outpoint)
-            .collect();
-
-        match rpc.get_tx_outs(&outpoints).await {
-            Ok(resolved) => {
-                for ((input_idx, outpoint), info_opt) in
-                    unresolved_outpoints.into_iter().zip(resolved)
-                {
-                    if let Some(info) = info_opt {
-                        let script_type = classify_script(info.script_pub_key.as_script());
-                        cache
-                            .insert_prevout(
-                                outpoint.txid,
-                                outpoint.vout,
-                                PrevoutInfo {
-                                    value: info.value,
-                                    script_pub_key: info.script_pub_key,
-                                    script_type,
-                                },
-                            )
-                            .await;
-
-                        if let Some(input) = inputs.get_mut(input_idx) {
-                            input.value = Some(info.value);
-                            input.script_type = Some(script_type);
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    txid = %raw.txid,
-                    unresolved_count = outpoints.len(),
-                    error = %e,
-                    "batch gettxout failed; inputs will remain unresolved"
-                );
-            }
-        }
-
-        // For inputs still unresolved after gettxout (common for spent outputs),
-        // try fetching the parent transaction directly. This is more expensive
-        // but resolves prevout values that gettxout cannot (spent outputs).
-        let still_unresolved: Vec<usize> = inputs
-            .iter()
-            .enumerate()
-            .filter(|(_, inp)| inp.value.is_none() && inp.prevout.is_some())
-            .map(|(idx, _)| idx)
-            .collect();
-
-        for idx in still_unresolved {
-            let outpoint = inputs[idx]
-                .prevout
-                .expect("filtered for Some prevout above");
-
-            // Only attempt RPC if the parent isn't already cached.
-            if cache
-                .get_prevout(&outpoint.txid, outpoint.vout)
-                .await
-                .is_some()
-            {
-                continue;
-            }
-            if let Ok(parent_tx) = rpc.get_transaction(&outpoint.txid).await {
-                if let Some(output) = parent_tx.outputs.get(outpoint.vout as usize) {
-                    let st = classify_script(output.script_pub_key.as_script());
-                    cache
-                        .insert_prevout(
-                            outpoint.txid,
-                            outpoint.vout,
-                            PrevoutInfo {
-                                value: output.value,
-                                script_pub_key: output.script_pub_key.clone(),
-                                script_type: st,
-                            },
-                        )
-                        .await;
-                    inputs[idx].value = Some(output.value);
-                    inputs[idx].script_type = Some(st);
-                }
-            }
-        }
-    }
-
-    let outputs: Vec<TxOutput> = raw
-        .outputs
-        .iter()
-        .map(|o| TxOutput {
-            value: o.value,
-            script_pub_key: o.script_pub_key.clone(),
-            script_type: classify_script(o.script_pub_key.as_script()),
-        })
-        .collect();
+    // Phase 3: classify output scripts.
+    let outputs = convert_outputs(&raw.outputs);
 
     Ok(TxNode {
         txid: raw.txid,
@@ -322,6 +216,139 @@ async fn convert_raw_tx(
         inputs,
         outputs,
     })
+}
+
+/// Phase 1: iterate raw inputs, resolve from cache/raw data where possible,
+/// and return the partially-filled inputs along with a list of outpoints
+/// that still need RPC resolution.
+async fn build_inputs_initial(
+    cache: &Cache,
+    raw_inputs: &[RawInputInfo],
+) -> (Vec<TxInput>, Vec<(usize, bitcoin::OutPoint)>) {
+    let mut inputs = Vec::with_capacity(raw_inputs.len());
+    let mut unresolved = Vec::new();
+
+    for (idx, raw_input) in raw_inputs.iter().enumerate() {
+        let (value, script_type) = match &raw_input.prevout {
+            None => (None, None),
+            Some(outpoint) => match resolve_prevout_without_rpc(cache, raw_input, outpoint).await {
+                Some((value, script_type)) => (Some(value), Some(script_type)),
+                None => {
+                    unresolved.push((idx, *outpoint));
+                    (None, None)
+                }
+            },
+        };
+
+        inputs.push(TxInput {
+            prevout: raw_input.prevout,
+            sequence: raw_input.sequence,
+            value,
+            script_type,
+        });
+    }
+
+    (inputs, unresolved)
+}
+
+/// Phase 2: for unresolved prevouts, first try a batched `gettxout` call,
+/// then fall back to fetching individual parent transactions for any that
+/// remain unresolved (common for already-spent outputs).
+async fn resolve_unresolved_prevouts(
+    rpc: &dyn BitcoinRpc,
+    cache: &Cache,
+    inputs: &mut [TxInput],
+    unresolved: &[(usize, bitcoin::OutPoint)],
+    txid: &Txid,
+) {
+    let outpoints: Vec<bitcoin::OutPoint> = unresolved.iter().map(|(_, op)| *op).collect();
+
+    // Batch gettxout — resolves unspent outputs in a single RPC call.
+    match rpc.get_tx_outs(&outpoints).await {
+        Ok(resolved) => {
+            for ((input_idx, outpoint), info_opt) in unresolved.iter().zip(resolved) {
+                if let Some(info) = info_opt {
+                    let script_type = classify_script(info.script_pub_key.as_script());
+                    cache
+                        .insert_prevout(
+                            outpoint.txid,
+                            outpoint.vout,
+                            PrevoutInfo {
+                                value: info.value,
+                                script_pub_key: info.script_pub_key,
+                                script_type,
+                            },
+                        )
+                        .await;
+
+                    if let Some(input) = inputs.get_mut(*input_idx) {
+                        input.value = Some(info.value);
+                        input.script_type = Some(script_type);
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                %txid,
+                unresolved_count = outpoints.len(),
+                error = %e,
+                "batch gettxout failed; inputs will remain unresolved"
+            );
+        }
+    }
+
+    // Individual parent-tx fallback for still-unresolved inputs (spent outputs).
+    let still_unresolved: Vec<usize> = inputs
+        .iter()
+        .enumerate()
+        .filter(|(_, inp)| inp.value.is_none() && inp.prevout.is_some())
+        .map(|(idx, _)| idx)
+        .collect();
+
+    for idx in still_unresolved {
+        let outpoint = inputs[idx]
+            .prevout
+            .expect("filtered for Some prevout above");
+
+        if cache
+            .get_prevout(&outpoint.txid, outpoint.vout)
+            .await
+            .is_some()
+        {
+            continue;
+        }
+        if let Ok(parent_tx) = rpc.get_transaction(&outpoint.txid).await {
+            if let Some(output) = parent_tx.outputs.get(outpoint.vout as usize) {
+                let st = classify_script(output.script_pub_key.as_script());
+                cache
+                    .insert_prevout(
+                        outpoint.txid,
+                        outpoint.vout,
+                        PrevoutInfo {
+                            value: output.value,
+                            script_pub_key: output.script_pub_key.clone(),
+                            script_type: st,
+                        },
+                    )
+                    .await;
+                inputs[idx].value = Some(output.value);
+                inputs[idx].script_type = Some(st);
+            }
+        }
+    }
+}
+
+/// Phase 3: classify each raw output's script and build domain `TxOutput`s.
+fn convert_outputs(raw_outputs: &[crate::rpc::types::RawOutputInfo]) -> Vec<TxOutput> {
+    raw_outputs
+        .iter()
+        .map(|o| TxOutput {
+            value: o.value,
+            script_pub_key: o.script_pub_key.clone(),
+            script_type: classify_script(o.script_pub_key.as_script()),
+        })
+        .collect()
 }
 
 /// Try to resolve the value and script type for a prevout using (in order):

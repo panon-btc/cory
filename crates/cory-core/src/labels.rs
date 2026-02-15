@@ -534,45 +534,59 @@ fn walk_pack_dir(
             continue;
         }
 
-        let relative = path
-            .strip_prefix(base)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .to_string();
-        let file_name = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or("pack")
-            .to_string();
+        load_single_pack_file(base, &path, pack_files, seen_ids)?;
+    }
+    Ok(())
+}
 
-        let content = std::fs::read_to_string(&path)?;
-        let mut labels = HashMap::new();
-        parse_jsonl_records(&content, &mut labels)?;
+/// Load a single `.jsonl` file as a read-only pack label file.
+///
+/// The file ID is derived from its path relative to `base`, prefixed
+/// with `pack:`. Duplicate IDs are rejected.
+fn load_single_pack_file(
+    base: &Path,
+    path: &Path,
+    pack_files: &mut Vec<LabelFile>,
+    seen_ids: &mut HashSet<String>,
+) -> Result<(), CoreError> {
+    let relative = path
+        .strip_prefix(base)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .to_string();
+    let file_name = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("pack")
+        .to_string();
 
-        let id_core = normalize_label_file_id(&relative);
-        let file_id = if id_core.is_empty() {
-            "pack".to_string()
-        } else {
-            format!("pack:{id_core}")
-        };
+    let content = std::fs::read_to_string(path)?;
+    let mut labels = HashMap::new();
+    parse_jsonl_records(&content, &mut labels)?;
 
-        if !seen_ids.insert(file_id.clone()) {
-            return Err(CoreError::LabelParse {
-                line: 0,
-                message: format!("duplicate pack file ID `{file_id}` from {}", path.display()),
-            });
-        }
+    let id_core = normalize_label_file_id(&relative);
+    let file_id = if id_core.is_empty() {
+        "pack".to_string()
+    } else {
+        format!("pack:{id_core}")
+    };
 
-        pack_files.push(LabelFile {
-            meta: LabelFileMeta {
-                id: file_id,
-                name: file_name,
-                kind: LabelFileKind::Pack,
-                editable: false,
-            },
-            labels,
+    if !seen_ids.insert(file_id.clone()) {
+        return Err(CoreError::LabelParse {
+            line: 0,
+            message: format!("duplicate pack file ID `{file_id}` from {}", path.display()),
         });
     }
+
+    pack_files.push(LabelFile {
+        meta: LabelFileMeta {
+            id: file_id,
+            name: file_name,
+            kind: LabelFileKind::Pack,
+            editable: false,
+        },
+        labels,
+    });
     Ok(())
 }
 
