@@ -6,9 +6,12 @@ interface InputRowProps {
   row: TxInputView;
   txid: string;
   refCallback: (index: number, el: HTMLDivElement | null) => void;
+  onCopied: (value: string) => void;
 }
 
-export function InputRow({ row, txid, refCallback }: InputRowProps) {
+export function InputRow({ row, txid, refCallback, onCopied }: InputRowProps) {
+  const copyValue = row.address ?? `${txid}:${row.index}`;
+
   return (
     <div
       ref={(el) => refCallback(row.index, el)}
@@ -25,7 +28,13 @@ export function InputRow({ row, txid, refCallback }: InputRowProps) {
         <button
           type="button"
           className="nodrag nopan"
-          onClick={() => copyToClipboard(row.address ?? `${txid}:${row.index}`)}
+          onClick={() => {
+            void copyToClipboard(copyValue).then((copied) => {
+              if (copied) {
+                onCopied(copyValue);
+              }
+            });
+          }}
           title={
             row.address
               ? `Copy input address: ${row.address}`

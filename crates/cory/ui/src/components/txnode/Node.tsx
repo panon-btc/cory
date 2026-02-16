@@ -14,6 +14,10 @@ import { InputRow } from "./InputRow";
 import { OutputRow } from "./OutputRow";
 import { MiddleEllipsisText } from "./MiddleEllipsisText";
 
+interface TxNodeProps extends NodeProps<TxFlowNode> {
+  onCopied: (value: string) => void;
+}
+
 // Two-pass handle positioning:
 //
 // Pass 1 (useMemo, estimated): prefix-sum of row heights gives approximate
@@ -25,7 +29,7 @@ import { MiddleEllipsisText } from "./MiddleEllipsisText";
 // row's actual offsetTop to correct for any discrepancy between estimated
 // and real heights (e.g. from font rendering differences or collapsed
 // output gaps). The measured values take priority in the Handle `top` prop.
-export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
+export default memo(function TxNode({ data, selected, onCopied }: TxNodeProps) {
   const inputRowRefs = useRef(new Map<number, HTMLDivElement>());
   const outputRowRefs = useRef(new Map<number, HTMLDivElement>());
   const [measuredInputHandleTops, setMeasuredInputHandleTops] = useState<Record<number, number>>(
@@ -182,7 +186,13 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
         <button
           type="button"
           className="nodrag nopan"
-          onClick={() => copyToClipboard(data.txid)}
+          onClick={() => {
+            void copyToClipboard(data.txid).then((copied) => {
+              if (copied) {
+                onCopied(data.txid);
+              }
+            });
+          }}
           aria-label="Copy transaction ID"
           title={`Copy txid: ${data.txid}`}
           style={{
@@ -247,6 +257,7 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
                 row={row}
                 txid={data.txid}
                 refCallback={setInputRowRef}
+                onCopied={onCopied}
               />
             ))}
           </div>
@@ -261,6 +272,7 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
                 row={row}
                 txid={data.txid}
                 refCallback={setOutputRowRef}
+                onCopied={onCopied}
               />
             ))}
           </div>

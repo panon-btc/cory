@@ -130,6 +130,14 @@ export function formatLabelEntry(entry: LabelEntry): string {
 
 // Copy text to the clipboard. Failures are silently ignored because clipboard
 // access requires a user gesture and may be unavailable in older browsers.
-export function copyToClipboard(text: string): void {
-  void navigator.clipboard?.writeText(text).catch(() => undefined);
+export async function copyToClipboard(text: string): Promise<boolean> {
+  if (!navigator.clipboard?.writeText) {
+    return false;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
 }
