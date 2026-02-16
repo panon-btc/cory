@@ -1,4 +1,4 @@
-import type { Bip329Type, GraphResponse, LabelFileSummary } from "./types";
+import type { Bip329Type, GraphResponse, HistoryResponse, LabelFileSummary } from "./types";
 
 interface ApiErrorPayload {
   error?: unknown;
@@ -80,6 +80,11 @@ async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response>
 export async function fetchGraph(txid: string, signal?: AbortSignal): Promise<GraphResponse> {
   const resp = await apiFetch(`/api/v1/graph/tx/${encodeURIComponent(txid)}`, { signal });
   return resp.json() as Promise<GraphResponse>;
+}
+
+export async function fetchHistory(): Promise<HistoryResponse> {
+  const resp = await apiFetch("/api/v1/history");
+  return resp.json() as Promise<HistoryResponse>;
 }
 
 export async function fetchLabelFiles(): Promise<LabelFileSummary[]> {

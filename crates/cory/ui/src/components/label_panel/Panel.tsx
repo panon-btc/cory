@@ -2,6 +2,7 @@ import { type CSSProperties, useCallback, useRef, useState } from "react";
 import { useAppStore } from "../../store";
 import { errorMessage, exportLabelFile } from "../../api";
 import type { LabelFileSummary } from "../../types";
+import { shortTxid } from "../../format";
 import type { ThemeMode } from "../../hooks/useThemeMode";
 import { Moon, Sun, X } from "lucide-react";
 import SelectedTxEditor from "./SelectedTxEditor";
@@ -23,6 +24,7 @@ export default function LabelPanel({
   onToggleThemeMode,
 }: LabelPanelProps) {
   const labelFiles = useAppStore((s) => s.labelFiles);
+  const historyEntries = useAppStore((s) => s.historyEntries);
   const doSearch = useAppStore((s) => s.doSearch);
   const storeHandleAuthError = useAppStore((s) => s.handleAuthError);
 
@@ -191,6 +193,36 @@ export default function LabelPanel({
       </div>
 
       <details open style={sectionStyle}>
+        <summary style={summaryStyle}>History</summary>
+        <div style={{ marginTop: 8 }}>
+          {historyEntries.length > 0 ? (
+            <ul style={serverListStyle}>
+              {historyEntries.map((entry) => (
+                <li key={entry.txid} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <button
+                    className="row-action-button"
+                    type="button"
+                    onClick={() => void doSearch(entry.txid)}
+                    title={`Search txid ${entry.txid}`}
+                    style={{ padding: 0, fontSize: 12 }}
+                  >
+                    {shortTxid(entry.txid)}
+                  </button>
+                  <span style={{ color: "var(--text-muted)", fontSize: 10 }}>
+                    {entry.searched_at}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div style={{ color: "var(--text-muted)", fontSize: 11 }}>
+              No searches yet since server start.
+            </div>
+          )}
+        </div>
+      </details>
+
+      <details open style={sectionStyle}>
         <summary style={summaryStyle}>Server Labels</summary>
         <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
           <div>
@@ -218,13 +250,6 @@ export default function LabelPanel({
               </div>
             )}
           </div>
-
-          {persistentRoFiles.length === 0 && persistentRwFiles.length === 0 && (
-            <p style={{ color: "var(--text-muted)", fontSize: 11 }}>
-              No server labels loaded. Start cory with <code>--labels-ro</code> and/or{" "}
-              <code>--labels-rw</code>.
-            </p>
-          )}
         </div>
       </details>
 

@@ -1,6 +1,7 @@
 mod cli;
 mod server;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use bitcoin::Network;
@@ -93,6 +94,7 @@ async fn main() -> eyre::Result<()> {
         default_limits: graph_limits,
         rpc_concurrency: args.rpc_concurrency,
         network: map_chain_to_network(&chain_info.chain)?,
+        history: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
     };
 
     let bind_addr = format!("{}:{}", args.bind, args.port);

@@ -19,6 +19,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 rust-embed = { workspace = true }
 mime_guess = { workspace = true }
+time = { version = "0.3", features = ["formatting"] }
 zip = "8.0.0"
 [dev-dependencies]
 reqwest = { workspace = true }
