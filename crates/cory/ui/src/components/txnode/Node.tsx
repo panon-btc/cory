@@ -129,14 +129,16 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
   return (
     <div
       style={{
-        background: "var(--surface)",
-        border: `1.5px solid ${selected ? "var(--accent)" : "var(--border)"}`,
+        background: "var(--surface-1)",
+        border: `1.5px solid ${selected ? "var(--accent)" : "var(--border-subtle)"}`,
         borderRadius: 4,
         padding: "8px 10px",
         width: data.nodeWidth,
         fontFamily: "var(--mono)",
         fontSize: 11,
-        boxShadow: selected ? "0 0 8px var(--accent)" : undefined,
+        boxShadow: selected
+          ? "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent), 0 4px 14px color-mix(in srgb, var(--accent) 24%, transparent)"
+          : undefined,
       }}
     >
       {data.inputRows.map((row, index) => (
@@ -170,7 +172,7 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
             position={Position.Right}
             style={{
               top: measuredOutputHandleTops[row.index] ?? outputHandleTops[row.index],
-              background: "var(--border)",
+              background: "var(--border-strong)",
             }}
           />
         ))}

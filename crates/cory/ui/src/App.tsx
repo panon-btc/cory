@@ -58,6 +58,7 @@ export default function App() {
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
           <GraphPanel />
           <div
+            className={`resize-handle ${isSidebarOpen ? "" : "resize-handle-collapsed"}`.trim()}
             role={isSidebarOpen ? "separator" : "button"}
             aria-orientation={isSidebarOpen ? "vertical" : undefined}
             // One drag interaction handles both states:
@@ -79,12 +80,10 @@ export default function App() {
             style={{
               width: isSidebarOpen ? 6 : 16,
               cursor: isSidebarOpen ? "col-resize" : "pointer",
-              background: "var(--border)",
               opacity: isSidebarOpen ? 0.45 : 0.75,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              color: "var(--text-muted)",
               userSelect: "none",
             }}
             title={

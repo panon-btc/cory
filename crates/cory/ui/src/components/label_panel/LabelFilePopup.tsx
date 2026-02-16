@@ -27,8 +27,8 @@ const overlayStyle: CSSProperties = {
 const popupStyle: CSSProperties = {
   width: "min(760px, 100%)",
   maxHeight: "min(80vh, 900px)",
-  background: "var(--surface)",
-  border: "1px solid var(--border)",
+  background: "var(--surface-1)",
+  border: "1px solid var(--border-subtle)",
   borderRadius: 4,
   display: "flex",
   flexDirection: "column",
@@ -40,14 +40,14 @@ const headerStyle: CSSProperties = {
   justifyContent: "space-between",
   alignItems: "flex-start",
   gap: 8,
-  borderBottom: "1px solid var(--border)",
+  borderBottom: "1px solid var(--border-subtle)",
   padding: "10px 12px",
 };
 
 const titleStyle: CSSProperties = {
   margin: 0,
   fontSize: 14,
-  color: "var(--text)",
+  color: "var(--text-primary)",
   overflowWrap: "anywhere",
 };
 
@@ -71,17 +71,17 @@ const listStyle: CSSProperties = {
 };
 
 const rowStyle: CSSProperties = {
-  borderBottom: "1px solid var(--border)",
+  borderBottom: "1px solid var(--border-subtle)",
 };
 
 const rowButtonStyle: CSSProperties = {
   width: "100%",
-  border: "none",
+  border: "1px solid transparent",
   borderRadius: 0,
   background: "transparent",
   cursor: "pointer",
   textAlign: "left",
-  color: "var(--text)",
+  color: "var(--text-primary)",
   padding: "8px 12px",
 };
 
@@ -141,11 +141,12 @@ export function LabelFilePopup({
             </div>
           </div>
           <button
+            className="icon-btn"
             type="button"
             onClick={onClose}
             title="Close labels popup"
             aria-label="Close labels popup"
-            style={{ width: 22, height: 22, padding: 0, lineHeight: 1, fontSize: 14, borderRadius: 3 }}
+            style={{ borderRadius: 3 }}
           >
             <X size={14} strokeWidth={2} aria-hidden="true" />
           </button>
@@ -154,9 +155,17 @@ export function LabelFilePopup({
         {loading ? (
           <div style={stateStyle}>Loading labels…</div>
         ) : error ? (
-          <div style={{ ...stateStyle, color: "var(--accent)", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div
+            className="text-error"
+            style={{ ...stateStyle, display: "flex", flexDirection: "column", gap: 10 }}
+          >
             <div>{error}</div>
-            <button type="button" onClick={onRetry} style={{ fontSize: 11, padding: "3px 8px" }}>
+            <button
+              className="btn-primary"
+              type="button"
+              onClick={onRetry}
+              style={{ fontSize: 11, padding: "3px 8px" }}
+            >
               Retry
             </button>
           </div>

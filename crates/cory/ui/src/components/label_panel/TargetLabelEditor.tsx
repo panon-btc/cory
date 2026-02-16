@@ -145,7 +145,7 @@ export default function TargetLabelEditor({
     >
       <div style={headerStyle}>
         <div>
-          <div style={{ color: "var(--accent)", fontSize: 11 }}>{title}</div>
+          <div style={{ color: "var(--text-secondary)", fontSize: 11 }}>{title}</div>
           {subtitle && <div style={subtitleStyle}>{subtitle}</div>}
         </div>
         {canStartAdding && (

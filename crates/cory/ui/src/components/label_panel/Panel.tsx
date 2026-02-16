@@ -37,13 +37,13 @@ export default function LabelPanel({
   const persistentRoFiles = labelFiles.filter((file) => file.kind === "persistent_ro");
   const browserFiles = labelFiles.filter((file) => file.kind === "browser_rw");
   const sectionStyle: CSSProperties = {
-    border: "1px solid var(--border)",
+    border: "1px solid var(--border-subtle)",
     borderRadius: 4,
-    background: "var(--overlay-subtle)",
+    background: "var(--surface-2)",
     padding: "6px 8px",
   };
   const summaryStyle: CSSProperties = {
-    color: "var(--accent)",
+    color: "var(--text-secondary)",
     cursor: "pointer",
     fontWeight: 600,
     fontSize: 12,
@@ -125,16 +125,12 @@ export default function LabelPanel({
       }}
     >
       <button
+        className="row-action-button"
         type="button"
         onClick={() => openFilePopup(file)}
         style={{
-          border: "none",
-          background: "transparent",
-          color: "var(--text)",
           padding: 0,
           fontSize: 12,
-          cursor: "pointer",
-          textAlign: "left",
         }}
         title={`Open labels from '${file.name}'`}
       >
@@ -151,7 +147,8 @@ export default function LabelPanel({
         minWidth: 300,
         maxWidth: 900,
         flexShrink: 0,
-        background: "var(--surface)",
+        background: "var(--surface-1)",
+        borderLeft: "1px solid var(--border-subtle)",
         padding: 12,
         overflow: "auto",
         display: "flex",
@@ -159,37 +156,33 @@ export default function LabelPanel({
         gap: 8,
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+      <div
+        style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}
+      >
         <button
+          className="icon-btn"
           type="button"
           onClick={onToggleThemeMode}
           title={themeMode === "dark" ? "Switch to light theme" : "Switch to dark theme"}
           aria-label={themeMode === "dark" ? "Switch to light theme" : "Switch to dark theme"}
           style={{
-            width: 28,
-            height: 22,
-            padding: 0,
             borderRadius: 999,
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "var(--overlay-subtle)",
-            border: "1px solid var(--border)",
+            width: 28,
           }}
         >
-          {themeMode === "dark" ? <Sun size={14} strokeWidth={2} /> : <Moon size={14} strokeWidth={2} />}
+          {themeMode === "dark" ? (
+            <Sun size={14} strokeWidth={2} />
+          ) : (
+            <Moon size={14} strokeWidth={2} />
+          )}
         </button>
         <button
+          className="icon-btn"
           type="button"
           onClick={onClose}
           title="Close label panel"
           aria-label="Close label panel"
           style={{
-            width: 22,
-            height: 22,
-            padding: 0,
-            lineHeight: 1,
-            fontSize: 14,
             borderRadius: 3,
           }}
         >
@@ -250,7 +243,11 @@ export default function LabelPanel({
         </div>
       </details>
 
-      {panelError && <p style={{ color: "var(--accent)", fontSize: 11 }}>{panelError}</p>}
+      {panelError && (
+        <p className="text-error" style={{ fontSize: 11 }}>
+          {panelError}
+        </p>
+      )}
       {activeFile && (
         <LabelFilePopup
           file={activeFile}

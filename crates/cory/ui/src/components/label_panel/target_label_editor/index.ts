@@ -43,7 +43,7 @@ export const mutedTextStyle: CSSProperties = {
 };
 
 export const errorTextStyle: CSSProperties = {
-  color: "var(--accent)",
+  color: "var(--error)",
   fontSize: 10,
 };
 
@@ -70,9 +70,9 @@ export const compactInputStyle: CSSProperties = {
 export const compactSelectStyle: CSSProperties = {
   fontFamily: "var(--mono)",
   fontSize: 10,
-  background: "var(--bg)",
-  color: "var(--text)",
-  border: "1px solid var(--border)",
+  background: "var(--surface-1)",
+  color: "var(--text-primary)",
+  border: "1px solid var(--border-subtle)",
 };
 
 export const statusIconStyle: CSSProperties = {
@@ -86,9 +86,9 @@ export const statusIconStyle: CSSProperties = {
 };
 
 export const iconActionButtonStyle: CSSProperties = {
-  background: "var(--surface)",
-  border: "1px solid var(--border)",
-  color: "var(--warning)",
+  background: "var(--surface-1)",
+  border: "1px solid var(--border-subtle)",
+  color: "var(--text-secondary)",
   lineHeight: 1,
   width: 22,
   height: 22,
@@ -108,13 +108,13 @@ export const deleteButtonStyle: CSSProperties = {
 
 export const editableFileTagStyle: CSSProperties = {
   fontSize: 10,
-  color: "var(--warning)",
+  color: "var(--text-muted)",
   alignSelf: "center",
   minWidth: 56,
 };
 
 export const readOnlyFileNameStyle: CSSProperties = {
-  color: "var(--warning)",
+  color: "var(--text-secondary)",
 };
 
 export const readOnlyListStyle: CSSProperties = {

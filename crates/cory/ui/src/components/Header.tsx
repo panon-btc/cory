@@ -27,10 +27,14 @@ export default function Header({ initialTxid = "" }: HeaderProps) {
 
   return (
     <header
+      className="panel"
       style={{
         padding: "12px 20px",
-        background: "var(--surface)",
-        borderBottom: "1px solid var(--border)",
+        borderRadius: 0,
+        borderLeft: "none",
+        borderRight: "none",
+        borderTop: "none",
+        borderBottom: "1px solid var(--border-subtle)",
         display: "flex",
         alignItems: "center",
         gap: 16,
@@ -67,12 +71,20 @@ export default function Header({ initialTxid = "" }: HeaderProps) {
           spellCheck={false}
           style={{ flex: 1, fontFamily: "var(--mono)" }}
         />
-        <button onClick={handleSearch} title="Search txid" aria-label="Search txid">
+        <button
+          className="btn-primary"
+          onClick={handleSearch}
+          title="Search txid"
+          aria-label="Search txid"
+        >
           <Search size={14} strokeWidth={2} aria-hidden="true" />
         </button>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div
+        className="panel-elevated"
+        style={{ display: "flex", flexDirection: "column", gap: 4, padding: 6, minWidth: 350 }}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <label style={{ color: "var(--text-muted)", fontSize: 11 }}>API Token:</label>
           <input
@@ -82,11 +94,18 @@ export default function Header({ initialTxid = "" }: HeaderProps) {
             placeholder="paste token from terminal"
             autoComplete="off"
             spellCheck={false}
-            style={{ width: 320, fontSize: 11, fontFamily: "var(--mono)" }}
+            style={{
+              width: 320,
+              fontSize: 11,
+              fontFamily: "var(--mono)",
+              background: "var(--surface-1)",
+            }}
           />
         </div>
         {authError && (
-          <div style={{ color: "var(--warning)", fontSize: 10, maxWidth: 340 }}>{authError}</div>
+          <div className="text-error" style={{ fontSize: 10, maxWidth: 340 }}>
+            {authError}
+          </div>
         )}
       </div>
     </header>

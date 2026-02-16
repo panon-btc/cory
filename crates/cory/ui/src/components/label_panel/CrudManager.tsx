@@ -204,14 +204,12 @@ export function CrudManager({
         }}
       >
         <div
+          className="notice notice-warning"
           style={{
-            border: "1px solid var(--border)",
-            borderRadius: 4,
             padding: 8,
-            color: "var(--warning)",
             fontSize: 10,
             fontStyle: "italic",
-            fontWeight: 700,
+            fontWeight: 500,
           }}
         >
           Browser label files are stored in memory, if you forget to export before closing the
@@ -233,14 +231,21 @@ export function CrudManager({
             spellCheck={false}
             style={{ flex: 1 }}
           />
-          <button onClick={() => void handleCreateFile()}>Create</button>
+          <button className="btn-primary" onClick={() => void handleCreateFile()}>
+            Create
+          </button>
         </div>
 
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <button onClick={handleImportClick} style={{ fontSize: 11, padding: "4px 8px" }}>
+          <button
+            className="btn-primary"
+            onClick={handleImportClick}
+            style={{ fontSize: 11, padding: "4px 8px" }}
+          >
             Import JSONL
           </button>
           <button
+            className="btn-primary"
             onClick={() => void handleExportAllBrowserLabels()}
             style={{ fontSize: 11, padding: "4px 8px" }}
           >
@@ -277,16 +282,12 @@ export function CrudManager({
                 >
                   <div style={{ minWidth: 0 }}>
                     <button
+                      className="row-action-button"
                       type="button"
                       onClick={() => onOpenFile(file)}
                       style={{
-                        border: "none",
-                        background: "transparent",
-                        color: "var(--text)",
                         padding: 0,
                         fontSize: 12,
-                        cursor: "pointer",
-                        textAlign: "left",
                       }}
                       title={`Open labels from '${file.name}'`}
                     >
@@ -298,12 +299,14 @@ export function CrudManager({
                   </div>
                   <div style={{ display: "flex", gap: 4 }}>
                     <button
+                      className="btn-ghost"
                       onClick={() => void handleExport(file)}
                       style={{ fontSize: 10, padding: "2px 6px" }}
                     >
                       Export
                     </button>
                     <button
+                      className="btn-danger"
                       onClick={() => void handleDelete(file)}
                       style={{ fontSize: 10, padding: "2px 6px" }}
                     >
