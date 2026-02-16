@@ -55,26 +55,13 @@ pub(super) fn export_map_to_jsonl(map: &HashMap<LabelKey, Bip329Record>) -> Stri
         .collect()
 }
 
-/// Normalize a human-readable file name into a stable, lowercase,
-/// hyphen-separated identifier suitable for use as a file ID.
-pub fn normalize_label_file_id(name: &str) -> String {
-    // Preserve folder structure in IDs while still normalizing each segment.
-    // This lets names like `exchanges/binance` round-trip as subfolders.
-    name.split(['/', '\\'])
-        .map(|segment| {
-            segment
-                .chars()
-                .flat_map(|c| c.to_lowercase())
-                .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-                .collect::<String>()
-                .split('-')
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join("-")
-        })
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>()
-        .join("/")
+/// Minimal normalization for label file IDs: strip `.jsonl` extension,
+/// trim whitespace, and convert `\` to `/`. No lowercasing or
+/// hyphenation — `"Exchanges/Binance Hot"` stays as-is.
+pub(super) fn normalize_label_file_id(name: &str) -> String {
+    let trimmed = name.trim();
+    let without_ext = trimmed.strip_suffix(".jsonl").unwrap_or(trimmed).trim();
+    without_ext.replace('\\', "/")
 }
 
 pub(super) struct ParsedLocalFileName {

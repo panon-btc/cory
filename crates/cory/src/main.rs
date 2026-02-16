@@ -64,22 +64,18 @@ async fn main() -> eyre::Result<()> {
         args.cache_tx_cap,
         args.cache_prevout_cap,
     ));
-    let mut label_store = match &args.label_dir {
-        Some(dir) => {
-            let store =
-                LabelStore::with_persistence(dir).context("load persisted label directory")?;
-            tracing::info!(path = %dir.display(), "loaded persisted label store");
-            store
-        }
-        None => LabelStore::new(),
-    };
-
-    // Load label pack directories.
-    for dir in &args.label_pack_dir {
+    let mut label_store = LabelStore::new();
+    for dir in &args.labels_rw {
         label_store
-            .load_pack_dir(dir)
-            .context("load label pack directory")?;
-        tracing::info!(path = %dir.display(), "loaded label pack");
+            .load_rw_dir(dir)
+            .context("load --labels-rw directory")?;
+        tracing::info!(path = %dir.display(), "loaded labels-rw directory");
+    }
+    for dir in &args.labels_ro {
+        label_store
+            .load_ro_dir(dir)
+            .context("load --labels-ro directory")?;
+        tracing::info!(path = %dir.display(), "loaded labels-ro directory");
     }
 
     let graph_limits = cory_core::GraphLimits {

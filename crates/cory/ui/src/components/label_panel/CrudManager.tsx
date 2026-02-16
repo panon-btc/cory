@@ -11,7 +11,7 @@ import type { LabelFileSummary } from "../../types";
 import { useAppStore } from "../../store";
 
 interface CrudManagerProps {
-  localFiles: LabelFileSummary[];
+  browserFiles: LabelFileSummary[];
   sectionStyle: CSSProperties;
   summaryStyle: CSSProperties;
   setPanelError: (error: string | null) => void;
@@ -21,10 +21,10 @@ function fileNameWithoutJsonl(fileName: string): string {
   return fileName.toLowerCase().endsWith(".jsonl") ? fileName.slice(0, -6) : fileName;
 }
 
-// Manages local label file CRUD: create, import (from .jsonl), export
+// Manages browser label file CRUD: create, import (from .jsonl), export
 // (via File System Access API or fallback download), and remove.
 export function CrudManager({
-  localFiles,
+  browserFiles,
   sectionStyle,
   summaryStyle,
   setPanelError,
@@ -171,7 +171,7 @@ export function CrudManager({
 
   return (
     <details open style={sectionStyle}>
-      <summary style={summaryStyle}>Label Files</summary>
+      <summary style={summaryStyle}>Browser Labels</summary>
       <div
         style={{
           marginTop: 8,
@@ -227,9 +227,9 @@ export function CrudManager({
           onChange={handleImportFile}
         />
 
-        {localFiles.length > 0 ? (
+        {browserFiles.length > 0 ? (
           <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {localFiles.map((file) => (
+            {browserFiles.map((file) => (
               <li
                 key={file.id}
                 style={{
@@ -271,7 +271,7 @@ export function CrudManager({
             ))}
           </ul>
         ) : (
-          <p style={{ color: "var(--text-muted)", fontSize: 11 }}>No local label files loaded.</p>
+          <p style={{ color: "var(--text-muted)", fontSize: 11 }}>No browser label files loaded.</p>
         )}
       </div>
     </details>

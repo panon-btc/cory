@@ -17,7 +17,7 @@ export default function SelectedTxEditor() {
   const saveLabel = useAppStore((s) => s.saveLabel);
   const deleteLabel = useAppStore((s) => s.deleteLabel);
 
-  const localFiles = labelFiles.filter((file) => file.kind === "local");
+  const editableFiles = labelFiles.filter((file) => file.editable);
 
   if (!graph || !selectedTxid || !graph.nodes[selectedTxid]) {
     return (
@@ -53,7 +53,7 @@ export default function SelectedTxEditor() {
         labelType="tx"
         refId={selectedTxid}
         labels={labelsFor(graph, "tx", selectedTxid)}
-        localFiles={localFiles}
+        editableFiles={editableFiles}
         onSaveLabel={saveLabel}
         onDeleteLabel={deleteLabel}
       />
@@ -93,7 +93,7 @@ export default function SelectedTxEditor() {
                   labelType="input"
                   refId={inputRef}
                   labels={labelsFor(graph, "input", inputRef)}
-                  localFiles={localFiles}
+                  editableFiles={editableFiles}
                   onSaveLabel={saveLabel}
                   onDeleteLabel={deleteLabel}
                 />
@@ -108,7 +108,7 @@ export default function SelectedTxEditor() {
                     labelType="addr"
                     refId={inputAddress}
                     labels={labelsFor(graph, "addr", inputAddress)}
-                    localFiles={localFiles}
+                    editableFiles={editableFiles}
                     onSaveLabel={saveLabel}
                     onDeleteLabel={deleteLabel}
                     note={inputAddressNote}
@@ -145,7 +145,7 @@ export default function SelectedTxEditor() {
                   labelType="output"
                   refId={outputRef}
                   labels={labelsFor(graph, "output", outputRef)}
-                  localFiles={localFiles}
+                  editableFiles={editableFiles}
                   onSaveLabel={saveLabel}
                   onDeleteLabel={deleteLabel}
                 />
@@ -160,7 +160,7 @@ export default function SelectedTxEditor() {
                   labelType="addr"
                   refId={addressRef ?? ""}
                   labels={addressRef ? labelsFor(graph, "addr", addressRef) : []}
-                  localFiles={localFiles}
+                  editableFiles={editableFiles}
                   onSaveLabel={saveLabel}
                   onDeleteLabel={deleteLabel}
                   disabled={!addressRef}

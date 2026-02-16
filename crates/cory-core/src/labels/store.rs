@@ -1,25 +1,29 @@
 //! `LabelStore` — the central in-memory store for BIP-329 label data.
 //!
-//! Manages both editable local label files (backed by on-disk JSONL) and
-//! read-only pack files. Queries merge results across all loaded files
-//! with deterministic precedence: local files first, then pack files.
+//! Manages three kinds of label files:
+//! - **PersistentRw** — on-disk labels loaded from `--labels-rw` dirs,
+//!   editable and auto-flushed to disk on mutation.
+//! - **PersistentRo** — on-disk labels loaded from `--labels-ro` dirs,
+//!   read-only.
+//! - **BrowserRw** — browser-only labels created/imported/exported via
+//!   the UI, editable but ephemeral.
+//!
+//! Queries merge results across all loaded files with deterministic
+//! precedence: PersistentRw → BrowserRw → PersistentRo.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::error::CoreError;
 
-use super::jsonl::{
-    export_map_to_jsonl, normalize_label_file_id, parse_jsonl_records, parse_local_file_name,
-};
-use super::pack::walk_pack_dir;
+use super::jsonl::{export_map_to_jsonl, parse_jsonl_records, parse_local_file_name};
+use super::pack::walk_label_dir;
 use super::types::{Bip329Record, Bip329Type, LabelFile, LabelFileKind, LabelStoreError};
 
 pub struct LabelStore {
-    local_files: Vec<LabelFile>,
-    pack_files: Vec<LabelFile>,
-    /// When set, local label files are persisted as JSONL in this directory.
-    label_dir: Option<PathBuf>,
+    persistent_rw_files: Vec<LabelFile>,
+    browser_rw_files: Vec<LabelFile>,
+    persistent_ro_files: Vec<LabelFile>,
 }
 
 impl Default for LabelStore {
@@ -31,73 +35,85 @@ impl Default for LabelStore {
 impl LabelStore {
     pub fn new() -> Self {
         Self {
-            local_files: Vec::new(),
-            pack_files: Vec::new(),
-            label_dir: None,
+            persistent_rw_files: Vec::new(),
+            browser_rw_files: Vec::new(),
+            persistent_ro_files: Vec::new(),
         }
     }
 
-    /// Creates a new label store with persistence. Existing JSONL files in
-    /// `dir` are loaded as editable local label files. Subsequent mutations
-    /// are flushed to disk automatically.
-    pub fn with_persistence(dir: &Path) -> Result<Self, CoreError> {
-        std::fs::create_dir_all(dir)?;
+    // ========================================================================
+    // Directory loading
+    // ========================================================================
 
-        let mut store = Self {
-            local_files: Vec::new(),
-            pack_files: Vec::new(),
-            label_dir: Some(dir.to_path_buf()),
-        };
+    /// Load a `--labels-rw` directory. Files are editable and auto-flushed
+    /// to their on-disk `source_path` on mutation.
+    pub fn load_rw_dir(&mut self, dir: &Path) -> Result<(), CoreError> {
+        if !dir.is_dir() {
+            return Err(CoreError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("labels-rw directory not found: {}", dir.display()),
+            )));
+        }
 
-        // Load existing JSONL files recursively so nested persistence layouts
-        // are restored deterministically on startup.
-        let mut seen_ids = HashSet::new();
-        Self::load_local_files_recursive(dir, dir, &mut store.local_files, &mut seen_ids)?;
+        let mut seen_ids = self.all_ids();
+        walk_label_dir(
+            dir,
+            dir,
+            LabelFileKind::PersistentRw,
+            &mut self.persistent_rw_files,
+            &mut seen_ids,
+        )
+    }
 
-        Ok(store)
+    /// Load a `--labels-ro` directory. Files are read-only in the UI.
+    pub fn load_ro_dir(&mut self, dir: &Path) -> Result<(), CoreError> {
+        if !dir.is_dir() {
+            return Err(CoreError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("labels-ro directory not found: {}", dir.display()),
+            )));
+        }
+
+        let mut seen_ids = self.all_ids();
+        walk_label_dir(
+            dir,
+            dir,
+            LabelFileKind::PersistentRo,
+            &mut self.persistent_ro_files,
+            &mut seen_ids,
+        )
     }
 
     // ========================================================================
-    // Local file lifecycle
+    // Browser file lifecycle (create, import, remove, replace)
     // ========================================================================
 
-    pub fn list_files(&self) -> Vec<&LabelFile> {
-        self.local_files
-            .iter()
-            .chain(self.pack_files.iter())
-            .collect()
-    }
-
-    pub fn get_local_file(&self, file_id: &str) -> Option<&LabelFile> {
-        self.find_local_file_by_id(file_id)
-    }
-
-    pub fn create_local_file(&mut self, name: &str) -> Result<String, LabelStoreError> {
+    pub fn create_browser_file(&mut self, name: &str) -> Result<String, LabelStoreError> {
         let parsed = parse_local_file_name(name)?;
-        if self.find_local_file_index_by_id(&parsed.id).is_some() {
-            return Err(LabelStoreError::DuplicateLocalFile(parsed.id));
+        if self.find_file_by_id(&parsed.id).is_some() {
+            return Err(LabelStoreError::DuplicateFileId(parsed.id));
         }
 
         let file = LabelFile {
             id: parsed.id.clone(),
             name: parsed.name,
-            kind: LabelFileKind::Local,
+            kind: LabelFileKind::BrowserRw,
             editable: true,
+            source_path: None,
             labels: HashMap::new(),
         };
-        self.local_files.push(file);
-        self.flush_local_file(&parsed.id)?;
+        self.browser_rw_files.push(file);
         Ok(parsed.id)
     }
 
-    pub fn import_local_file(
+    pub fn import_browser_file(
         &mut self,
         name: &str,
         content: &str,
     ) -> Result<String, LabelStoreError> {
         let parsed = parse_local_file_name(name)?;
-        if self.find_local_file_index_by_id(&parsed.id).is_some() {
-            return Err(LabelStoreError::DuplicateLocalFile(parsed.id));
+        if self.find_file_by_id(&parsed.id).is_some() {
+            return Err(LabelStoreError::DuplicateFileId(parsed.id));
         }
 
         let labels = parse_jsonl_records(content)?;
@@ -105,53 +121,69 @@ impl LabelStore {
         let file = LabelFile {
             id: parsed.id.clone(),
             name: parsed.name,
-            kind: LabelFileKind::Local,
+            kind: LabelFileKind::BrowserRw,
             editable: true,
+            source_path: None,
             labels,
         };
-        self.local_files.push(file);
-        self.flush_local_file(&parsed.id)?;
+        self.browser_rw_files.push(file);
 
         Ok(parsed.id)
     }
 
-    pub fn replace_local_file_content(
+    pub fn replace_browser_file_content(
         &mut self,
         file_id: &str,
         content: &str,
     ) -> Result<(), LabelStoreError> {
-        let idx = self
-            .find_local_file_index_by_id(file_id)
-            .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
+        let file = self
+            .find_file_mut(file_id)
+            .ok_or_else(|| LabelStoreError::FileNotFound(file_id.to_string()))?;
+
+        if file.kind != LabelFileKind::BrowserRw {
+            return Err(LabelStoreError::NotBrowserFile(file_id.to_string()));
+        }
 
         let labels = parse_jsonl_records(content)?;
-        self.local_files[idx].labels = labels;
-        self.flush_local_file(file_id)?;
+        file.labels = labels;
         Ok(())
     }
 
-    pub fn remove_local_file(&mut self, file_id: &str) -> Result<(), LabelStoreError> {
-        let idx = self
-            .find_local_file_index_by_id(file_id)
-            .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
-        let name = self.local_files[idx].name.clone();
-        self.local_files.remove(idx);
-        self.remove_local_file_on_disk(&name);
-        Ok(())
-    }
-
-    // ========================================================================
-    // Local file import/export and mutation
-    // ========================================================================
-
-    pub fn export_local_file(&self, file_id: &str) -> Result<String, LabelStoreError> {
+    pub fn remove_browser_file(&mut self, file_id: &str) -> Result<(), LabelStoreError> {
+        // Check if the file exists at all.
         let file = self
-            .find_local_file_by_id(file_id)
-            .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
+            .find_file_by_id(file_id)
+            .ok_or_else(|| LabelStoreError::FileNotFound(file_id.to_string()))?;
+
+        if file.kind != LabelFileKind::BrowserRw {
+            return Err(LabelStoreError::NotBrowserFile(file_id.to_string()));
+        }
+
+        let idx = self
+            .browser_rw_files
+            .iter()
+            .position(|f| f.id == file_id)
+            .expect("file verified to exist above");
+        self.browser_rw_files.remove(idx);
+        Ok(())
+    }
+
+    // ========================================================================
+    // Export (works on all kinds)
+    // ========================================================================
+
+    pub fn export_file(&self, file_id: &str) -> Result<String, LabelStoreError> {
+        let file = self
+            .find_file_by_id(file_id)
+            .ok_or_else(|| LabelStoreError::FileNotFound(file_id.to_string()))?;
         Ok(export_map_to_jsonl(&file.labels))
     }
 
-    pub fn set_local_label(
+    // ========================================================================
+    // Label mutation (PersistentRw + BrowserRw only)
+    // ========================================================================
+
+    pub fn set_label(
         &mut self,
         file_id: &str,
         label_type: Bip329Type,
@@ -164,11 +196,17 @@ impl LabelStore {
         if label.trim().is_empty() {
             return Err(LabelStoreError::EmptyLabel);
         }
-        let idx = self
-            .find_local_file_index_by_id(file_id)
-            .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
+
+        let file = self
+            .find_file_mut(file_id)
+            .ok_or_else(|| LabelStoreError::FileNotFound(file_id.to_string()))?;
+
+        if !file.editable {
+            return Err(LabelStoreError::ReadOnlyFile(file_id.to_string()));
+        }
+
         let key = (label_type, ref_id.clone());
-        self.local_files[idx].labels.insert(
+        file.labels.insert(
             key,
             Bip329Record {
                 label_type,
@@ -178,22 +216,30 @@ impl LabelStore {
                 spendable: None,
             },
         );
-        self.flush_local_file(file_id)?;
+
+        // Auto-flush PersistentRw files to disk.
+        self.flush_file(file_id)?;
         Ok(())
     }
 
-    pub fn delete_local_label(
+    pub fn delete_label(
         &mut self,
         file_id: &str,
         label_type: Bip329Type,
         ref_id: &str,
     ) -> Result<(), LabelStoreError> {
-        let idx = self
-            .find_local_file_index_by_id(file_id)
-            .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
+        let file = self
+            .find_file_mut(file_id)
+            .ok_or_else(|| LabelStoreError::FileNotFound(file_id.to_string()))?;
+
+        if !file.editable {
+            return Err(LabelStoreError::ReadOnlyFile(file_id.to_string()));
+        }
+
         let key = (label_type, ref_id.to_string());
-        self.local_files[idx].labels.remove(&key);
-        self.flush_local_file(file_id)?;
+        file.labels.remove(&key);
+
+        self.flush_file(file_id)?;
         Ok(())
     }
 
@@ -201,8 +247,20 @@ impl LabelStore {
     // Query
     // ========================================================================
 
-    /// Returns labels for a specific `(type, ref)` in deterministic precedence
-    /// order: local files first (creation order), then pack files (load order).
+    pub fn list_files(&self) -> Vec<&LabelFile> {
+        self.persistent_rw_files
+            .iter()
+            .chain(self.browser_rw_files.iter())
+            .chain(self.persistent_ro_files.iter())
+            .collect()
+    }
+
+    pub fn get_file(&self, file_id: &str) -> Option<&LabelFile> {
+        self.find_file_by_id(file_id)
+    }
+
+    /// Returns labels for a specific `(type, ref)` in deterministic
+    /// precedence order: PersistentRw → BrowserRw → PersistentRo.
     pub fn get_all_labels_for(
         &self,
         label_type: Bip329Type,
@@ -211,7 +269,12 @@ impl LabelStore {
         let key = (label_type, ref_id.to_string());
         let mut results = Vec::new();
 
-        for file in self.local_files.iter().chain(self.pack_files.iter()) {
+        for file in self
+            .persistent_rw_files
+            .iter()
+            .chain(self.browser_rw_files.iter())
+            .chain(self.persistent_ro_files.iter())
+        {
             if let Some(record) = file.labels.get(&key) {
                 results.push((file, record));
             }
@@ -221,192 +284,162 @@ impl LabelStore {
     }
 
     // ========================================================================
-    // Pack loading
+    // Internal helpers
     // ========================================================================
 
-    pub fn load_pack_dir(&mut self, dir: &Path) -> Result<(), CoreError> {
-        if !dir.is_dir() {
-            return Err(CoreError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("label pack directory not found: {}", dir.display()),
-            )));
-        }
-
-        // Track existing pack IDs to detect collisions.
-        let mut seen_ids: HashSet<String> = self.pack_files.iter().map(|f| f.id.clone()).collect();
-        walk_pack_dir(dir, dir, &mut self.pack_files, &mut seen_ids)
+    /// Collect all IDs across the three vecs for uniqueness checks.
+    fn all_ids(&self) -> HashSet<String> {
+        self.persistent_rw_files
+            .iter()
+            .chain(self.browser_rw_files.iter())
+            .chain(self.persistent_ro_files.iter())
+            .map(|f| f.id.clone())
+            .collect()
     }
 
-    // ========================================================================
-    // Internal
-    // ========================================================================
-
-    fn load_local_files_recursive(
-        base: &Path,
-        current: &Path,
-        local_files: &mut Vec<LabelFile>,
-        seen_ids: &mut HashSet<String>,
-    ) -> Result<(), CoreError> {
-        let mut entries: Vec<_> = std::fs::read_dir(current)?.collect::<Result<Vec<_>, _>>()?;
-        entries.sort_by_key(|e| e.path());
-
-        for entry in entries {
-            let path = entry.path();
-            if path.is_dir() {
-                Self::load_local_files_recursive(base, &path, local_files, seen_ids)?;
-                continue;
-            }
-            if path.extension().is_none_or(|ext| ext != "jsonl") {
-                continue;
-            }
-
-            let relative = path.strip_prefix(base).unwrap_or(&path);
-            let name = relative
-                .with_extension("")
-                .to_string_lossy()
-                .replace('\\', "/");
-            let id = normalize_label_file_id(&name);
-            if id.is_empty() {
-                continue;
-            }
-            if !seen_ids.insert(id.clone()) {
-                return Err(CoreError::LabelParse {
-                    line: 0,
-                    message: format!("duplicate local file ID `{id}` from {}", path.display()),
-                });
-            }
-
-            let content = std::fs::read_to_string(&path)?;
-            let labels = parse_jsonl_records(&content)?;
-            local_files.push(LabelFile {
-                id,
-                name,
-                kind: LabelFileKind::Local,
-                editable: true,
-                labels,
-            });
-        }
-        Ok(())
+    fn find_file_by_id(&self, file_id: &str) -> Option<&LabelFile> {
+        self.persistent_rw_files
+            .iter()
+            .chain(self.browser_rw_files.iter())
+            .chain(self.persistent_ro_files.iter())
+            .find(|f| f.id == file_id)
     }
 
-    fn find_local_file_index_by_id(&self, file_id: &str) -> Option<usize> {
-        self.local_files.iter().position(|f| f.id == file_id)
+    fn find_file_mut(&mut self, file_id: &str) -> Option<&mut LabelFile> {
+        self.persistent_rw_files
+            .iter_mut()
+            .chain(self.browser_rw_files.iter_mut())
+            .chain(self.persistent_ro_files.iter_mut())
+            .find(|f| f.id == file_id)
     }
 
-    fn find_local_file_by_id(&self, file_id: &str) -> Option<&LabelFile> {
-        self.local_files.iter().find(|f| f.id == file_id)
-    }
+    /// Flush a file to disk if it has a `source_path` (PersistentRw).
+    /// BrowserRw and PersistentRo files are no-ops as they have source_path None
+    fn flush_file(&self, file_id: &str) -> Result<(), LabelStoreError> {
+        let file = self
+            .find_file_by_id(file_id)
+            .ok_or_else(|| LabelStoreError::FileNotFound(file_id.to_string()))?;
 
-    /// Flush a local file to disk if persistence is enabled.
-    fn flush_local_file(&self, file_id: &str) -> Result<(), LabelStoreError> {
-        let Some(dir) = &self.label_dir else {
+        let Some(path) = &file.source_path else {
             return Ok(());
         };
-        let file = self
-            .find_local_file_by_id(file_id)
-            .ok_or_else(|| LabelStoreError::LocalFileNotFound(file_id.to_string()))?;
+
         let content = export_map_to_jsonl(&file.labels);
-        let path = dir.join(format!("{}.jsonl", file.name));
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(CoreError::Io)?;
         }
-        std::fs::write(&path, content).map_err(CoreError::Io)?;
+        std::fs::write(path, content).map_err(CoreError::Io)?;
         Ok(())
-    }
-
-    /// Remove a local file from disk if persistence is enabled.
-    fn remove_local_file_on_disk(&self, name: &str) {
-        if let Some(dir) = &self.label_dir {
-            let path = dir.join(format!("{name}.jsonl"));
-            let _ = std::fs::remove_file(path);
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::labels::jsonl::normalize_label_file_id;
 
     #[test]
-    fn normalize_file_id() {
-        assert_eq!(normalize_label_file_id("My Wallet"), "my-wallet");
-        assert_eq!(normalize_label_file_id("wallet.jsonl"), "wallet-jsonl");
+    fn normalize_file_id_minimal() {
+        // The new normalization only strips .jsonl and normalizes backslashes.
+        assert_eq!(normalize_label_file_id("My Wallet"), "My Wallet");
+        assert_eq!(normalize_label_file_id("wallet.jsonl"), "wallet");
         assert_eq!(
             normalize_label_file_id("Exchanges/Binance Hot"),
-            "exchanges/binance-hot"
+            "Exchanges/Binance Hot"
+        );
+        assert_eq!(
+            normalize_label_file_id("path\\to\\file.jsonl"),
+            "path/to/file"
         );
     }
 
     #[test]
-    fn local_file_lifecycle_and_export() {
+    fn browser_file_lifecycle_and_export() {
         let mut store = LabelStore::new();
         let created = store
-            .create_local_file("wallet-a")
-            .expect("create local file should succeed");
+            .create_browser_file("wallet-a")
+            .expect("create browser file should succeed");
         assert_eq!(created, "wallet-a");
 
         store
-            .set_local_label(
+            .set_label(
                 "wallet-a",
                 Bip329Type::Tx,
                 "txid1".to_string(),
                 "Label 1".to_string(),
             )
-            .expect("set local label should succeed");
+            .expect("set label should succeed");
 
         let exported = store
-            .export_local_file("wallet-a")
+            .export_file("wallet-a")
             .expect("export should succeed");
         assert!(exported.contains("\"label\":\"Label 1\""));
 
         store
-            .remove_local_file("wallet-a")
-            .expect("delete local file should succeed");
+            .remove_browser_file("wallet-a")
+            .expect("delete browser file should succeed");
         assert!(
             store
                 .list_files()
                 .into_iter()
-                .filter(|f| f.kind == LabelFileKind::Local)
+                .filter(|f| f.kind == LabelFileKind::BrowserRw)
                 .count()
                 == 0
         );
     }
 
     #[test]
-    fn get_all_labels_preserves_local_then_pack_precedence() {
+    fn three_way_resolution_order() {
         let mut store = LabelStore::new();
+
+        // Create a BrowserRw file with a label.
         store
-            .import_local_file(
-                "wallet-a",
-                r#"{"type":"tx","ref":"txid1","label":"Local label"}"#,
+            .import_browser_file(
+                "browser-file",
+                r#"{"type":"tx","ref":"txid1","label":"Browser label"}"#,
             )
-            .expect("local import should succeed");
+            .expect("browser import should succeed");
 
-        let pack_labels =
-            parse_jsonl_records(r#"{"type":"tx","ref":"txid1","label":"Pack label"}"#)
-                .expect("pack parse should succeed");
+        // Inject a PersistentRw file directly (simulating disk load).
+        let rw_labels =
+            parse_jsonl_records(r#"{"type":"tx","ref":"txid1","label":"PersistentRw label"}"#)
+                .expect("rw parse should succeed");
+        store.persistent_rw_files.push(LabelFile {
+            id: "rw-file".into(),
+            name: "rw-file".into(),
+            kind: LabelFileKind::PersistentRw,
+            editable: true,
+            source_path: None,
+            labels: rw_labels,
+        });
 
-        store.pack_files.push(LabelFile {
-            id: "pack:default".into(),
-            name: "default".into(),
-            kind: LabelFileKind::Pack,
+        // Inject a PersistentRo file directly.
+        let ro_labels =
+            parse_jsonl_records(r#"{"type":"tx","ref":"txid1","label":"PersistentRo label"}"#)
+                .expect("ro parse should succeed");
+        store.persistent_ro_files.push(LabelFile {
+            id: "ro-file".into(),
+            name: "ro-file".into(),
+            kind: LabelFileKind::PersistentRo,
             editable: false,
-            labels: pack_labels,
+            source_path: None,
+            labels: ro_labels,
         });
 
         let labels = store.get_all_labels_for(Bip329Type::Tx, "txid1");
-        assert_eq!(labels.len(), 2);
-        assert_eq!(labels[0].0.kind, LabelFileKind::Local);
-        assert_eq!(labels[1].0.kind, LabelFileKind::Pack);
+        assert_eq!(labels.len(), 3);
+        assert_eq!(labels[0].0.kind, LabelFileKind::PersistentRw);
+        assert_eq!(labels[1].0.kind, LabelFileKind::BrowserRw);
+        assert_eq!(labels[2].0.kind, LabelFileKind::PersistentRo);
     }
 
     #[test]
     fn typed_lookup_ignores_other_label_types() {
         let mut store = LabelStore::new();
-        let file_id = store.create_local_file("wallet").expect("create file");
+        let file_id = store.create_browser_file("wallet").expect("create file");
 
         store
-            .set_local_label(
+            .set_label(
                 &file_id,
                 Bip329Type::Tx,
                 "abc".to_string(),
@@ -414,7 +447,7 @@ mod tests {
             )
             .expect("set tx label");
         store
-            .set_local_label(
+            .set_label(
                 &file_id,
                 Bip329Type::Addr,
                 "abc".to_string(),
@@ -431,13 +464,55 @@ mod tests {
         assert_eq!(addr_labels[0].1.label, "addr label");
     }
 
+    #[test]
+    fn set_label_on_persistent_ro_returns_error() {
+        let mut store = LabelStore::new();
+
+        let ro_labels =
+            parse_jsonl_records(r#"{"type":"tx","ref":"txid1","label":"Read-only label"}"#)
+                .expect("ro parse should succeed");
+        store.persistent_ro_files.push(LabelFile {
+            id: "ro-file".into(),
+            name: "ro-file".into(),
+            kind: LabelFileKind::PersistentRo,
+            editable: false,
+            source_path: None,
+            labels: ro_labels,
+        });
+
+        let result = store.set_label(
+            "ro-file",
+            Bip329Type::Tx,
+            "txid1".to_string(),
+            "new label".to_string(),
+        );
+        assert!(matches!(result, Err(LabelStoreError::ReadOnlyFile(_))));
+    }
+
+    #[test]
+    fn remove_persistent_rw_file_returns_not_browser_file() {
+        let mut store = LabelStore::new();
+
+        store.persistent_rw_files.push(LabelFile {
+            id: "rw-file".into(),
+            name: "rw-file".into(),
+            kind: LabelFileKind::PersistentRw,
+            editable: true,
+            source_path: None,
+            labels: HashMap::new(),
+        });
+
+        let result = store.remove_browser_file("rw-file");
+        assert!(matches!(result, Err(LabelStoreError::NotBrowserFile(_))));
+    }
+
     // -- error cases ----------------------------------------------------------
 
     #[test]
     fn create_file_with_empty_name_fails() {
         let mut store = LabelStore::new();
         assert!(matches!(
-            store.create_local_file(""),
+            store.create_browser_file(""),
             Err(LabelStoreError::EmptyFileName)
         ));
     }
@@ -445,19 +520,19 @@ mod tests {
     #[test]
     fn create_duplicate_file_fails() {
         let mut store = LabelStore::new();
-        store.create_local_file("wallet").expect("first create");
+        store.create_browser_file("wallet").expect("first create");
         assert!(matches!(
-            store.create_local_file("wallet"),
-            Err(LabelStoreError::DuplicateLocalFile(_))
+            store.create_browser_file("wallet"),
+            Err(LabelStoreError::DuplicateFileId(_))
         ));
     }
 
     #[test]
     fn set_label_with_empty_ref_fails() {
         let mut store = LabelStore::new();
-        store.create_local_file("wallet").expect("create");
+        store.create_browser_file("wallet").expect("create");
         assert!(matches!(
-            store.set_local_label(
+            store.set_label(
                 "wallet",
                 Bip329Type::Tx,
                 "  ".to_string(),
@@ -470,9 +545,9 @@ mod tests {
     #[test]
     fn set_label_with_empty_label_fails() {
         let mut store = LabelStore::new();
-        store.create_local_file("wallet").expect("create");
+        store.create_browser_file("wallet").expect("create");
         assert!(matches!(
-            store.set_local_label(
+            store.set_label(
                 "wallet",
                 Bip329Type::Tx,
                 "txid1".to_string(),
@@ -486,8 +561,8 @@ mod tests {
     fn remove_nonexistent_file_fails() {
         let mut store = LabelStore::new();
         assert!(matches!(
-            store.remove_local_file("no-such-file"),
-            Err(LabelStoreError::LocalFileNotFound(_))
+            store.remove_browser_file("no-such-file"),
+            Err(LabelStoreError::FileNotFound(_))
         ));
     }
 
@@ -495,8 +570,8 @@ mod tests {
     fn export_nonexistent_file_fails() {
         let store = LabelStore::new();
         assert!(matches!(
-            store.export_local_file("no-such-file"),
-            Err(LabelStoreError::LocalFileNotFound(_))
+            store.export_file("no-such-file"),
+            Err(LabelStoreError::FileNotFound(_))
         ));
     }
 }

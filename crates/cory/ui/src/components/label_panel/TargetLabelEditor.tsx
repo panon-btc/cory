@@ -132,7 +132,7 @@ interface TargetLabelEditorProps {
   labelType: Bip329Type;
   refId: string;
   labels: LabelEntry[];
-  localFiles: LabelFileSummary[];
+  editableFiles: LabelFileSummary[];
   onSaveLabel: (
     fileId: string,
     labelType: Bip329Type,
@@ -151,7 +151,7 @@ export default function TargetLabelEditor({
   labelType,
   refId,
   labels,
-  localFiles,
+  editableFiles,
   onSaveLabel,
   onDeleteLabel,
   disabled = false,
@@ -173,8 +173,8 @@ export default function TargetLabelEditor({
   );
 
   const addableFiles = useMemo(
-    () => localFiles.filter((file) => !editableFileIds.has(file.id)),
-    [localFiles, editableFileIds],
+    () => editableFiles.filter((file) => !editableFileIds.has(file.id)),
+    [editableFiles, editableFileIds],
   );
 
   // Reset the "add new label" form when the target changes.
@@ -281,18 +281,18 @@ export default function TargetLabelEditor({
               >
                 +
               </button>
-            ) : localFiles.length === 0 ? (
+            ) : editableFiles.length === 0 ? (
               <div style={{ color: "var(--text-muted)", fontSize: 10 }}>
                 Create or import a label file first.
               </div>
             ) : (
               <div style={{ color: "var(--text-muted)", fontSize: 10 }}>
-                Local labels already exist for all files.
+                Labels already exist for all editable files.
               </div>
             )
           ) : addableFiles.length === 0 ? (
             <div style={{ color: "var(--text-muted)", fontSize: 10 }}>
-              No additional local files available.
+              No additional editable files available.
             </div>
           ) : (
             <div style={{ display: "flex", gap: 4 }}>
@@ -342,7 +342,7 @@ export default function TargetLabelEditor({
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
               {readonlyEntries.map((entry) => (
                 <div key={`${entry.file_id}:${entry.label}`} style={{ fontSize: 10 }}>
-                  <span style={{ color: "var(--text-muted)" }}>[{entry.file_name}] </span>
+                  <span style={{ color: "var(--text-muted)" }}>{entry.file_name}: </span>
                   <span style={{ color: "var(--text)" }}>{entry.label}</span>
                 </div>
               ))}

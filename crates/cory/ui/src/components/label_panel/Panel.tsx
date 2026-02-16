@@ -12,8 +12,9 @@ export default function LabelPanel({ width }: LabelPanelProps) {
 
   const [panelError, setPanelError] = useState<string | null>(null);
 
-  const localFiles = labelFiles.filter((file) => file.kind === "local");
-  const packFiles = labelFiles.filter((file) => file.kind === "pack");
+  const persistentRwFiles = labelFiles.filter((file) => file.kind === "persistent_rw");
+  const persistentRoFiles = labelFiles.filter((file) => file.kind === "persistent_ro");
+  const browserFiles = labelFiles.filter((file) => file.kind === "browser_rw");
   const sectionStyle: CSSProperties = {
     border: "1px solid var(--border)",
     borderRadius: 4,
@@ -42,12 +43,37 @@ export default function LabelPanel({ width }: LabelPanelProps) {
         gap: 8,
       }}
     >
-      <details open style={sectionStyle}>
-        <summary style={summaryStyle}>Pack Labels</summary>
-        <div style={{ marginTop: 8 }}>
-          {packFiles.length > 0 ? (
+      {persistentRwFiles.length > 0 && (
+        <details open style={sectionStyle}>
+          <summary style={summaryStyle}>Persistent Labels</summary>
+          <div style={{ marginTop: 8 }}>
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {packFiles.map((file) => (
+              {persistentRwFiles.map((file) => (
+                <li
+                  key={file.id}
+                  style={{
+                    padding: "6px 0",
+                    borderBottom: "1px solid var(--border)",
+                    fontSize: 12,
+                  }}
+                >
+                  <div style={{ color: "var(--text)" }}>{file.name}</div>
+                  <div style={{ color: "var(--text-muted)", fontSize: 10 }}>
+                    {file.record_count} labels
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </details>
+      )}
+
+      <details open style={sectionStyle}>
+        <summary style={summaryStyle}>Server Labels</summary>
+        <div style={{ marginTop: 8 }}>
+          {persistentRoFiles.length > 0 ? (
+            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+              {persistentRoFiles.map((file) => (
                 <li
                   key={file.id}
                   style={{
@@ -64,13 +90,13 @@ export default function LabelPanel({ width }: LabelPanelProps) {
               ))}
             </ul>
           ) : (
-            <p style={{ color: "var(--text-muted)", fontSize: 11 }}>No pack label files loaded.</p>
+            <p style={{ color: "var(--text-muted)", fontSize: 11 }}>No label packs loaded.</p>
           )}
         </div>
       </details>
 
       <CrudManager
-        localFiles={localFiles}
+        browserFiles={browserFiles}
         sectionStyle={sectionStyle}
         summaryStyle={summaryStyle}
         setPanelError={setPanelError}

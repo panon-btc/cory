@@ -28,7 +28,7 @@ def test_graph_renders_after_search(r: E2ERunner) -> None:
 
 def test_empty_label_state(r: E2ERunner) -> None:
     label_files = r.label_files_section()
-    expect(label_files.get_by_text("No local label files loaded.")).to_be_visible(timeout=5000)
+    expect(label_files.get_by_text("No browser label files loaded.")).to_be_visible(timeout=5000)
 
     selected_editor = r.selected_editor_section()
     expect(
@@ -116,7 +116,7 @@ def test_node_add_label_autosave(r: E2ERunner) -> None:
 
     label_input = tx_card.get_by_placeholder("Label").first
     label_input.fill("my-e2e-label")
-    tx_message = tx_card.get_by_text("Local labels already exist for all files.")
+    tx_message = tx_card.get_by_text("Labels already exist for all editable files.")
 
     # New-label autosave resolves by closing the add form or exhausting files.
     r.wait_until(
@@ -180,7 +180,7 @@ def test_node_delete_label(r: E2ERunner) -> None:
 
 def test_all_files_labeled_message(r: E2ERunner) -> None:
     tx_card = r.selected_tx_card()
-    message = tx_card.get_by_text("Local labels already exist for all files.")
+    message = tx_card.get_by_text("Labels already exist for all editable files.")
 
     for attempt in range(30):
         if r.is_visible(message):
@@ -188,7 +188,7 @@ def test_all_files_labeled_message(r: E2ERunner) -> None:
 
         add_btn = tx_card.get_by_title("Add label")
         label_input = tx_card.get_by_placeholder("Label")
-        no_more = tx_card.get_by_text("No additional local files available.")
+        no_more = tx_card.get_by_text("No additional editable files available.")
 
         if r.is_visible(label_input):
             label_input.first.fill(f"cover-file-{attempt}")
@@ -216,7 +216,7 @@ def test_all_files_labeled_message(r: E2ERunner) -> None:
 
 def test_tx_card_exhausted_hides_add_controls(r: E2ERunner) -> None:
     tx_card = r.selected_tx_card()
-    expect(tx_card.get_by_text("Local labels already exist for all files.")).to_be_visible(timeout=5000)
+    expect(tx_card.get_by_text("Labels already exist for all editable files.")).to_be_visible(timeout=5000)
     assert tx_card.get_by_title("Add label").count() == 0, "Add label button should be hidden"
     assert tx_card.get_by_placeholder("Label").count() == 0, "Add-label input should not be visible"
 
