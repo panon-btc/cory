@@ -5,7 +5,7 @@
 <p align="center">Local-first Bitcoin transaction ancestry explorer and BIP-329 label editor.</p>
 
 <p align="center">
-  <img src="screenshot.png" alt="Cory screenshot" width="610" />
+  [out_lt3mb.webm](https://github.com/user-attachments/assets/0338f1f3-111d-41ef-9769-6c4e46c9e298)
 </p>
 
 ## What This Is
