@@ -1,5 +1,6 @@
 import type { TxOutputDisplayRow } from "../../layout";
-import { shortAddress, formatSats, copyToClipboard } from "../../format";
+import { formatSats, copyToClipboard } from "../../format";
+import { MiddleEllipsisText } from "./MiddleEllipsisText";
 
 interface OutputRowProps {
   row: TxOutputDisplayRow;
@@ -36,6 +37,8 @@ export function OutputRow({ row, txid, refCallback }: OutputRowProps) {
         display: "flex",
         gap: 6,
         alignItems: "flex-start",
+        width: "100%",
+        minWidth: 0,
         minHeight: row.rowHeight,
       }}
     >
@@ -65,17 +68,12 @@ export function OutputRow({ row, txid, refCallback }: OutputRowProps) {
         style={{
           display: "flex",
           flexDirection: "column",
+          flex: 1,
           minWidth: 0,
         }}
       >
-        <span
-          style={{
-            color: row.connected ? "var(--text)" : "var(--text-muted)",
-            fontWeight: row.connected ? 600 : 400,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
+        <MiddleEllipsisText
+          text={row.address ?? row.scriptType}
           title={
             row.address
               ? `${row.address} (${row.connected ? "connected" : "not connected"})`
@@ -83,9 +81,11 @@ export function OutputRow({ row, txid, refCallback }: OutputRowProps) {
                 ? "Connected in visible graph"
                 : "Not connected in visible graph"
           }
-        >
-          {row.address ? shortAddress(row.address) : row.scriptType}
-        </span>
+          style={{
+            color: row.connected ? "var(--text)" : "var(--text-muted)",
+            fontWeight: row.connected ? 600 : 400,
+          }}
+        />
         <span
           style={{
             color: "var(--text-muted)",

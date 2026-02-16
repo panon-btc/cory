@@ -1,5 +1,6 @@
 import type { TxInputView } from "../../layout";
-import { shortOutpoint, shortAddress, copyToClipboard } from "../../format";
+import { copyToClipboard } from "../../format";
+import { MiddleEllipsisText } from "./MiddleEllipsisText";
 
 interface InputRowProps {
   row: TxInputView;
@@ -15,10 +16,12 @@ export function InputRow({ row, txid, refCallback }: InputRowProps) {
         display: "flex",
         flexDirection: "column",
         alignItems: "flex-start",
+        width: "100%",
+        minWidth: 0,
         minHeight: row.rowHeight,
       }}
     >
-      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", minWidth: 0, width: "100%" }}>
         <button
           type="button"
           className="nodrag nopan"
@@ -41,15 +44,15 @@ export function InputRow({ row, txid, refCallback }: InputRowProps) {
         >
           #{row.index}
         </button>
-        <span
+        <MiddleEllipsisText
+          text={row.address ?? row.prevout ?? "coinbase"}
+          title={row.address ?? row.prevout ?? "coinbase"}
           style={{
+            flex: 1,
+            minWidth: 0,
             color: "var(--text)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
           }}
-        >
-          {row.address ? shortAddress(row.address) : shortOutpoint(row.prevout)}
-        </span>
+        />
       </div>
       {row.labelLines.map((label, idx) => (
         <div

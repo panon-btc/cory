@@ -2,8 +2,8 @@
 // Layout & Node Sizing Constants
 // ==============================================================================
 
-// Fixed width for all transaction nodes in the graph.
-export const NODE_WIDTH = 360;
+// Base width for transaction nodes in the graph.
+export const NODE_MIN_WIDTH = 360;
 
 // Minimum height a node can shrink to, even with few inputs/outputs.
 export const NODE_MIN_HEIGHT = 140;
@@ -24,12 +24,18 @@ export const IO_START_TOP = 78;
 // Vertical gap between consecutive I/O rows in the CSS grid.
 export const IO_ROW_GAP = 2;
 
+// Minimum horizontal separation between input and output columns.
+export const IO_COLUMNS_MIN_GUTTER = 16;
+
 // ==============================================================================
 // Sidebar Resize Constraints
 // ==============================================================================
 
 // Minimum sidebar width to keep label editors usable.
 export const SIDEBAR_MIN_WIDTH = 320;
+
+// Dragging narrower than this intent threshold collapses the sidebar.
+export const SIDEBAR_COLLAPSE_WIDTH = 250;
 
 // Maximum sidebar width so the graph panel remains visible.
 export const SIDEBAR_MAX_WIDTH = 960;
