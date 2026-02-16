@@ -1,9 +1,11 @@
 mod auth;
 mod error;
 mod graph;
+mod history;
 mod labels;
 mod static_files;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::extract::DefaultBodyLimit;
@@ -29,6 +31,7 @@ pub struct AppState {
     pub default_limits: GraphLimits,
     pub rpc_concurrency: usize,
     pub network: bitcoin::Network,
+    pub history: Arc<RwLock<HashMap<String, String>>>,
 }
 
 type SharedState = Arc<AppState>;
@@ -88,6 +91,7 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
 
     let protected_api = Router::new()
         .route("/api/v1/graph/tx/{txid}", get(graph::get_graph))
+        .route("/api/v1/history", get(history::get_history))
         .route("/api/v1/labels.zip", get(labels::zip_browser_labels))
         .merge(label_routes);
 

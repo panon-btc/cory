@@ -75,3 +75,12 @@ export interface LabelFileSummary {
   editable: boolean;
   record_count: number;
 }
+
+export interface HistoryEntry {
+  txid: string;
+  searched_at: string;
+}
+
+export interface HistoryResponse {
+  entries: HistoryEntry[];
+}

@@ -198,6 +198,7 @@ Clap derive struct. Notable options:
 |--------|------|------|-------------|
 | GET | `/api/v1/health` | No | `{"status": "ok"}` |
 | GET | `/api/v1/graph/tx/{txid}` | Yes | Build ancestry graph |
+| GET | `/api/v1/history` | Yes | List searched txids since server start (deduplicated by txid) |
 | GET | `/api/v1/label` | Yes | List local + pack label files |
 | POST | `/api/v1/label` | Yes | Create file or import JSONL |
 | POST | `/api/v1/label/{file_id}` | Yes | Upsert label or replace file content |
@@ -261,6 +262,7 @@ ui/src/
 - Delete one label entry from a local file (DELETE entry endpoint)
 - Export per-file BIP-329 JSONL
 - Export all browser label files as a single ZIP download
+- Right sidebar history panel backed by `/api/v1/history`
 - Drag nodes, zoom, pan, minimap, fit-to-view controls, and resize the right sidebar
 
 **Build integration:**

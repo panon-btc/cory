@@ -75,6 +75,34 @@ async fn regtest_server_endpoints_cover_api_surface() {
     // =========================================================================
 
     let graph_url = format!("{base_url}/api/v1/graph/tx/{valid_txid}");
+    let history_url = format!("{base_url}/api/v1/history");
+
+    let history_no_auth = unauthed_client
+        .get(&history_url)
+        .send()
+        .await
+        .expect("history request without auth should return response");
+    assert_eq!(history_no_auth.status(), StatusCode::UNAUTHORIZED);
+
+    let history_before_graph = client
+        .get(&history_url)
+        .header("X-API-Token", &api_token)
+        .send()
+        .await
+        .expect("history request before graph search should return response");
+    assert_eq!(history_before_graph.status(), StatusCode::OK);
+    let history_before_graph_json: Value = history_before_graph
+        .json()
+        .await
+        .expect("history response before graph search must be JSON");
+    assert_eq!(
+        history_before_graph_json
+            .get("entries")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0),
+        "history should be empty before any graph search"
+    );
 
     // Request without auth should fail.
     let graph_no_auth = unauthed_client
@@ -113,6 +141,84 @@ async fn regtest_server_endpoints_cover_api_surface() {
             "graph response must include top-level field `{key}`"
         );
     }
+
+    let history_after_graph = client
+        .get(&history_url)
+        .header("X-API-Token", &api_token)
+        .send()
+        .await
+        .expect("history request after first graph search should return response");
+    assert_eq!(history_after_graph.status(), StatusCode::OK);
+    let history_after_graph_json: Value = history_after_graph
+        .json()
+        .await
+        .expect("history response after first graph search must be JSON");
+    let history_after_graph_entries = history_after_graph_json
+        .get("entries")
+        .and_then(Value::as_array)
+        .expect("history entries should be an array after first search");
+    assert_eq!(
+        history_after_graph_entries.len(),
+        1,
+        "history should contain one txid after first search"
+    );
+    assert_eq!(
+        history_after_graph_entries[0]
+            .get("txid")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        valid_txid,
+        "history entry should record searched txid"
+    );
+    let first_search_timestamp = history_after_graph_entries[0]
+        .get("searched_at")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        first_search_timestamp.contains('T') && first_search_timestamp.ends_with('Z'),
+        "history timestamp should be RFC3339 UTC-like, got: {first_search_timestamp}"
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+
+    let repeated_graph_resp = client
+        .get(&graph_url)
+        .header("X-API-Token", &api_token)
+        .send()
+        .await
+        .expect("repeated graph request must succeed");
+    assert_eq!(repeated_graph_resp.status(), StatusCode::OK);
+
+    let history_after_repeat = client
+        .get(&history_url)
+        .header("X-API-Token", &api_token)
+        .send()
+        .await
+        .expect("history request after repeated graph search should return response");
+    assert_eq!(history_after_repeat.status(), StatusCode::OK);
+    let history_after_repeat_json: Value = history_after_repeat
+        .json()
+        .await
+        .expect("history response after repeated graph search must be JSON");
+    let history_after_repeat_entries = history_after_repeat_json
+        .get("entries")
+        .and_then(Value::as_array)
+        .expect("history entries should be an array after repeated search");
+    assert_eq!(
+        history_after_repeat_entries.len(),
+        1,
+        "history should deduplicate repeated txid searches"
+    );
+    let repeated_search_timestamp = history_after_repeat_entries[0]
+        .get("searched_at")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    assert_ne!(
+        repeated_search_timestamp, first_search_timestamp,
+        "repeated search should update existing txid timestamp"
+    );
 
     // Invalid txid returns client error.
     let invalid_graph_url = format!("{base_url}/api/v1/graph/tx/not-a-txid");

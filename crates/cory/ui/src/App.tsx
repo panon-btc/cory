@@ -36,6 +36,7 @@ export default function App() {
     }
 
     void useAppStore.getState().refreshLabelFiles();
+    void useAppStore.getState().refreshHistory();
 
     if (initialSearch) {
       void useAppStore.getState().doSearch(initialSearch);

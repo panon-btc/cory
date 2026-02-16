@@ -4,6 +4,8 @@ use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 
 use cory_core::enrich;
 use cory_core::labels::{Bip329Record, Bip329Type, LabelFile, LabelFileKind, LabelStore};
@@ -114,6 +116,17 @@ pub(super) async fn get_graph(
     )
     .await
     .map_err(|e| AppError::Internal(format!("build ancestry graph for {txid}: {e}")))?;
+
+    // Record successful ancestry searches for the server-lifetime history panel.
+    // Repeated txids overwrite their timestamp instead of creating duplicates.
+    let searched_at = OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .map_err(|e| AppError::Internal(format!("format search timestamp: {e}")))?;
+    state
+        .history
+        .write()
+        .await
+        .insert(txid.to_string(), searched_at);
 
     let label_store = state.labels.read().await;
     let enrichments = build_graph_enrichments(&graph, &label_store, state.network);

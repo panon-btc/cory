@@ -10,6 +10,7 @@ import type { Edge } from "@xyflow/react";
 import type {
   Bip329Type,
   GraphResponse,
+  HistoryEntry,
   LabelEntry,
   LabelFileSummary,
   LabelsByType,
@@ -18,6 +19,7 @@ import {
   deleteLabelInFile,
   errorMessage,
   fetchGraph,
+  fetchHistory,
   fetchLabelFiles,
   isAuthError,
   setApiToken as setApiTokenInModule,
@@ -97,6 +99,7 @@ interface AppState {
 
   // Labels
   labelFiles: LabelFileSummary[];
+  historyEntries: HistoryEntry[];
 
   // API token (persisted to localStorage + URL)
   apiToken: string;
@@ -121,6 +124,7 @@ interface AppState {
   handleAuthError: (err: unknown) => boolean;
   setApiToken: (token: string) => void;
   refreshLabelFiles: () => Promise<LabelFileSummary[]>;
+  refreshHistory: () => Promise<HistoryEntry[]>;
   saveLabel: (fileId: string, labelType: Bip329Type, refId: string, label: string) => Promise<void>;
   deleteLabel: (fileId: string, labelType: Bip329Type, refId: string) => Promise<void>;
   labelsChanged: (opts?: { refreshGraph?: boolean }) => Promise<void>;
@@ -140,6 +144,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   authError: null,
   hasUserMovedNodes: false,
   labelFiles: [],
+  historyEntries: [],
   apiToken: "",
   searchParamTxid: "",
   searchFocusRequestId: 0,
@@ -186,6 +191,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  refreshHistory: async () => {
+    try {
+      const { entries } = await fetchHistory();
+      set({ historyEntries: entries, authError: null });
+      return entries;
+    } catch (e) {
+      get().handleAuthError(e);
+      // Keep current list if history request fails.
+      return get().historyEntries;
+    }
+  },
+
   doSearch: async (txid, opts) => {
     // Abort any in-flight search request so we don't apply stale results.
     searchAbortController?.abort();
@@ -226,6 +243,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         authError: null,
         hasUserMovedNodes: false,
       });
+
+      // History refresh is best-effort and should not break graph rendering.
+      await get().refreshHistory();
     } catch (e) {
       // Aborted requests are not errors — just ignore them.
       if ((e as Error).name === "AbortError") return;
