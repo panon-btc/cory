@@ -10,7 +10,8 @@ import {
   useReactFlow,
   useNodesInitialized,
 } from "@xyflow/react";
-import type { NodeChange, EdgeChange } from "@xyflow/react";
+import type { NodeChange, EdgeChange, NodeProps } from "@xyflow/react";
+import toast from "react-hot-toast";
 import TxNode from "./txnode/Node";
 import { useAppStore } from "../store";
 import type { TxFlowNode } from "../layout";
@@ -38,7 +39,16 @@ export default function GraphPanel() {
   const lastCenteredFocusRequestIdRef = useRef(0);
   const nodesInitialized = useNodesInitialized();
 
-  const nodeTypes = useMemo(() => ({ tx: TxNode }), []);
+  const handleCopied = useCallback((value: string) => {
+    toast(`Copied ${value} to clipboard`, { id: "clipboard-copy-toast" });
+  }, []);
+
+  const nodeTypes = useMemo(
+    () => ({
+      tx: (props: NodeProps<TxFlowNode>) => <TxNode {...props} onCopied={handleCopied} />,
+    }),
+    [handleCopied],
+  );
 
   const onNodesChange = useCallback(
     (changes: NodeChange<TxFlowNode>[]) => {

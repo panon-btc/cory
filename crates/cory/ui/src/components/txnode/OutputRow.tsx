@@ -6,11 +6,12 @@ interface OutputRowProps {
   row: TxOutputDisplayRow;
   txid: string;
   refCallback: (index: number, el: HTMLDivElement | null) => void;
+  onCopied: (value: string) => void;
 }
 
 // Renders a single output row (address + value + labels) or a gap
 // placeholder ("... N hidden ...") for collapsed output ranges.
-export function OutputRow({ row, txid, refCallback }: OutputRowProps) {
+export function OutputRow({ row, txid, refCallback, onCopied }: OutputRowProps) {
   if (row.kind === "gap") {
     return (
       <div
@@ -30,6 +31,8 @@ export function OutputRow({ row, txid, refCallback }: OutputRowProps) {
     );
   }
 
+  const copyValue = row.address ?? `${txid}:${row.index}`;
+
   return (
     <div
       ref={(el) => refCallback(row.index, el)}
@@ -45,7 +48,13 @@ export function OutputRow({ row, txid, refCallback }: OutputRowProps) {
       <button
         type="button"
         className="nodrag nopan"
-        onClick={() => copyToClipboard(row.address ?? `${txid}:${row.index}`)}
+        onClick={() => {
+          void copyToClipboard(copyValue).then((copied) => {
+            if (copied) {
+              onCopied(copyValue);
+            }
+          });
+        }}
         title={
           row.address
             ? `Copy output address: ${row.address}`

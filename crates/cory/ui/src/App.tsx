@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
+import { Toaster } from "react-hot-toast";
 import { useAppStore, relayoutIfHeightsChanged } from "./store";
 import { setApiToken } from "./api";
 import { useSidebarResize } from "./hooks/useSidebarResize";
@@ -104,6 +105,20 @@ export default function App() {
           )}
         </div>
       </div>
+      <Toaster
+        position="bottom-center"
+        toastOptions={{
+          duration: 2000,
+          style: {
+            background: "#000",
+            color: "#fff",
+            fontFamily: "var(--mono)",
+            fontSize: "11px",
+            borderRadius: "6px",
+            maxWidth: "min(calc(100vw - 24px), 720px)",
+          },
+        }}
+      />
     </ReactFlowProvider>
   );
 }
