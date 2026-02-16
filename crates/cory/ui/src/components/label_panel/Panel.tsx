@@ -27,6 +27,28 @@ export default function LabelPanel({ width }: LabelPanelProps) {
     fontWeight: 600,
     fontSize: 12,
   };
+  const serverListStyle: CSSProperties = {
+    listStyle: "none",
+    padding: 0,
+    margin: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  };
+
+  const renderServerFileItem = (file: (typeof labelFiles)[number]) => (
+    <li
+      key={file.id}
+      style={{
+        fontSize: 12,
+      }}
+    >
+      <div style={{ color: "var(--text)" }}>
+        {file.name}{" "}
+        <span style={{ color: "var(--text-muted)", fontSize: 10 }}>({file.record_count})</span>
+      </div>
+    </li>
+  );
 
   return (
     <div
@@ -43,54 +65,40 @@ export default function LabelPanel({ width }: LabelPanelProps) {
         gap: 8,
       }}
     >
-      {persistentRwFiles.length > 0 && (
-        <details open style={sectionStyle}>
-          <summary style={summaryStyle}>Persistent Labels</summary>
-          <div style={{ marginTop: 8 }}>
-            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {persistentRwFiles.map((file) => (
-                <li
-                  key={file.id}
-                  style={{
-                    padding: "6px 0",
-                    borderBottom: "1px solid var(--border)",
-                    fontSize: 12,
-                  }}
-                >
-                  <div style={{ color: "var(--text)" }}>{file.name}</div>
-                  <div style={{ color: "var(--text-muted)", fontSize: 10 }}>
-                    {file.record_count} labels
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </details>
-      )}
-
       <details open style={sectionStyle}>
         <summary style={summaryStyle}>Server Labels</summary>
-        <div style={{ marginTop: 8 }}>
-          {persistentRoFiles.length > 0 ? (
-            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {persistentRoFiles.map((file) => (
-                <li
-                  key={file.id}
-                  style={{
-                    padding: "6px 0",
-                    borderBottom: "1px solid var(--border)",
-                    fontSize: 12,
-                  }}
-                >
-                  <div style={{ color: "var(--text)" }}>{file.name}</div>
-                  <div style={{ color: "var(--text-muted)", fontSize: 10 }}>
-                    {file.record_count} labels
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p style={{ color: "var(--text-muted)", fontSize: 11 }}>No label packs loaded.</p>
+        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div>
+            <div style={{ color: "var(--accent)", fontSize: 11, marginBottom: 4 }}>
+              Read Only Labels
+            </div>
+            {persistentRoFiles.length > 0 ? (
+              <ul style={serverListStyle}>{persistentRoFiles.map(renderServerFileItem)}</ul>
+            ) : (
+              <div style={{ color: "var(--text-muted)", fontSize: 11 }}>
+                Load read only labels on CLI via --labels-ro
+              </div>
+            )}
+          </div>
+
+          <div style={{ borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+            <div style={{ color: "var(--accent)", fontSize: 11, marginBottom: 4 }}>
+              Read Write Labels
+            </div>
+            {persistentRwFiles.length > 0 ? (
+              <ul style={serverListStyle}>{persistentRwFiles.map(renderServerFileItem)}</ul>
+            ) : (
+              <div style={{ color: "var(--text-muted)", fontSize: 11 }}>
+                Load read only labels on CLI via --labels-rw
+              </div>
+            )}
+          </div>
+
+          {persistentRoFiles.length === 0 && persistentRwFiles.length === 0 && (
+            <p style={{ color: "var(--text-muted)", fontSize: 11 }}>
+              No server labels loaded. Start cory with <code>--labels-ro</code> and/or{" "}
+              <code>--labels-rw</code>.
+            </p>
           )}
         </div>
       </details>

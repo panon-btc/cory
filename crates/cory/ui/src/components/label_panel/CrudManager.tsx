@@ -191,8 +191,8 @@ export function CrudManager({
             fontWeight: 700,
           }}
         >
-          All label files are stored in memory, if you forget to export before closing the server,
-          changes will be lost.
+          Browser label files are stored in memory, if you forget to export before closing the
+          server, changes will be lost.
         </div>
 
         <div style={{ display: "flex", gap: 6 }}>
@@ -247,9 +247,11 @@ export function CrudManager({
                   }}
                 >
                   <div>
-                    <div style={{ color: "var(--text)" }}>{file.name}</div>
-                    <div style={{ color: "var(--text-muted)", fontSize: 10 }}>
-                      {file.record_count} labels
+                    <div style={{ color: "var(--text)" }}>
+                      {file.name}{" "}
+                      <span style={{ color: "var(--text-muted)", fontSize: 10 }}>
+                        ({file.record_count})
+                      </span>
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 4 }}>

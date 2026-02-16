@@ -43,8 +43,8 @@ export default function SelectedTxEditor() {
         }}
       >
         Address labels apply to a single address and are shared wherever that same address appears
-        in the graph. They are stored separately from input/output labels — avoid duplicating
-        information between the two.
+        in the graph. They are stored separately from input/output labels: avoid duplicating
+        information between the two!
       </div>
 
       <TargetLabelEditor
@@ -89,7 +89,6 @@ export default function SelectedTxEditor() {
                       Input <strong>#{inputIndex}</strong>
                     </>
                   }
-                  subtitle={inputRef}
                   labelType="input"
                   refId={inputRef}
                   labels={labelsFor(graph, "input", inputRef)}
@@ -141,7 +140,6 @@ export default function SelectedTxEditor() {
                       Output <strong>#{outputIndex}</strong>
                     </>
                   }
-                  subtitle={outputRef}
                   labelType="output"
                   refId={outputRef}
                   labels={labelsFor(graph, "output", outputRef)}

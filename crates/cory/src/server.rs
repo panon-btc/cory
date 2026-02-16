@@ -355,9 +355,7 @@ async fn create_or_import_local_label_file(
 
     let mut store = state.labels.write().await;
     let created = match req {
-        CreateOrImportLabelFileRequest::Create(request) => {
-            store.create_browser_file(&request.name)
-        }
+        CreateOrImportLabelFileRequest::Create(request) => store.create_browser_file(&request.name),
         CreateOrImportLabelFileRequest::Import(request) => {
             store.import_browser_file(&request.name, &request.content)
         }
@@ -474,9 +472,7 @@ async fn export_local_label_file(
     let file = store
         .get_file(&file_id)
         .ok_or_else(|| AppError::NotFound(format!("label file not found: {file_id}")))?;
-    let content = store
-        .export_file(&file_id)
-        .map_err(map_label_store_error)?;
+    let content = store.export_file(&file_id).map_err(map_label_store_error)?;
 
     let mut response = (StatusCode::OK, content).into_response();
     response.headers_mut().insert(

@@ -55,9 +55,9 @@ export function formatFeerate(value: number): string {
 // Label Formatting
 // ==============================================================================
 
-// Render a label entry as "file_name/label" for display in node I/O rows.
+// Render a label entry as "file_name:label" for display in node I/O rows.
 export function formatLabelEntry(entry: LabelEntry): string {
-  return `${entry.file_name}/${entry.label}`;
+  return `${entry.file_name}:${entry.label}`;
 }
 
 // ==============================================================================
