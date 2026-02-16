@@ -88,6 +88,7 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
 
     let protected_api = Router::new()
         .route("/api/v1/graph/tx/{txid}", get(graph::get_graph))
+        .route("/api/v1/labels.zip", get(labels::zip_browser_labels))
         .merge(label_routes);
 
     Router::new()

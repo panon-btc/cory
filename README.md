@@ -78,6 +78,9 @@ Import/export format: BIP-329 JSONL. Three label kinds:
 3. **Browser** — created/imported/exported in the browser UI, editable
    but ephemeral (lost when the server stops).
 
+Browser labels can be exported either per-file (`Export`) or as a
+single ZIP archive (`Export all browser labels`).
+
 Label resolution order:
 1. Persistent read-write
 2. Browser

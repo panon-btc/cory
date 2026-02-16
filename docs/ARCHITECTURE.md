@@ -203,6 +203,7 @@ Clap derive struct. Notable options:
 | DELETE | `/api/v1/label/{file_id}/entry?type=tx&ref=<txid>` | Yes | Delete one label entry from an editable file |
 | DELETE | `/api/v1/label/{file_id}` | Yes | Remove browser label file |
 | GET | `/api/v1/label/{file_id}/export` | Yes | Export any label file |
+| GET | `/api/v1/labels.zip` | Yes | Export all browser label files as a ZIP |
 | GET | `*` (fallback) | No | Serve embedded UI |
 
 Auth is via a startup API token. Cory prints a random token at launch,
@@ -258,6 +259,7 @@ ui/src/
 - Address labels are shared by address string (reused addresses map to one label target)
 - Delete one label entry from a local file (DELETE entry endpoint)
 - Export per-file BIP-329 JSONL
+- Export all browser label files as a single ZIP download
 - Drag nodes, zoom, pan, minimap, fit-to-view controls, and resize the right sidebar
 
 **Build integration:**

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 from typing import Callable
 
@@ -34,6 +35,16 @@ def test_empty_label_state(r: E2ERunner) -> None:
     expect(
         selected_editor.get_by_text("Create or import a label file first.").first
     ).to_be_visible(timeout=5000)
+
+
+def test_export_all_no_files_alert(r: E2ERunner) -> None:
+    section = r.label_files_section()
+    with r.page.expect_event("dialog", timeout=5000) as dialog_info:
+        section.get_by_role("button", name="Export all browser labels").click()
+
+    dialog = dialog_info.value
+    assert dialog.message == "No browser label files to export."
+    dialog.accept()
 
 
 # ==============================================================================
@@ -249,6 +260,30 @@ def test_export_label_file(r: E2ERunner) -> None:
     assert '"type":"tx"' in content or '"type": "tx"' in content
 
 
+def test_export_all_browser_labels_zip(r: E2ERunner) -> None:
+    section = r.label_files_section()
+    export_all_btn = section.get_by_role("button", name="Export all browser labels")
+    expect(export_all_btn).to_be_visible(timeout=5000)
+
+    with r.page.expect_download(timeout=10000) as download_info:
+        export_all_btn.click()
+
+    download = download_info.value
+    assert download.suggested_filename == "labels.zip"
+
+    tmp_path = Path("tmp") / "e2e_export_all_browser_labels.zip"
+    download.save_as(str(tmp_path))
+
+    with zipfile.ZipFile(tmp_path, "r") as archive:
+        names = set(archive.namelist())
+        assert "labels/test-labels.jsonl" in names
+        assert "labels/e2e_import_fixture.jsonl" in names
+
+        import_content = archive.read("labels/e2e_import_fixture.jsonl").decode("utf-8")
+        assert "e2e-label-0" in import_content
+        assert "e2e-label-1" in import_content
+
+
 def test_remove_label_file(r: E2ERunner) -> None:
     section = r.label_files_section()
 
@@ -262,10 +297,6 @@ def test_remove_label_file(r: E2ERunner) -> None:
         expect(test_labels_li).not_to_be_visible(timeout=5000)
     finally:
         r.page.remove_listener("dialog", accept_dialog)
-
-
-def test_no_export_all_control(r: E2ERunner) -> None:
-    assert r.page.get_by_text("Export all").count() == 0
 
 
 def test_viewport_stable_on_create(r: E2ERunner) -> None:
@@ -339,6 +370,7 @@ def build_tests(runner: E2ERunner) -> list[tuple[str, Callable[[], None]]]:
     return [
         ("test_graph_renders_after_search", lambda: test_graph_renders_after_search(runner)),
         ("test_empty_label_state", lambda: test_empty_label_state(runner)),
+        ("test_export_all_no_files_alert", lambda: test_export_all_no_files_alert(runner)),
         ("test_create_label_file", lambda: test_create_label_file(runner)),
         ("test_duplicate_create_fails", lambda: test_duplicate_create_fails(runner)),
         ("test_import_jsonl", lambda: test_import_jsonl(runner)),
@@ -352,8 +384,8 @@ def build_tests(runner: E2ERunner) -> list[tuple[str, Callable[[], None]]]:
             lambda: test_tx_card_exhausted_hides_add_controls(runner),
         ),
         ("test_export_label_file", lambda: test_export_label_file(runner)),
+        ("test_export_all_browser_labels_zip", lambda: test_export_all_browser_labels_zip(runner)),
         ("test_remove_label_file", lambda: test_remove_label_file(runner)),
-        ("test_no_export_all_control", lambda: test_no_export_all_control(runner)),
         ("test_viewport_stable_on_create", lambda: test_viewport_stable_on_create(runner)),
         ("test_drag_preserved_on_save", lambda: test_drag_preserved_on_save(runner)),
     ]

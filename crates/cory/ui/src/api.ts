@@ -153,3 +153,8 @@ export async function exportLabelFile(fileId: string): Promise<string> {
   const resp = await apiFetch(`/api/v1/label/${encodeURIComponent(fileId)}/export`);
   return resp.text();
 }
+
+export async function exportAllBrowserLabelsZip(): Promise<Blob> {
+  const resp = await apiFetch("/api/v1/labels.zip");
+  return resp.blob();
+}

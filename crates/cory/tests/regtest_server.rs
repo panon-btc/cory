@@ -1,10 +1,12 @@
 use std::collections::HashSet;
 use std::env;
+use std::io::{Cursor, Read};
 
 use reqwest::header::{HeaderMap, HeaderValue, ORIGIN};
 use reqwest::Method;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
+use zip::ZipArchive;
 
 async fn wait_for_server(client: &Client, base_url: &str) {
     let health_url = format!("{base_url}/api/v1/health");
@@ -139,6 +141,33 @@ async fn regtest_server_endpoints_cover_api_surface() {
     // =========================================================================
 
     let label_url = format!("{base_url}/api/v1/label");
+    let export_all_url = format!("{base_url}/api/v1/labels.zip");
+
+    let export_all_missing_auth = unauthed_client
+        .get(&export_all_url)
+        .send()
+        .await
+        .expect("export-all without auth should return response");
+    assert_eq!(export_all_missing_auth.status(), StatusCode::UNAUTHORIZED);
+
+    let export_all_before_create = client
+        .get(&export_all_url)
+        .header("X-API-Token", &api_token)
+        .send()
+        .await
+        .expect("export-all before create should return response");
+    assert_eq!(export_all_before_create.status(), StatusCode::NOT_FOUND);
+    let export_all_before_create_json: Value = export_all_before_create
+        .json()
+        .await
+        .expect("export-all not-found response must be JSON");
+    assert_eq!(
+        export_all_before_create_json
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        "no browser label files to export"
+    );
 
     let create_payload = serde_json::json!({ "name": "runner-file" });
     let create_missing_auth = unauthed_client
@@ -389,6 +418,64 @@ async fn regtest_server_endpoints_cover_api_surface() {
             "runner-addr-label".to_string()
         )),
         "export should include imported addr label"
+    );
+
+    // =========================================================================
+    // Labels — export all browser files as zip
+    // =========================================================================
+
+    let export_all_ok = client
+        .get(&export_all_url)
+        .header("X-API-Token", &api_token)
+        .send()
+        .await
+        .expect("export-all browser labels request must succeed");
+    assert_eq!(export_all_ok.status(), StatusCode::OK);
+    let export_all_headers = export_all_ok.headers().clone();
+    let export_all_content_type = export_all_headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    assert_eq!(export_all_content_type, "application/zip");
+    let export_all_disposition = export_all_headers
+        .get("content-disposition")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    assert_eq!(
+        export_all_disposition,
+        "attachment; filename=\"labels.zip\""
+    );
+
+    let zip_body = export_all_ok
+        .bytes()
+        .await
+        .expect("zip response body must be readable");
+    let mut archive = ZipArchive::new(Cursor::new(zip_body))
+        .expect("export-all response body must be a readable zip archive");
+    let names: HashSet<String> = archive.file_names().map(str::to_string).collect();
+    assert!(
+        names.contains("labels/runner-file.jsonl"),
+        "zip should include created browser file"
+    );
+    assert!(
+        names.contains("labels/runner-import-file.jsonl"),
+        "zip should include imported browser file"
+    );
+
+    let mut imported_file = archive
+        .by_name("labels/runner-import-file.jsonl")
+        .expect("imported file should be present in zip");
+    let mut imported_content = String::new();
+    imported_file
+        .read_to_string(&mut imported_content)
+        .expect("zip entry payload should be readable utf-8");
+    assert!(
+        imported_content.contains("runner-import-label"),
+        "zip export should include imported tx label"
+    );
+    assert!(
+        imported_content.contains("runner-addr-label"),
+        "zip export should include imported addr label"
     );
 
     // =========================================================================
