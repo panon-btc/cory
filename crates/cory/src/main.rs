@@ -52,13 +52,6 @@ async fn main() -> eyre::Result<()> {
         tracing::warn!("node is pruned — fetching old transactions may fail");
     }
 
-    // Verify txindex is available by attempting to fetch a confirmed transaction.
-    // Without txindex, getrawtransaction only works for mempool transactions,
-    // making graph traversal fail on confirmed ancestors.
-    if chain_info.blocks > 0 {
-        check_txindex_available(rpc.as_ref()).await;
-    }
-
     // Initialize caches and label store.
     let cache = Arc::new(cory_core::cache::Cache::with_capacity(
         args.cache_tx_cap,
@@ -119,46 +112,13 @@ async fn main() -> eyre::Result<()> {
     Ok(())
 }
 
+// ==============================================================================
+// Startup Helpers
+// ==============================================================================
+
 /// Tiny hex-encoding helper to avoid adding a `hex` crate dependency.
 fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
     bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// Best-effort check that txindex is available. If `getrawtransaction` fails
-/// for any known confirmed txid, we warn the user with an actionable message.
-/// This uses the genesis coinbase txid for the chain, which is always confirmed
-/// but only retrievable with txindex (the genesis coinbase is special on mainnet,
-/// but works on regtest/testnet/signet).
-async fn check_txindex_available(rpc: &dyn cory_core::rpc::BitcoinRpc) {
-    // Use a zero txid as a probe — it will always fail without txindex.
-    // We specifically care about the error type: "No such mempool or blockchain
-    // transaction" means txindex is missing, other errors are unrelated.
-    let probe_txid: bitcoin::Txid =
-        "0000000000000000000000000000000000000000000000000000000000000001"
-            .parse()
-            .expect("valid dummy txid");
-
-    match rpc.get_transaction(&probe_txid).await {
-        Ok(_) => {
-            // Unexpectedly succeeded — txindex is definitely available.
-        }
-        Err(e) => {
-            let msg = e.to_string();
-            // "No such mempool or blockchain transaction" is the Bitcoin Core
-            // error when txindex is disabled and the tx is not in mempool.
-            // We can't distinguish "not found because txindex is off" from
-            // "not found because the txid doesn't exist", so we emit an
-            // info-level message rather than an error.
-            if msg.contains("No such mempool") || msg.contains("not found") {
-                tracing::info!(
-                    "txindex probe inconclusive — if graph queries fail for confirmed \
-                     transactions, ensure bitcoind is running with -txindex=1"
-                );
-            }
-            // Other errors (network, auth) are already covered by the
-            // initial getblockchaininfo check.
-        }
-    }
 }
 
 fn format_rpc_connect_error(rpc_url: &str, source_error: &str) -> String {
