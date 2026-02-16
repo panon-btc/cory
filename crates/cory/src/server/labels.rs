@@ -1,9 +1,14 @@
+use std::collections::HashSet;
+use std::io::Write;
+
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use zip::write::SimpleFileOptions;
+use zip::{CompressionMethod, ZipWriter};
 
 use cory_core::labels::{Bip329Type, LabelFile, LabelFileKind};
 
@@ -206,6 +211,47 @@ pub(super) async fn export_local_label_file(
     Ok(response)
 }
 
+pub(super) async fn zip_browser_labels(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    check_auth(&state.api_token, &headers)?;
+    let store = state.labels.read().await;
+
+    // Export only BrowserRw files and package them into one archive for
+    // one-click persistence from the UI.
+    let mut used_names = HashSet::new();
+    let mut entries = Vec::new();
+    for file in store
+        .list_files()
+        .into_iter()
+        .filter(|file| file.kind == LabelFileKind::BrowserRw)
+    {
+        let content = store.export_file(&file.id).map_err(map_label_store_error)?;
+        let base_name = sanitize_zip_base_name(&file.name);
+        let entry_name = unique_zip_entry_name(&base_name, &mut used_names);
+        entries.push((entry_name, content.into_bytes()));
+    }
+
+    if entries.is_empty() {
+        return Err(AppError::NotFound(
+            "no browser label files to export".to_string(),
+        ));
+    }
+
+    let zip_bytes = build_zip(entries)?;
+    let mut response = (StatusCode::OK, zip_bytes).into_response();
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/zip"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_DISPOSITION,
+        axum::http::HeaderValue::from_static("attachment; filename=\"labels.zip\""),
+    );
+    Ok(response)
+}
+
 // ==============================================================================
 // Helpers
 // ==============================================================================
@@ -218,4 +264,48 @@ pub(super) fn label_file_to_summary(file: &LabelFile) -> LabelFileSummary {
         editable: file.editable,
         record_count: file.record_count(),
     }
+}
+
+fn sanitize_zip_base_name(name: &str) -> String {
+    let replaced = name.trim().replace(['/', '\\'], "_");
+    if replaced.trim().is_empty() {
+        "browser-label".to_string()
+    } else {
+        replaced
+    }
+}
+
+fn unique_zip_entry_name(base_name: &str, used_names: &mut HashSet<String>) -> String {
+    let initial = format!("labels/{base_name}.jsonl");
+    if used_names.insert(initial.clone()) {
+        return initial;
+    }
+
+    for suffix in 2.. {
+        let candidate = format!("labels/{base_name}-{suffix}.jsonl");
+        if used_names.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+
+    unreachable!("unbounded suffix loop must eventually find an unused name");
+}
+
+fn build_zip(entries: Vec<(String, Vec<u8>)>) -> Result<Vec<u8>, AppError> {
+    let cursor = std::io::Cursor::new(Vec::new());
+    let mut writer = ZipWriter::new(cursor);
+    for (file_name, data) in entries {
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        writer
+            .start_file(file_name, options)
+            .map_err(|e| AppError::Internal(format!("failed to start zip file entry: {e}")))?;
+        writer
+            .write_all(&data)
+            .map_err(|e| AppError::Internal(format!("failed to write zip file entry: {e}")))?;
+    }
+
+    let cursor = writer
+        .finish()
+        .map_err(|e| AppError::Internal(format!("failed to finalize zip archive: {e}")))?;
+    Ok(cursor.into_inner())
 }

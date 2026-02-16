@@ -4,6 +4,7 @@ import {
   createLabelFile,
   deleteLabelFile,
   errorMessage,
+  exportAllBrowserLabelsZip,
   exportLabelFile,
   importLabelFile,
 } from "../../api";
@@ -152,6 +153,26 @@ export function CrudManager({
     [handleAuthError, setPanelError],
   );
 
+  const handleExportAllBrowserLabels = useCallback(async () => {
+    try {
+      const blob = await exportAllBrowserLabelsZip();
+      const anchor = document.createElement("a");
+      anchor.href = URL.createObjectURL(blob);
+      anchor.download = "labels.zip";
+      anchor.click();
+      // Delay revocation so the browser has time to start the download.
+      // Revoking immediately can cause the download to fail in some browsers.
+      setTimeout(() => URL.revokeObjectURL(anchor.href), 60_000);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        window.alert("No browser label files to export.");
+        return;
+      }
+      if (handleAuthError(err)) return;
+      setPanelError("Export failed: " + errorMessage(err, "request failed"));
+    }
+  }, [handleAuthError, setPanelError]);
+
   const handleDelete = useCallback(
     async (file: LabelFileSummary) => {
       const confirmed = window.confirm(`Remove label file '${file.name}' from server memory?`);
@@ -216,6 +237,12 @@ export function CrudManager({
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <button onClick={handleImportClick} style={{ fontSize: 11, padding: "4px 8px" }}>
             Import JSONL
+          </button>
+          <button
+            onClick={() => void handleExportAllBrowserLabels()}
+            style={{ fontSize: 11, padding: "4px 8px" }}
+          >
+            Export all browser labels
           </button>
         </div>
 
