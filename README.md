@@ -26,12 +26,12 @@ This project aims to be a privacy-preserving tool that:
 
 1. Start your Bitcoin Core node with RPC and `txindex=1`.
 2. Run Cory from source:
-   - `cargo run --bin cory -- --rpc-url http://127.0.0.1:8332 --rpc-user <user> --rpc-pass <pass>`
+   - `cargo run --bin cory -- --connection http://127.0.0.1:8332 --rpc-user <user> --rpc-pass <pass>`
 3. Open `http://127.0.0.1:3080`.
 
 Install a local binary instead:
 1. `cargo install --path crates/cory`
-2. `cory --rpc-url http://127.0.0.1:8332 --rpc-user <user> --rpc-pass <pass>`
+2. `cory --connection http://127.0.0.1:8332 --rpc-user <user> --rpc-pass <pass>`
 
 Notes:
 - On first build (or when UI files change), `build.rs` runs `npm` in `crates/cory/ui/` to compile the embedded frontend.

@@ -87,7 +87,8 @@ async fn regtest_graph_builder_handles_functional_and_stress_scenarios() {
         "graph fixture must include at least one scenario"
     );
 
-    let rpc = HttpRpcClient::new(&rpc_url, Some(&rpc_user), Some(&rpc_pass));
+    let rpc = HttpRpcClient::new(&rpc_url, Some(&rpc_user), Some(&rpc_pass), None, None, 10)
+        .expect("rpc client must construct");
 
     for scenario in fixture.scenarios {
         let root_txid: Txid = scenario

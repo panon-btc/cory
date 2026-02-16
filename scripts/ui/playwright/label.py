@@ -126,7 +126,7 @@ def main() -> int:
         rpc_url = f"http://127.0.0.1:{cfg.rpc_port}"
         cory_proc, cory_log_file, server_url, api_token = start_cory(
             root_dir=root_dir,
-            rpc_url=rpc_url,
+            connection=rpc_url,
             rpc_user=cfg.rpc_user,
             rpc_pass=cfg.rpc_pass,
             bind="127.0.0.1",

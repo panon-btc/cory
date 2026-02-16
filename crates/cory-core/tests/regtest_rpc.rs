@@ -30,7 +30,8 @@ async fn regtest_rpc_client_parses_blockchain_info_and_transactions() {
     let outpoints_file =
         env::var("CORY_TEST_OUTPOINTS_FILE").expect("CORY_TEST_OUTPOINTS_FILE must be set");
 
-    let rpc = HttpRpcClient::new(&rpc_url, Some(&rpc_user), Some(&rpc_pass));
+    let rpc = HttpRpcClient::new(&rpc_url, Some(&rpc_user), Some(&rpc_pass), None, None, 10)
+        .expect("rpc client must construct");
 
     eprintln!("[itest] checking get_blockchain_info against {rpc_url}");
     let info = rpc
