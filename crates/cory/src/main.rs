@@ -32,14 +32,22 @@ async fn main() -> eyre::Result<()> {
 
     // Connect to Bitcoin Core RPC and verify the connection succeeds
     // before starting the server.
-    let rpc: Arc<dyn cory_core::rpc::BitcoinRpc> = Arc::new(cory_core::rpc::HttpRpcClient::new(
-        &args.rpc_url,
+    let rpc_client = cory_core::rpc::HttpRpcClient::new(
+        &args.connection,
         args.rpc_user.as_deref(),
         args.rpc_pass.as_deref(),
-    ));
+        args.rpc_cookie_file.as_deref(),
+        args.rpc_requests_per_second,
+        args.rpc_batch_chunk_size,
+    )
+    .map_err(|err| {
+        let message = format_rpc_connect_error(&args.connection, &err.to_string());
+        eyre!(message).wrap_err("while attempting to configure Bitcoin Core RPC client")
+    })?;
+    let rpc: Arc<dyn cory_core::rpc::BitcoinRpc> = Arc::new(rpc_client);
 
     let chain_info = rpc.get_blockchain_info().await.map_err(|err| {
-        let message = format_rpc_connect_error(&args.rpc_url, &err.to_string());
+        let message = format_rpc_connect_error(&args.connection, &err.to_string());
         eyre!(message).wrap_err("while attempting to connect to Bitcoin Core RPC")
     })?;
 
@@ -121,9 +129,9 @@ fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
     bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn format_rpc_connect_error(rpc_url: &str, source_error: &str) -> String {
+fn format_rpc_connect_error(connection: &str, source_error: &str) -> String {
     let mut lines = vec![
-        format!("could not connect to RPC endpoint `{rpc_url}`"),
+        format!("could not connect to RPC endpoint `{connection}`"),
         format!("RPC error: {source_error}"),
     ];
 
@@ -142,12 +150,16 @@ fn format_rpc_connect_error(rpc_url: &str, source_error: &str) -> String {
         );
     } else if source_error.contains("401") || source_error.contains("403") {
         lines.push(
-            "hint: authentication failed; verify token-in-URL or --rpc-user/--rpc-pass".into(),
+            "hint: authentication failed; verify token-in-URL, --rpc-user/--rpc-pass, or --rpc-cookie-file".into(),
         );
     } else if source_error.contains("404") {
         lines.push(
             "hint: endpoint path is invalid; verify the full RPC URL including token path".into(),
         );
+    } else if source_error.contains("cookie")
+        || source_error.contains("both rpc user and rpc pass must be set together")
+    {
+        lines.push("hint: use --rpc-user/--rpc-pass together, or provide --rpc-cookie-file".into());
     } else if source_error.contains("error sending request for url") {
         lines.push("hint: request could not be sent; verify URL format, network access, and endpoint reachability".into());
     }

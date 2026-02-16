@@ -170,7 +170,8 @@ The caller (`cory` server) wraps the store in
 
 Clap derive struct. Notable options:
 
-- `--rpc-url`, `--rpc-user`, `--rpc-pass` (user/pass also via env vars)
+- `--connection`, `--rpc-user`, `--rpc-pass`, `--rpc-cookie-file`
+- `--rpc-requests-per-second` — optional outbound RPC request limit
 - `--labels-rw` — repeatable, loads editable label directories
   (auto-flushed to disk on mutation)
 - `--labels-ro` — repeatable, loads read-only label directories

@@ -79,11 +79,8 @@ pub async fn build_ancestry(
         }
 
         // Fetch all frontier nodes in parallel (semaphore limits concurrency).
-        let fetch_futures: Vec<_> = frontier
-            .iter()
-            .map(|(txid, _)| fetch_and_convert(rpc, cache, &semaphore, txid))
-            .collect();
-        let fetched_nodes = try_join_all(fetch_futures).await?;
+        let frontier_txids: Vec<Txid> = frontier.iter().map(|(txid, _)| *txid).collect();
+        let fetched_nodes = fetch_and_convert_many(rpc, cache, &semaphore, &frontier_txids).await?;
 
         // Process fetched nodes: add edges and enqueue next-level parents.
         for ((txid, depth), tx_node) in frontier.into_iter().zip(fetched_nodes) {
@@ -149,33 +146,66 @@ pub async fn build_ancestry(
 
 /// Fetch a transaction from the cache or RPC and enrich unresolved
 /// inputs with prevout values/script types when possible.
-async fn fetch_and_convert(
+async fn fetch_and_convert_many(
     rpc: &dyn BitcoinRpc,
     cache: &Cache,
     semaphore: &Semaphore,
-    txid: &Txid,
-) -> Result<TxNode, CoreError> {
-    // Check the transaction cache first.
-    if let Some(cached) = cache.get_tx(txid).await {
-        return Ok(cached);
+    txids: &[Txid],
+) -> Result<Vec<TxNode>, CoreError> {
+    let mut ordered: Vec<Option<TxNode>> = vec![None; txids.len()];
+    let mut missing_positions: Vec<usize> = Vec::new();
+    let mut missing_txids: Vec<Txid> = Vec::new();
+
+    // First try cache lookups so we only batch-fetch true misses.
+    for (idx, txid) in txids.iter().enumerate() {
+        if let Some(cached) = cache.get_tx(txid).await {
+            ordered[idx] = Some(cached);
+        } else {
+            missing_positions.push(idx);
+            missing_txids.push(*txid);
+        }
     }
 
-    // Acquire a semaphore permit to limit concurrent RPC calls.
+    if !missing_txids.is_empty() {
+        let fetched = rpc.get_transactions(&missing_txids).await?;
+        let enrich_futures: Vec<_> = fetched
+            .into_iter()
+            .map(|tx| enrich_and_cache_tx(rpc, cache, semaphore, tx))
+            .collect();
+        let enriched = try_join_all(enrich_futures).await?;
+
+        for (position, tx_node) in missing_positions.into_iter().zip(enriched) {
+            ordered[position] = Some(tx_node);
+        }
+    }
+
+    Ok(ordered
+        .into_iter()
+        .map(|tx| tx.expect("all positions are filled from cache or RPC"))
+        .collect())
+}
+
+/// Enrich and cache a fetched transaction, bounded by the shared semaphore.
+async fn enrich_and_cache_tx(
+    rpc: &dyn BitcoinRpc,
+    cache: &Cache,
+    semaphore: &Semaphore,
+    tx: TxNode,
+) -> Result<TxNode, CoreError> {
+    let txid = tx.txid;
+
+    // Double-check cache under semaphore in case another task already resolved it.
     let _permit = semaphore
         .acquire()
         .await
         .expect("semaphore is never closed");
-
-    // Double-check after acquiring the permit (another task may have
-    // populated the cache while we were waiting).
-    if let Some(cached) = cache.get_tx(txid).await {
+    if let Some(cached) = cache.get_tx(&txid).await {
         return Ok(cached);
     }
 
-    let tx = rpc.get_transaction(txid).await?;
     let tx_node = enrich_tx_node(rpc, cache, tx).await?;
 
-    cache.insert_tx(*txid, tx_node.clone()).await;
+    cache.insert_tx(txid, tx_node.clone()).await;
     Ok(tx_node)
 }
 
@@ -186,7 +216,7 @@ async fn fetch_and_convert(
 /// The conversion proceeds in three phases:
 /// 1. Fill inputs from cache/local data, collecting unresolved
 ///    outpoints.
-/// 2. Resolve unresolved prevouts via batched RPC, then individual
+/// 2. Resolve unresolved prevouts via batched RPC, then batched
 ///    parent-tx fallback.
 /// 3. Return the enriched transaction.
 async fn enrich_tx_node(
@@ -235,7 +265,7 @@ async fn build_inputs_initial(
 }
 
 /// Phase 2: for unresolved prevouts, first try a batched `gettxout` call,
-/// then fall back to fetching individual parent transactions for any that
+/// then fall back to fetching parent transactions in batch for any that
 /// remain unresolved (common for already-spent outputs).
 async fn resolve_unresolved_prevouts(
     rpc: &dyn BitcoinRpc,
@@ -278,13 +308,17 @@ async fn resolve_unresolved_prevouts(
         }
     }
 
-    // Individual parent-tx fallback for still-unresolved inputs (spent outputs).
+    // Parent-tx fallback for still-unresolved inputs (spent outputs).
     let still_unresolved: Vec<usize> = inputs
         .iter()
         .enumerate()
         .filter(|(_, inp)| inp.value.is_none() && inp.prevout.is_some())
         .map(|(idx, _)| idx)
         .collect();
+
+    let mut needed_parent_txids: Vec<Txid> = Vec::new();
+    let mut needed_parent_set: HashSet<Txid> = HashSet::new();
+    let mut indices_needing_parent: Vec<usize> = Vec::new();
 
     for idx in still_unresolved {
         let outpoint = inputs[idx]
@@ -298,14 +332,37 @@ async fn resolve_unresolved_prevouts(
         {
             continue;
         }
-        if let Ok(parent_tx) = rpc.get_transaction(&outpoint.txid).await {
-            if let Some(output) = parent_tx.outputs.get(outpoint.vout as usize) {
-                cache
-                    .insert_prevout(outpoint.txid, outpoint.vout, output.clone())
-                    .await;
-                inputs[idx].value = Some(output.value);
-                inputs[idx].script_type = Some(output.script_type);
-            }
+
+        indices_needing_parent.push(idx);
+        if needed_parent_set.insert(outpoint.txid) {
+            needed_parent_txids.push(outpoint.txid);
+        }
+    }
+
+    if needed_parent_txids.is_empty() {
+        return;
+    }
+
+    if let Ok(parent_txs) = rpc.get_transactions(&needed_parent_txids).await {
+        let parent_by_txid: HashMap<Txid, TxNode> =
+            parent_txs.into_iter().map(|tx| (tx.txid, tx)).collect();
+
+        for idx in indices_needing_parent {
+            let outpoint = inputs[idx]
+                .prevout
+                .expect("input prevout exists for unresolved inputs");
+            let Some(parent_tx) = parent_by_txid.get(&outpoint.txid) else {
+                continue;
+            };
+            let Some(output) = parent_tx.outputs.get(outpoint.vout as usize) else {
+                continue;
+            };
+
+            cache
+                .insert_prevout(outpoint.txid, outpoint.vout, output.clone())
+                .await;
+            inputs[idx].value = Some(output.value);
+            inputs[idx].script_type = Some(output.script_type);
         }
     }
 }
