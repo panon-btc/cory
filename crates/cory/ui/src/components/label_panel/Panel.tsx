@@ -1,7 +1,11 @@
-import { type CSSProperties, useState } from "react";
+import { type CSSProperties, useCallback, useRef, useState } from "react";
 import { useAppStore } from "../../store";
+import { errorMessage, exportLabelFile } from "../../api";
+import type { LabelFileSummary } from "../../types";
 import SelectedTxEditor from "./SelectedTxEditor";
 import { CrudManager } from "./CrudManager";
+import { LabelFilePopup } from "./LabelFilePopup";
+import { parseLabelFileJsonl, type ParsedLabelRow } from "./label_file_popup_parse";
 
 interface LabelPanelProps {
   width: number;
@@ -10,8 +14,15 @@ interface LabelPanelProps {
 
 export default function LabelPanel({ width, onClose }: LabelPanelProps) {
   const labelFiles = useAppStore((s) => s.labelFiles);
+  const doSearch = useAppStore((s) => s.doSearch);
+  const storeHandleAuthError = useAppStore((s) => s.handleAuthError);
 
   const [panelError, setPanelError] = useState<string | null>(null);
+  const [activeFile, setActiveFile] = useState<LabelFileSummary | null>(null);
+  const [popupLoading, setPopupLoading] = useState(false);
+  const [popupError, setPopupError] = useState<string | null>(null);
+  const [popupRows, setPopupRows] = useState<ParsedLabelRow[]>([]);
+  const popupLoadIdRef = useRef(0);
 
   const persistentRwFiles = labelFiles.filter((file) => file.kind === "persistent_rw");
   const persistentRoFiles = labelFiles.filter((file) => file.kind === "persistent_ro");
@@ -37,6 +48,66 @@ export default function LabelPanel({ width, onClose }: LabelPanelProps) {
     gap: 6,
   };
 
+  const loadFileRows = useCallback(
+    async (file: LabelFileSummary) => {
+      // Users can click multiple files quickly. Keep only the latest
+      // in-flight load authoritative so stale responses cannot overwrite
+      // popup state for a newer selection.
+      const loadId = popupLoadIdRef.current + 1;
+      popupLoadIdRef.current = loadId;
+
+      setPopupLoading(true);
+      setPopupError(null);
+      setPopupRows([]);
+      try {
+        const content = await exportLabelFile(file.id);
+        if (popupLoadIdRef.current !== loadId) return;
+        setPopupRows(parseLabelFileJsonl(content));
+      } catch (err) {
+        if (popupLoadIdRef.current !== loadId) return;
+        if (storeHandleAuthError(err)) {
+          setPanelError(null);
+          return;
+        }
+        setPopupError("Failed to load labels: " + errorMessage(err, "request failed"));
+      } finally {
+        if (popupLoadIdRef.current !== loadId) return;
+        setPopupLoading(false);
+      }
+    },
+    [storeHandleAuthError],
+  );
+
+  const openFilePopup = useCallback(
+    (file: LabelFileSummary) => {
+      setActiveFile(file);
+      void loadFileRows(file);
+    },
+    [loadFileRows],
+  );
+
+  const closeFilePopup = useCallback(() => {
+    popupLoadIdRef.current += 1;
+    setActiveFile(null);
+    setPopupLoading(false);
+    setPopupError(null);
+    setPopupRows([]);
+  }, []);
+
+  const retryLoadFileRows = useCallback(() => {
+    if (!activeFile) return;
+    void loadFileRows(activeFile);
+  }, [activeFile, loadFileRows]);
+
+  const handlePopupRowClick = useCallback(
+    (row: ParsedLabelRow) => {
+      if (!row.txidTarget) return;
+      void doSearch(row.txidTarget);
+      closeFilePopup();
+    },
+    [closeFilePopup, doSearch],
+  );
+
   const renderServerFileItem = (file: (typeof labelFiles)[number]) => (
     <li
       key={file.id}
@@ -44,10 +115,23 @@ export default function LabelPanel({ width, onClose }: LabelPanelProps) {
         fontSize: 12,
       }}
     >
-      <div style={{ color: "var(--text)" }}>
+      <button
+        type="button"
+        onClick={() => openFilePopup(file)}
+        style={{
+          border: "none",
+          background: "transparent",
+          color: "var(--text)",
+          padding: 0,
+          fontSize: 12,
+          cursor: "pointer",
+          textAlign: "left",
+        }}
+        title={`Open labels from '${file.name}'`}
+      >
         {file.name}{" "}
         <span style={{ color: "var(--text-muted)", fontSize: 10 }}>({file.record_count})</span>
-      </div>
+      </button>
     </li>
   );
 
@@ -128,6 +212,7 @@ export default function LabelPanel({ width, onClose }: LabelPanelProps) {
         sectionStyle={sectionStyle}
         summaryStyle={summaryStyle}
         setPanelError={setPanelError}
+        onOpenFile={openFilePopup}
       />
 
       <details open style={sectionStyle}>
@@ -138,6 +223,17 @@ export default function LabelPanel({ width, onClose }: LabelPanelProps) {
       </details>
 
       {panelError && <p style={{ color: "var(--accent)", fontSize: 11 }}>{panelError}</p>}
+      {activeFile && (
+        <LabelFilePopup
+          file={activeFile}
+          loading={popupLoading}
+          error={popupError}
+          rows={popupRows}
+          onClose={closeFilePopup}
+          onRetry={retryLoadFileRows}
+          onRowClick={handlePopupRowClick}
+        />
+      )}
     </div>
   );
 }

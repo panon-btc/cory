@@ -16,6 +16,7 @@ interface CrudManagerProps {
   sectionStyle: CSSProperties;
   summaryStyle: CSSProperties;
   setPanelError: (error: string | null) => void;
+  onOpenFile: (file: LabelFileSummary) => void;
 }
 
 function fileNameWithoutJsonl(fileName: string): string {
@@ -29,6 +30,7 @@ export function CrudManager({
   sectionStyle,
   summaryStyle,
   setPanelError,
+  onOpenFile,
 }: CrudManagerProps) {
   const labelsChanged = useAppStore((s) => s.labelsChanged);
   const storeHandleAuthError = useAppStore((s) => s.handleAuthError);
@@ -273,13 +275,26 @@ export function CrudManager({
                     alignItems: "center",
                   }}
                 >
-                  <div>
-                    <div style={{ color: "var(--text)" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <button
+                      type="button"
+                      onClick={() => onOpenFile(file)}
+                      style={{
+                        border: "none",
+                        background: "transparent",
+                        color: "var(--text)",
+                        padding: 0,
+                        fontSize: 12,
+                        cursor: "pointer",
+                        textAlign: "left",
+                      }}
+                      title={`Open labels from '${file.name}'`}
+                    >
                       {file.name}{" "}
                       <span style={{ color: "var(--text-muted)", fontSize: 10 }}>
                         ({file.record_count})
                       </span>
-                    </div>
+                    </button>
                   </div>
                   <div style={{ display: "flex", gap: 4 }}>
                     <button
