@@ -63,7 +63,7 @@ export interface TxEnrichment {
 export interface LabelEntry {
   file_id: string;
   file_name: string;
-  file_kind: "local" | "pack";
+  file_kind: "persistent_rw" | "persistent_ro" | "browser_rw";
   editable: boolean;
   label: string;
 }
@@ -71,7 +71,7 @@ export interface LabelEntry {
 export interface LabelFileSummary {
   id: string;
   name: string;
-  kind: "local" | "pack";
+  kind: "persistent_rw" | "persistent_ro" | "browser_rw";
   editable: boolean;
   record_count: number;
 }

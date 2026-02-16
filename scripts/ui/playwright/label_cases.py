@@ -28,7 +28,7 @@ def test_graph_renders_after_search(r: E2ERunner) -> None:
 
 def test_empty_label_state(r: E2ERunner) -> None:
     label_files = r.label_files_section()
-    expect(label_files.get_by_text("No local label files loaded.")).to_be_visible(timeout=5000)
+    expect(label_files.get_by_text("No browser label files loaded.")).to_be_visible(timeout=5000)
 
     selected_editor = r.selected_editor_section()
     expect(
@@ -46,8 +46,9 @@ def test_create_label_file(r: E2ERunner) -> None:
     section.get_by_placeholder("New file name").fill("test-labels")
     section.get_by_role("button", name="Create").click()
 
-    expect(section.get_by_text("test-labels")).to_be_visible(timeout=5000)
-    expect(section.get_by_text("0 labels")).to_be_visible(timeout=5000)
+    created_file = section.locator("li").filter(has_text="test-labels").first
+    expect(created_file).to_be_visible(timeout=5000)
+    expect(created_file.get_by_text("(0)")).to_be_visible(timeout=5000)
 
 
 def test_duplicate_create_fails(r: E2ERunner) -> None:
@@ -68,8 +69,9 @@ def test_import_jsonl(r: E2ERunner) -> None:
     section = r.label_files_section()
     section.locator('input[type="file"]').set_input_files(str(fixture_path()))
 
-    expect(section.get_by_text("e2e_import_fixture")).to_be_visible(timeout=5000)
-    expect(section.get_by_text("2 labels")).to_be_visible(timeout=5000)
+    imported_file = section.locator("li").filter(has_text="e2e_import_fixture").first
+    expect(imported_file).to_be_visible(timeout=5000)
+    expect(imported_file.get_by_text("(2)")).to_be_visible(timeout=5000)
 
 
 def test_duplicate_import_fails(r: E2ERunner) -> None:
@@ -116,7 +118,7 @@ def test_node_add_label_autosave(r: E2ERunner) -> None:
 
     label_input = tx_card.get_by_placeholder("Label").first
     label_input.fill("my-e2e-label")
-    tx_message = tx_card.get_by_text("Local labels already exist for all files.")
+    tx_message = tx_card.get_by_text("Labels already exist for all editable files.")
 
     # New-label autosave resolves by closing the add form or exhausting files.
     r.wait_until(
@@ -180,7 +182,7 @@ def test_node_delete_label(r: E2ERunner) -> None:
 
 def test_all_files_labeled_message(r: E2ERunner) -> None:
     tx_card = r.selected_tx_card()
-    message = tx_card.get_by_text("Local labels already exist for all files.")
+    message = tx_card.get_by_text("Labels already exist for all editable files.")
 
     for attempt in range(30):
         if r.is_visible(message):
@@ -188,7 +190,7 @@ def test_all_files_labeled_message(r: E2ERunner) -> None:
 
         add_btn = tx_card.get_by_title("Add label")
         label_input = tx_card.get_by_placeholder("Label")
-        no_more = tx_card.get_by_text("No additional local files available.")
+        no_more = tx_card.get_by_text("No additional editable files available.")
 
         if r.is_visible(label_input):
             label_input.first.fill(f"cover-file-{attempt}")
@@ -216,7 +218,7 @@ def test_all_files_labeled_message(r: E2ERunner) -> None:
 
 def test_tx_card_exhausted_hides_add_controls(r: E2ERunner) -> None:
     tx_card = r.selected_tx_card()
-    expect(tx_card.get_by_text("Local labels already exist for all files.")).to_be_visible(timeout=5000)
+    expect(tx_card.get_by_text("Labels already exist for all editable files.")).to_be_visible(timeout=5000)
     assert tx_card.get_by_title("Add label").count() == 0, "Add label button should be hidden"
     assert tx_card.get_by_placeholder("Label").count() == 0, "Add-label input should not be visible"
 
@@ -355,4 +357,3 @@ def build_tests(runner: E2ERunner) -> list[tuple[str, Callable[[], None]]]:
         ("test_viewport_stable_on_create", lambda: test_viewport_stable_on_create(runner)),
         ("test_drag_preserved_on_save", lambda: test_drag_preserved_on_save(runner)),
     ]
-

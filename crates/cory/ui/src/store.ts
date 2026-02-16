@@ -256,11 +256,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       const existing = [...(bucket[refId] ?? [])];
       const idx = existing.findIndex((entry) => entry.file_id === fileId);
+      const fileInfo = get().labelFiles.find((f) => f.id === fileId);
       const row: LabelEntry = {
         file_id: fileId,
         file_name: summary.name,
-        file_kind: "local",
-        editable: true,
+        file_kind: fileInfo?.kind ?? "browser_rw",
+        editable: fileInfo?.editable ?? true,
         label,
       };
       if (idx >= 0) {

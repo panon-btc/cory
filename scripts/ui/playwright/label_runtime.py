@@ -85,7 +85,7 @@ class E2ERunner:
         return self.page.locator(f'.react-flow__node[data-id="{txid}"]')
 
     def label_files_section(self) -> Locator:
-        return self.page.locator('details:has(summary:has-text("Label Files"))')
+        return self.page.locator('details:has(summary:has-text("Browser Labels"))')
 
     def selected_editor_section(self) -> Locator:
         return self.page.locator('details:has(summary:has-text("Selected Transaction Editor"))')

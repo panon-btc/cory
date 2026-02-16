@@ -32,9 +32,15 @@ pub struct Cli {
     #[arg(long, default_value = "3080")]
     pub port: u16,
 
-    /// Label pack directories to load (repeatable, read-only in the UI).
+    /// Editable label directories (repeatable). Labels loaded from these
+    /// directories are editable in the UI and auto-flushed to disk.
     #[arg(long)]
-    pub label_pack_dir: Vec<std::path::PathBuf>,
+    pub labels_rw: Vec<std::path::PathBuf>,
+
+    /// Read-only label directories (repeatable). Labels loaded from these
+    /// directories appear in the UI but cannot be edited.
+    #[arg(long)]
+    pub labels_ro: Vec<std::path::PathBuf>,
 
     /// Maximum ancestry graph depth.
     #[arg(long, default_value = "50")]
@@ -56,12 +62,6 @@ pub struct Cli {
     /// Maximum number of prevout entries to keep in the in-memory cache.
     #[arg(long, default_value = "50000")]
     pub cache_prevout_cap: usize,
-
-    /// Directory to persist local label files to disk. When set, label
-    /// edits are written through to JSONL files in this directory and
-    /// loaded on startup. Without this flag, local labels are ephemeral.
-    #[arg(long)]
-    pub label_dir: Option<std::path::PathBuf>,
 
     /// Maximum concurrent RPC calls (must be at least 1).
     #[arg(long, default_value = "4", value_parser = parse_nonzero_usize)]

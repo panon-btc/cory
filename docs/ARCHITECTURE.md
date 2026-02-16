@@ -113,41 +113,51 @@ Pure functions, no I/O:
 - `is_rbf_signaling(TxNode) → bool` (any sequence < 0xFFFFFFFE)
 - `locktime_info(locktime, has_non_final_seq) → LocktimeInfo`
 
-### `labels.rs` — BIP-329 labels and label files
+### `labels/` — BIP-329 labels and label files
 
-Single file containing types and the label store.
+Module containing types, JSONL serialization, directory walking, and
+the label store.
 
 **Types:**
 
 - `Bip329Type` — `Tx`, `Addr`, `Pubkey`, `Input`, `Output`, `Xpub`
 - `Bip329Record` — type + ref + label + optional origin/spendable
-- `LabelFileKind` — `Local` (editable) or `Pack` (read-only)
-- `LabelFileMeta` / `LabelFileSummary` — file identity and metadata
+- `LabelFileKind` — `PersistentRw` (editable, disk-backed),
+  `PersistentRo` (read-only, disk-loaded), or `BrowserRw` (editable,
+  ephemeral)
+- `LabelFile` — file identity, kind, editability, optional
+  `source_path` (for PersistentRw auto-flush), and label map
 
-**`LabelStore`** holds two ordered in-memory collections:
+**`LabelStore`** holds three ordered in-memory collections:
 
-- local label files (created/imported from the Web UI, editable)
-- pack label files (loaded from CLI dirs at startup, read-only)
+- PersistentRw files (loaded from `--labels-rw` dirs, editable,
+  auto-flushed to disk)
+- BrowserRw files (created/imported from the Web UI, editable,
+  ephemeral)
+- PersistentRo files (loaded from `--labels-ro` dirs, read-only)
 
-Labels are resolved in deterministic order: local files first, then
-pack files. This allows user-local overrides while keeping pack labels
-visible.
+Labels are resolved in deterministic order: PersistentRw → BrowserRw →
+PersistentRo. This allows editable overrides while keeping read-only
+pack labels visible.
 
 Key operations:
 
-- `list_local_files()` — enumerate editable local files
-- `list_files()` — enumerate local + pack files in resolution order
-- `create_local_file(name)` — create empty local file
-- `import_local_file(name, content)` — create and import JSONL
-- `replace_local_file_content(file_id, content)` — replace full file
-- `set_local_label(file_id, type, ref, label)` — upsert in target file
-- `export_local_file(file_id)` — export one local file as JSONL
-- `remove_local_file(file_id)` — drop local file from memory
-- `load_pack_dir(path)` — recursively load read-only `.jsonl` pack files
-- `get_all_labels_for(type, ref)` — all matching labels with source metadata
+- `load_rw_dir(path)` — recursively load editable `.jsonl` files
+- `load_ro_dir(path)` — recursively load read-only `.jsonl` files
+- `list_files()` — enumerate all files in resolution order
+- `get_file(file_id)` — look up any file by ID
+- `create_browser_file(name)` — create empty BrowserRw file
+- `import_browser_file(name, content)` — create and import JSONL
+- `replace_browser_file_content(file_id, content)` — replace full file
+- `remove_browser_file(file_id)` — drop BrowserRw file from memory
+- `set_label(file_id, type, ref, label)` — upsert in any editable file
+- `delete_label(file_id, type, ref)` — remove entry from editable file
+- `export_file(file_id)` — export any file as JSONL
+- `get_all_labels_for(type, ref)` — all matching labels with source
+  metadata
 
-The caller (`cory` server) wraps the store in `Arc<RwLock<LabelStore>>` for
-concurrent access.
+The caller (`cory` server) wraps the store in
+`Arc<RwLock<LabelStore>>` for concurrent access.
 
 ### `error.rs` — Error types
 
@@ -161,8 +171,9 @@ concurrent access.
 Clap derive struct. Notable options:
 
 - `--rpc-url`, `--rpc-user`, `--rpc-pass` (user/pass also via env vars)
-- `--label-pack-dir` — repeatable, loads read-only label packs
-- `--label-dir` — optional directory for persistent local label files
+- `--labels-rw` — repeatable, loads editable label directories
+  (auto-flushed to disk on mutation)
+- `--labels-ro` — repeatable, loads read-only label directories
 - `--max-depth`, `--max-nodes`, `--max-edges` — graph limits
 - `--cache-tx-cap`, `--cache-prevout-cap` — LRU cache sizes
 - `--rpc-concurrency` — semaphore permits for parallel RPC calls (≥1)
@@ -174,9 +185,8 @@ Clap derive struct. Notable options:
 3. Connect to Bitcoin Core RPC. **This is fatal** — if
    `get_blockchain_info()` fails, the process exits with an error.
    A best-effort `txindex` probe runs immediately after.
-4. Create LRU caches and label store (with optional `--label-dir`
-   persistence).
-5. Load label pack directories.
+4. Create LRU caches and label store.
+5. Load `--labels-rw` and `--labels-ro` directories.
 6. Build Axum router and start server.
 
 ### `server.rs` — HTTP API
@@ -190,9 +200,9 @@ Clap derive struct. Notable options:
 | GET | `/api/v1/label` | Yes | List local + pack label files |
 | POST | `/api/v1/label` | Yes | Create file or import JSONL |
 | POST | `/api/v1/label/{file_id}` | Yes | Upsert label or replace file content |
-| DELETE | `/api/v1/label/{file_id}/entry?type=tx&ref=<txid>` | Yes | Delete one label entry from a local file |
-| DELETE | `/api/v1/label/{file_id}` | Yes | Remove local label file |
-| GET | `/api/v1/label/{file_id}/export` | Yes | Export one local file |
+| DELETE | `/api/v1/label/{file_id}/entry?type=tx&ref=<txid>` | Yes | Delete one label entry from an editable file |
+| DELETE | `/api/v1/label/{file_id}` | Yes | Remove browser label file |
+| GET | `/api/v1/label/{file_id}/export` | Yes | Export any label file |
 | GET | `*` (fallback) | No | Serve embedded UI |
 
 Auth is via a startup API token. Cory prints a random token at launch,
@@ -207,11 +217,10 @@ per-node `enrichments` (fee, feerate, RBF, locktime), typed labels in
 `labels_by_type`, and address resolution maps:
 `input_address_refs`, `output_address_refs`, and `address_occurrences`.
 
-Local label files are in-memory by default. When `--label-dir` is set,
-edits are written through to JSONL files on disk and loaded on startup,
-providing durable persistence across restarts. Without the flag, labels
-are ephemeral for the server process lifetime. Import/export is also
-available from the browser UI.
+Three label file kinds: PersistentRw (loaded from `--labels-rw`,
+editable, auto-flushed to disk), PersistentRo (loaded from
+`--labels-ro`, read-only), and BrowserRw (created/imported in the
+browser, editable but ephemeral). All files can be exported.
 
 ## UI
 
@@ -298,8 +307,8 @@ Graph scenarios are split into two tiers:
 - Stress coverage: deep, wide, and merge-heavy graphs with large
   topologies (default target is 500 transactions per stress scenario).
 - Server coverage: all `server.rs` routes including auth failures,
-  local label file CRUD, per-entry label delete, static fallback, and
-  exact-origin CORS.
+  browser label file CRUD, per-entry label delete, static fallback,
+  and exact-origin CORS.
 
 Because Bitcoin UTXO ancestry is acyclic by construction, the stress
 suite uses dense merge and frontier patterns rather than true cycle

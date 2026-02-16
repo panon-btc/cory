@@ -17,7 +17,7 @@ export default function SelectedTxEditor() {
   const saveLabel = useAppStore((s) => s.saveLabel);
   const deleteLabel = useAppStore((s) => s.deleteLabel);
 
-  const localFiles = labelFiles.filter((file) => file.kind === "local");
+  const editableFiles = labelFiles.filter((file) => file.editable);
 
   if (!graph || !selectedTxid || !graph.nodes[selectedTxid]) {
     return (
@@ -43,8 +43,8 @@ export default function SelectedTxEditor() {
         }}
       >
         Address labels apply to a single address and are shared wherever that same address appears
-        in the graph. They are stored separately from input/output labels — avoid duplicating
-        information between the two.
+        in the graph. They are stored separately from input/output labels: avoid duplicating
+        information between the two!
       </div>
 
       <TargetLabelEditor
@@ -53,7 +53,7 @@ export default function SelectedTxEditor() {
         labelType="tx"
         refId={selectedTxid}
         labels={labelsFor(graph, "tx", selectedTxid)}
-        localFiles={localFiles}
+        editableFiles={editableFiles}
         onSaveLabel={saveLabel}
         onDeleteLabel={deleteLabel}
       />
@@ -89,11 +89,10 @@ export default function SelectedTxEditor() {
                       Input <strong>#{inputIndex}</strong>
                     </>
                   }
-                  subtitle={inputRef}
                   labelType="input"
                   refId={inputRef}
                   labels={labelsFor(graph, "input", inputRef)}
-                  localFiles={localFiles}
+                  editableFiles={editableFiles}
                   onSaveLabel={saveLabel}
                   onDeleteLabel={deleteLabel}
                 />
@@ -108,7 +107,7 @@ export default function SelectedTxEditor() {
                     labelType="addr"
                     refId={inputAddress}
                     labels={labelsFor(graph, "addr", inputAddress)}
-                    localFiles={localFiles}
+                    editableFiles={editableFiles}
                     onSaveLabel={saveLabel}
                     onDeleteLabel={deleteLabel}
                     note={inputAddressNote}
@@ -141,11 +140,10 @@ export default function SelectedTxEditor() {
                       Output <strong>#{outputIndex}</strong>
                     </>
                   }
-                  subtitle={outputRef}
                   labelType="output"
                   refId={outputRef}
                   labels={labelsFor(graph, "output", outputRef)}
-                  localFiles={localFiles}
+                  editableFiles={editableFiles}
                   onSaveLabel={saveLabel}
                   onDeleteLabel={deleteLabel}
                 />
@@ -160,7 +158,7 @@ export default function SelectedTxEditor() {
                   labelType="addr"
                   refId={addressRef ?? ""}
                   labels={addressRef ? labelsFor(graph, "addr", addressRef) : []}
-                  localFiles={localFiles}
+                  editableFiles={editableFiles}
                   onSaveLabel={saveLabel}
                   onDeleteLabel={deleteLabel}
                   disabled={!addressRef}

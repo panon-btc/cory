@@ -228,6 +228,8 @@ def start_cory(
     bind: str,
     port: int,
     log_path: Path,
+    labels_rw: list[Path] | None = None,
+    labels_ro: list[Path] | None = None,
 ) -> tuple[subprocess.Popen[str], Any, str, str]:
     cmd = [
         "cargo",
@@ -246,6 +248,10 @@ def start_cory(
         "--port",
         str(port),
     ]
+    for path in labels_rw or []:
+        cmd.extend(["--labels-rw", str(path)])
+    for path in labels_ro or []:
+        cmd.extend(["--labels-ro", str(path)])
     log(f"starting cory server, log={log_path}")
     log_file = log_path.open("w", encoding="utf-8")
     proc = subprocess.Popen(

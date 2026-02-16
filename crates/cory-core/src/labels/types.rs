@@ -1,6 +1,7 @@
 //! BIP-329 record types, label file definitions, and store error definitions.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -54,10 +55,11 @@ pub struct Bip329Record {
 // ==============================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum LabelFileKind {
-    Local,
-    Pack,
+    PersistentRw,
+    PersistentRo,
+    BrowserRw,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -72,10 +74,16 @@ pub enum LabelStoreError {
     EmptyLabel,
 
     #[error("label file already exists: {0}")]
-    DuplicateLocalFile(String),
+    DuplicateFileId(String),
 
-    #[error("local label file not found: {0}")]
-    LocalFileNotFound(String),
+    #[error("label file not found: {0}")]
+    FileNotFound(String),
+
+    #[error("label file is read-only: {0}")]
+    ReadOnlyFile(String),
+
+    #[error("operation only allowed on browser files: {0}")]
+    NotBrowserFile(String),
 
     #[error(transparent)]
     Core(#[from] CoreError),
@@ -84,12 +92,14 @@ pub enum LabelStoreError {
 /// Composite key for looking up labels: (type, ref_id).
 pub(super) type LabelKey = (Bip329Type, String);
 
-/// A loaded label file (local or pack).
+/// A loaded label file.
 pub struct LabelFile {
     pub id: String,
     pub name: String,
     pub kind: LabelFileKind,
     pub editable: bool,
+    /// On-disk path for auto-flushing PersistentRw files.
+    pub(super) source_path: Option<PathBuf>,
     pub(super) labels: HashMap<LabelKey, Bip329Record>,
 }
 

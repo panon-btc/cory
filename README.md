@@ -68,24 +68,27 @@ What it does:
 
 ## Labels
 
-- Import/export format: BIP-329 JSONL.
-- Local label files: editable and in-memory for the current server process.
-  Import/export is browser-managed (import reads from disk in browser, export downloads JSONL from server).
-- Pack label files: read-only, loaded from CLI `--label-pack-dir` folders.
+Import/export format: BIP-329 JSONL. Three label kinds:
+
+1. **Persistent (read-write)** — loaded from `--labels-rw` directories,
+   editable in the UI and auto-flushed to disk on every change.
+2. **Persistent (read-only)** — loaded from `--labels-ro` directories,
+   displayed in the UI but not editable. Ideal for label packs
+   (exchanges, hacks, etc.).
+3. **Browser** — created/imported/exported in the browser UI, editable
+   but ephemeral (lost when the server stops).
 
 Label resolution order:
-1. Local files
-2. Pack files
+1. Persistent read-write
+2. Browser
+3. Persistent read-only
 
 If multiple labels apply, the UI displays all matches.
 
-A label pack is a folder containing one or more read-only BIP-329 JSONL files.
-
-Example:
-- `labels/exchanges/binance.jsonl`
-- `labels/hacks/example_hack.jsonl`
-
-Each file becomes a namespace, derived from the relative path (e.g. `pack:exchanges/binance`).
+A label directory is a folder containing one or more `.jsonl` files.
+File IDs are derived from the relative path within the directory (e.g.
+`--labels-ro labels/` with `labels/exchanges/binance.jsonl` →
+`exchanges/binance`).
 
 ## Repo Layout
 

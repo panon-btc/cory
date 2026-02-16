@@ -312,13 +312,13 @@ async fn get_graph(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CreateLocalLabelFileRequest {
+struct CreateBrowserLabelFileRequest {
     name: String,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ImportLocalLabelFileRequest {
+struct ImportBrowserLabelFileRequest {
     name: String,
     content: String,
 }
@@ -326,8 +326,8 @@ struct ImportLocalLabelFileRequest {
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum CreateOrImportLabelFileRequest {
-    Create(CreateLocalLabelFileRequest),
-    Import(ImportLocalLabelFileRequest),
+    Create(CreateBrowserLabelFileRequest),
+    Import(ImportBrowserLabelFileRequest),
 }
 
 async fn list_local_label_files(
@@ -355,24 +355,24 @@ async fn create_or_import_local_label_file(
 
     let mut store = state.labels.write().await;
     let created = match req {
-        CreateOrImportLabelFileRequest::Create(request) => store.create_local_file(&request.name),
+        CreateOrImportLabelFileRequest::Create(request) => store.create_browser_file(&request.name),
         CreateOrImportLabelFileRequest::Import(request) => {
-            store.import_local_file(&request.name, &request.content)
+            store.import_browser_file(&request.name, &request.content)
         }
     }
     .map_err(map_label_store_error)?;
 
     let summary = store
-        .get_local_file(&created)
+        .get_file(&created)
         .map(label_file_to_summary)
-        .ok_or_else(|| AppError::Internal("created local label file was not found".to_string()))?;
+        .ok_or_else(|| AppError::Internal("created label file was not found".to_string()))?;
 
     Ok(Json(summary))
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct UpsertLocalLabelRequest {
+struct UpsertLabelRequest {
     #[serde(rename = "type")]
     label_type: Bip329Type,
     #[serde(rename = "ref")]
@@ -382,15 +382,15 @@ struct UpsertLocalLabelRequest {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ReplaceLocalLabelFileRequest {
+struct ReplaceBrowserLabelFileRequest {
     content: String,
 }
 
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum UpsertOrReplaceLabelFileRequest {
-    Upsert(UpsertLocalLabelRequest),
-    Replace(ReplaceLocalLabelFileRequest),
+    Upsert(UpsertLabelRequest),
+    Replace(ReplaceBrowserLabelFileRequest),
 }
 
 async fn upsert_or_replace_local_label_file(
@@ -405,18 +405,18 @@ async fn upsert_or_replace_local_label_file(
     let mut store = state.labels.write().await;
     match req {
         UpsertOrReplaceLabelFileRequest::Upsert(request) => {
-            store.set_local_label(&file_id, request.label_type, request.ref_id, request.label)
+            store.set_label(&file_id, request.label_type, request.ref_id, request.label)
         }
         UpsertOrReplaceLabelFileRequest::Replace(request) => {
-            store.replace_local_file_content(&file_id, &request.content)
+            store.replace_browser_file_content(&file_id, &request.content)
         }
     }
     .map_err(map_label_store_error)?;
 
     let summary = store
-        .get_local_file(&file_id)
+        .get_file(&file_id)
         .map(label_file_to_summary)
-        .ok_or_else(|| AppError::Internal("updated local label file was not found".to_string()))?;
+        .ok_or_else(|| AppError::Internal("updated label file was not found".to_string()))?;
 
     Ok(Json(summary))
 }
@@ -429,7 +429,7 @@ async fn delete_local_label_file(
     check_auth(&state.api_token, &headers)?;
     let mut store = state.labels.write().await;
     store
-        .remove_local_file(&file_id)
+        .remove_browser_file(&file_id)
         .map_err(map_label_store_error)?;
 
     Ok(Json(serde_json::json!({ "status": "deleted" })))
@@ -452,13 +452,13 @@ async fn delete_local_label_entry(
     check_auth(&state.api_token, &headers)?;
     let mut store = state.labels.write().await;
     store
-        .delete_local_label(&file_id, query.label_type, &query.ref_id)
+        .delete_label(&file_id, query.label_type, &query.ref_id)
         .map_err(map_label_store_error)?;
 
     let summary = store
-        .get_local_file(&file_id)
+        .get_file(&file_id)
         .map(label_file_to_summary)
-        .ok_or_else(|| AppError::Internal("updated local label file was not found".to_string()))?;
+        .ok_or_else(|| AppError::Internal("updated label file was not found".to_string()))?;
     Ok(Json(summary))
 }
 
@@ -470,11 +470,9 @@ async fn export_local_label_file(
     check_auth(&state.api_token, &headers)?;
     let store = state.labels.read().await;
     let file = store
-        .get_local_file(&file_id)
-        .ok_or_else(|| AppError::NotFound(format!("local label file not found: {file_id}")))?;
-    let content = store
-        .export_local_file(&file_id)
-        .map_err(map_label_store_error)?;
+        .get_file(&file_id)
+        .ok_or_else(|| AppError::NotFound(format!("label file not found: {file_id}")))?;
+    let content = store.export_file(&file_id).map_err(map_label_store_error)?;
 
     let mut response = (StatusCode::OK, content).into_response();
     response.headers_mut().insert(
@@ -572,11 +570,14 @@ fn label_file_to_summary(file: &LabelFile) -> LabelFileSummary {
 }
 fn map_label_store_error(err: LabelStoreError) -> AppError {
     match err {
-        LabelStoreError::DuplicateLocalFile(name) => {
-            AppError::Conflict(format!("local label file already exists: {name}"))
+        LabelStoreError::DuplicateFileId(name) => {
+            AppError::Conflict(format!("label file already exists: {name}"))
         }
-        LabelStoreError::LocalFileNotFound(file_id) => {
-            AppError::NotFound(format!("local label file not found: {file_id}"))
+        LabelStoreError::FileNotFound(file_id) => {
+            AppError::NotFound(format!("label file not found: {file_id}"))
+        }
+        LabelStoreError::ReadOnlyFile(_) | LabelStoreError::NotBrowserFile(_) => {
+            AppError::BadRequest(err.to_string())
         }
         LabelStoreError::EmptyFileName
         | LabelStoreError::EmptyRef
