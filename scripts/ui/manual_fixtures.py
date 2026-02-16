@@ -6,9 +6,10 @@ import json
 import os
 from pathlib import Path
 import signal
+import subprocess
 import sys
 import time
-from typing import Any
+from typing import Any, TypedDict
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -26,6 +27,173 @@ from common import (
     stop_process,
     wait_for_health,
 )
+
+LABEL_TARGET_TYPES = ("tx", "addr", "input", "output")
+RW_LABEL_FILES = (
+    Path("analyst/watchlist.jsonl"),
+    Path("ops/hot_wallets.jsonl"),
+    Path("ops/anomalies.jsonl"),
+)
+RO_LABEL_FILES = (
+    Path("reference/exchanges/major.jsonl"),
+    Path("incidents/hacks_2024.jsonl"),
+    Path("incidents/sanctions.jsonl"),
+)
+
+
+class LabelRefs(TypedDict):
+    tx: list[str]
+    input: list[str]
+    output: list[str]
+    addr: list[str]
+
+
+class LabelPackInfo(TypedDict):
+    rw_dir: Path
+    ro_dir: Path
+    rw_file_ids: list[str]
+    ro_file_ids: list[str]
+    rw_dir_display: str
+    ro_dir_display: str
+
+
+def repo_relative_or_abs(path: Path, root_dir: Path) -> str:
+    try:
+        return str(path.relative_to(root_dir))
+    except ValueError:
+        return str(path)
+
+
+def dedupe_preserve_order(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
+
+
+def collect_label_refs(cli_json, scenarios: list[dict[str, Any]]) -> LabelRefs:
+    candidate_txids = dedupe_preserve_order(
+        [txid for s in scenarios for txid in [s["root_txid"], *s["related_txids"]]]
+    )
+    available_txids: list[str] = []
+    input_refs: list[str] = []
+    output_refs: list[str] = []
+    addresses: list[str] = []
+
+    # Build references from live tx data so generated labels always map to
+    # entities that exist in the current fixture graph.
+    for txid in candidate_txids:
+        try:
+            tx = cli_json(["getrawtransaction", txid, "1"])
+        except subprocess.CalledProcessError as exc:
+            log(f"WARNING: skipping unavailable txid while generating labels: {txid} ({exc})")
+            continue
+        if not isinstance(tx, dict):
+            raise RuntimeError(f"unexpected getrawtransaction response for {txid}: {tx!r}")
+        available_txids.append(txid)
+
+        vins = tx.get("vin", [])
+        for vin_idx, _ in enumerate(vins):
+            input_refs.append(f"{txid}:{vin_idx}")
+
+        vouts = tx.get("vout", [])
+        for vout in vouts:
+            vout_n = int(vout["n"])
+            output_refs.append(f"{txid}:{vout_n}")
+            script = vout.get("scriptPubKey", {})
+            addr = script.get("address")
+            if isinstance(addr, str) and addr:
+                addresses.append(addr)
+
+    refs: LabelRefs = {
+        "tx": dedupe_preserve_order(available_txids),
+        "input": dedupe_preserve_order(input_refs),
+        "output": dedupe_preserve_order(output_refs),
+        "addr": dedupe_preserve_order(addresses),
+    }
+    for label_type, values in refs.items():
+        if not values:
+            raise RuntimeError(f"no {label_type} refs available for generated label fixtures")
+    return refs
+
+
+def pick_ref(pool: list[str], cursor: int) -> tuple[str, int]:
+    if not pool:
+        raise RuntimeError("cannot pick from an empty reference pool")
+    idx = cursor % len(pool)
+    return pool[idx], cursor + 1
+
+
+def write_jsonl(path: Path, records: list[dict[str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [json.dumps(record, separators=(",", ":")) for record in records]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def build_label_records(
+    *,
+    file_prefix: str,
+    refs: LabelRefs,
+    cursors: dict[str, int],
+) -> list[dict[str, str]]:
+    records: list[dict[str, str]] = []
+    for label_type in LABEL_TARGET_TYPES:
+        ref, next_cursor = pick_ref(refs[label_type], cursors[label_type])
+        cursors[label_type] = next_cursor
+        records.append(
+            {
+                "type": label_type,
+                "ref": ref,
+                "label": f"{file_prefix}_{label_type}",
+            }
+        )
+    return records
+
+
+def generate_persistent_label_dirs(
+    *,
+    root_dir: Path,
+    tmp_dir: Path,
+    run_id: str,
+    cli_json,
+    scenarios: list[dict[str, Any]],
+) -> LabelPackInfo:
+    refs = collect_label_refs(cli_json, scenarios)
+    labels_root = Path(tmp_dir) / f"ui_manual_labels-{run_id}"
+    rw_dir = labels_root / "rw"
+    ro_dir = labels_root / "ro"
+
+    # Folder layout intentionally mixes one-file and multi-file folders so
+    # manual testing can verify recursive discovery and grouping.
+    cursors = {label_type: 0 for label_type in LABEL_TARGET_TYPES}
+
+    for rel in RW_LABEL_FILES:
+        stem = rel.with_suffix("").as_posix().replace("/", "_")
+        write_jsonl(
+            rw_dir / rel,
+            build_label_records(file_prefix=f"rw_{stem}", refs=refs, cursors=cursors),
+        )
+    for rel in RO_LABEL_FILES:
+        stem = rel.with_suffix("").as_posix().replace("/", "_")
+        write_jsonl(
+            ro_dir / rel,
+            build_label_records(file_prefix=f"ro_{stem}", refs=refs, cursors=cursors),
+        )
+
+    rw_ids = [rel.with_suffix("").as_posix() for rel in RW_LABEL_FILES]
+    ro_ids = [rel.with_suffix("").as_posix() for rel in RO_LABEL_FILES]
+    return {
+        "rw_dir": rw_dir,
+        "ro_dir": ro_dir,
+        "rw_file_ids": rw_ids,
+        "ro_file_ids": ro_ids,
+        "rw_dir_display": repo_relative_or_abs(rw_dir, root_dir),
+        "ro_dir_display": repo_relative_or_abs(ro_dir, root_dir),
+    }
 
 
 def send_raw_with_outputs(
@@ -409,10 +577,17 @@ def print_scenario_table(scenarios: list[dict[str, Any]]) -> None:
     print("-" * 130)
 
 
-def print_examples(server_url: str, api_token: str, scenarios: list[dict[str, Any]]) -> None:
+def print_examples(
+    server_url: str,
+    api_token: str,
+    scenarios: list[dict[str, Any]],
+    labels_info: LabelPackInfo,
+) -> None:
     """Print example commands using `X-API-Token` authentication."""
     deep = next(s for s in scenarios if s["name"].startswith("deep_chain_"))
     diamond = next(s for s in scenarios if s["name"] == "diamond_merge")
+    rw_file_id = labels_info["rw_file_ids"][0]
+    ro_file_id = labels_info["ro_file_ids"][0]
 
     print()
     print("Copy/Paste Examples")
@@ -422,24 +597,35 @@ def print_examples(server_url: str, api_token: str, scenarios: list[dict[str, An
     print()
     print("2) API check for truncation (long chain):")
     print(
-        f"   curl -s \"{server_url}/api/v1/graph/tx/{deep['root_txid']}\" | jq '.truncated,.stats.max_depth_reached'"
+        f"   curl -s \"{server_url}/api/v1/graph/tx/{deep['root_txid']}\" -H \"x-api-token: {api_token}\" | jq '.truncated,.stats.max_depth_reached'"
     )
     print()
-    print("3) Mutating API example (set label on deep root):")
-    print("   # Create a label file, then upsert a label into it:")
+    print("3) Loaded persistent label files:")
     print(
-        "   FILE_ID=$(curl -s -X POST "
-        f"\"{server_url}/api/v1/label\" "
-        f"-H \"x-api-token: {api_token}\" "
-        "-H \"content-type: application/json\" "
-        "-d '{\"name\":\"manual\"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)[\"id\"])')"
+        f"   curl -s \"{server_url}/api/v1/label\" -H \"x-api-token: {api_token}\" | jq '.[] | {{id,name,kind,editable,record_count}}'"
     )
+    print()
+    print("4) Graph labels check (tx/input/output/address buckets):")
+    print(
+        f"   curl -s \"{server_url}/api/v1/graph/tx/{diamond['root_txid']}\" -H \"x-api-token: {api_token}\" | jq '.labels_by_type | to_entries | map({{type: .key, refs: (.value | length)}})'"
+    )
+    print()
+    print("5) Mutating API example (persistent RW file should succeed):")
     print(
         "   curl -s -X POST "
-        f"\"{server_url}/api/v1/label/$FILE_ID\" "
+        f"\"{server_url}/api/v1/label/{rw_file_id}\" "
         f"-H \"x-api-token: {api_token}\" "
         "-H \"content-type: application/json\" "
-        f"-d '{{\"type\":\"tx\",\"ref\":\"{deep['root_txid']}\",\"label\":\"manual-fixture\"}}'"
+        f"-d '{{\"type\":\"tx\",\"ref\":\"{deep['root_txid']}\",\"label\":\"manual-fixture-rw\"}}' | jq"
+    )
+    print()
+    print("6) Mutating API example (persistent RO file should fail read-only):")
+    print(
+        "   curl -s -X POST "
+        f"\"{server_url}/api/v1/label/{ro_file_id}\" "
+        f"-H \"x-api-token: {api_token}\" "
+        "-H \"content-type: application/json\" "
+        f"-d '{{\"type\":\"tx\",\"ref\":\"{deep['root_txid']}\",\"label\":\"manual-fixture-ro\"}}' | jq"
     )
 
 
@@ -525,6 +711,17 @@ def main() -> int:
             mine_addr=mine_addr,
             profile=args.profile,
         )
+        labels_info = generate_persistent_label_dirs(
+            root_dir=root_dir,
+            tmp_dir=cfg.tmp_dir,
+            run_id=cfg.run_id,
+            cli_json=handle.cli_json,
+            scenarios=scenarios,
+        )
+        log(
+            "generated persistent label packs "
+            f"rw={labels_info['rw_dir_display']} ro={labels_info['ro_dir_display']}"
+        )
 
         rpc_url = f"http://127.0.0.1:{cfg.rpc_port}"
         cory_proc, cory_log_file, server_url, api_token = start_cory(
@@ -535,13 +732,23 @@ def main() -> int:
             bind=args.bind,
             port=port,
             log_path=cory_log,
+            labels_rw=[labels_info["rw_dir"]],
+            labels_ro=[labels_info["ro_dir"]],
         )
         wait_for_health(server_url)
 
         fixture = {
-            "schema_version": 2,
+            "schema_version": 3,
             "run_id": cfg.run_id,
             "server_url": server_url,
+            "label_dirs": {
+                "rw": labels_info["rw_dir_display"],
+                "ro": labels_info["ro_dir_display"],
+            },
+            "label_file_ids": {
+                "persistent_rw": labels_info["rw_file_ids"],
+                "persistent_ro": labels_info["ro_file_ids"],
+            },
             "scenarios": [
                 {
                     "name": s["name"],
@@ -561,9 +768,11 @@ def main() -> int:
         print(f"Fixture:     {fixture_file}")
         print(f"bitcoind log:{cfg.bitcoind_log}")
         print(f"cory log:    {cory_log}")
+        print(f"labels rw:   {labels_info['rw_dir_display']}")
+        print(f"labels ro:   {labels_info['ro_dir_display']}")
 
         print_scenario_table(scenarios)
-        print_examples(server_url, api_token, scenarios)
+        print_examples(server_url, api_token, scenarios, labels_info)
 
         print()
         print("Shutdown")
