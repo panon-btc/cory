@@ -26,6 +26,7 @@ use super::SharedState;
 const MAX_GRAPH_DEPTH: usize = 1000;
 const MAX_GRAPH_NODES: usize = 50_000;
 const MAX_GRAPH_EDGES: usize = 200_000;
+const MAX_HISTORY_ENTRIES: usize = 1000;
 
 // ==============================================================================
 // DTOs
@@ -92,6 +93,10 @@ pub(super) async fn get_graph(
         .parse()
         .map_err(|e| AppError::BadRequest(format!("invalid txid: {e}")))?;
 
+    validate_nonzero_limit("max_depth", query.max_depth)?;
+    validate_nonzero_limit("max_nodes", query.max_nodes)?;
+    validate_nonzero_limit("max_edges", query.max_edges)?;
+
     let limits = GraphLimits {
         max_depth: query
             .max_depth
@@ -115,18 +120,15 @@ pub(super) async fn get_graph(
         state.rpc_concurrency,
     )
     .await
-    .map_err(|e| AppError::Internal(format!("build ancestry graph for {txid}: {e}")))?;
+    .map_err(|e| map_graph_build_error(txid, e))?;
 
     // Record successful ancestry searches for the server-lifetime history panel.
     // Repeated txids overwrite their timestamp instead of creating duplicates.
     let searched_at = OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .map_err(|e| AppError::Internal(format!("format search timestamp: {e}")))?;
-    state
-        .history
-        .write()
-        .await
-        .insert(txid.to_string(), searched_at);
+    let mut history = state.history.write().await;
+    record_search_history(&mut history, txid.to_string(), searched_at, MAX_HISTORY_ENTRIES);
 
     let label_store = state.labels.read().await;
     let enrichments = build_graph_enrichments(&graph, &label_store, state.network);
@@ -139,6 +141,54 @@ pub(super) async fn get_graph(
         output_address_refs: enrichments.output_address_refs,
         address_occurrences: enrichments.address_occurrences,
     }))
+}
+
+// ==============================================================================
+// Error Mapping and Validation Helpers
+// ==============================================================================
+
+fn validate_nonzero_limit(field: &str, value: Option<usize>) -> Result<(), AppError> {
+    if value == Some(0) {
+        return Err(AppError::BadRequest(format!("{field} must be at least 1")));
+    }
+    Ok(())
+}
+
+fn map_graph_build_error(txid: bitcoin::Txid, err: cory_core::CoreError) -> AppError {
+    match err {
+        cory_core::CoreError::TxNotFound(_) => {
+            AppError::NotFound(format!("transaction not found: {txid}"))
+        }
+        cory_core::CoreError::InvalidTxData(message) => AppError::BadRequest(message),
+        cory_core::CoreError::Rpc(rpc) => AppError::BadGateway(format!("bitcoin rpc error: {rpc}")),
+        other => AppError::Internal(format!("build ancestry graph for {txid}: {other}")),
+    }
+}
+
+fn record_search_history(
+    history: &mut HashMap<String, String>,
+    txid: String,
+    searched_at: String,
+    max_entries: usize,
+) {
+    if let Some(existing) = history.get_mut(&txid) {
+        *existing = searched_at;
+        return;
+    }
+
+    if history.len() >= max_entries {
+        // RFC3339 UTC strings sort chronologically; removing the smallest
+        // timestamp evicts the oldest entry.
+        if let Some(oldest_txid) = history
+            .iter()
+            .min_by(|a, b| a.1.cmp(b.1))
+            .map(|(existing_txid, _)| existing_txid.clone())
+        {
+            history.remove(&oldest_txid);
+        }
+    }
+
+    history.insert(txid, searched_at);
 }
 
 // ==============================================================================
@@ -288,4 +338,69 @@ fn to_label_entries(labels: Vec<(&LabelFile, &Bip329Record)>) -> Vec<LabelEntry>
             label: rec.label.clone(),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::response::IntoResponse;
+
+    #[test]
+    fn validate_nonzero_limit_rejects_zero() {
+        let err =
+            validate_nonzero_limit("max_nodes", Some(0)).expect_err("zero limit must be rejected");
+        let response = err.into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn record_search_history_evicts_oldest_when_full() {
+        let mut history = HashMap::new();
+        record_search_history(
+            &mut history,
+            "old".to_string(),
+            "2024-01-01T00:00:00Z".to_string(),
+            2,
+        );
+        record_search_history(
+            &mut history,
+            "newer".to_string(),
+            "2024-01-02T00:00:00Z".to_string(),
+            2,
+        );
+        record_search_history(
+            &mut history,
+            "latest".to_string(),
+            "2024-01-03T00:00:00Z".to_string(),
+            2,
+        );
+
+        assert_eq!(history.len(), 2);
+        assert!(!history.contains_key("old"));
+        assert!(history.contains_key("newer"));
+        assert!(history.contains_key("latest"));
+    }
+
+    #[test]
+    fn record_search_history_updates_existing_entry_without_growth() {
+        let mut history = HashMap::new();
+        record_search_history(
+            &mut history,
+            "same".to_string(),
+            "2024-01-01T00:00:00Z".to_string(),
+            2,
+        );
+        record_search_history(
+            &mut history,
+            "same".to_string(),
+            "2024-01-03T00:00:00Z".to_string(),
+            2,
+        );
+
+        assert_eq!(history.len(), 1);
+        assert_eq!(
+            history.get("same").expect("existing key must be present"),
+            "2024-01-03T00:00:00Z"
+        );
+    }
 }
