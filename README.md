@@ -5,16 +5,14 @@
 <p align="center">Local-first Bitcoin transaction ancestry explorer and BIP-329 label editor.</p>
 
 <p align="center">
-  [out_lt3mb.webm](https://github.com/user-attachments/assets/0338f1f3-111d-41ef-9769-6c4e46c9e298)
+  <video src="https://github.com/user-attachments/assets/0338f1f3-111d-41ef-9769-6c4e46c9e298" alt="Cory screenshot" controls></video>
 </p>
-
-## What This Is
 
 This project aims to be a privacy-preserving tool that:
 - Connects to a local Bitcoin Core node over RPC.
 - Builds a transaction spending ancestry graph (DAG with merges) starting from a user-provided `txid`.
 - Lets you create/import/export in-memory local label files in BIP-329 (JSONL) from the Web UI.
-- Lets you load additional read-only "label packs" (e.g. exchanges, hacks) from folders and apply them as annotations in the graph.
+- Lets you load additional server labels (e.g. exchanges, hacks) from folders and apply them as annotations in the graph.
 
 ## Requirements
 
