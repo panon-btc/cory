@@ -128,7 +128,12 @@ pub(super) async fn get_graph(
         .format(&Rfc3339)
         .map_err(|e| AppError::Internal(format!("format search timestamp: {e}")))?;
     let mut history = state.history.write().await;
-    record_search_history(&mut history, txid.to_string(), searched_at, MAX_HISTORY_ENTRIES);
+    record_search_history(
+        &mut history,
+        txid.to_string(),
+        searched_at,
+        MAX_HISTORY_ENTRIES,
+    );
 
     let label_store = state.labels.read().await;
     let enrichments = build_graph_enrichments(&graph, &label_store, state.network);
