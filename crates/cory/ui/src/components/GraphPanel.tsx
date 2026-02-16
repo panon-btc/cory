@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from "react";
+import { useMemo, useCallback, useEffect, useRef } from "react";
 import {
   ReactFlow,
   Controls,
@@ -7,6 +7,8 @@ import {
   BackgroundVariant,
   applyNodeChanges,
   applyEdgeChanges,
+  useReactFlow,
+  useNodesInitialized,
 } from "@xyflow/react";
 import type { NodeChange, EdgeChange } from "@xyflow/react";
 import TxNode from "./txnode/Node";
@@ -19,6 +21,7 @@ import type { TxFlowNode } from "../layout";
 // This eliminates the previous two-state sync pattern (useNodesState +
 // useEffect + syncingFromPropsRef) that was fragile and order-dependent.
 export default function GraphPanel() {
+  const { setCenter, fitView } = useReactFlow();
   const nodes = useAppStore((s) => s.nodes);
   const edges = useAppStore((s) => s.edges);
   const loading = useAppStore((s) => s.loading);
@@ -30,6 +33,10 @@ export default function GraphPanel() {
   const setNodes = useAppStore((s) => s.setNodes);
   const setEdges = useAppStore((s) => s.setEdges);
   const setHasUserMovedNodes = useAppStore((s) => s.setHasUserMovedNodes);
+  const searchFocusRequestId = useAppStore((s) => s.searchFocusRequestId);
+  const searchFocusTxid = useAppStore((s) => s.searchFocusTxid);
+  const lastCenteredFocusRequestIdRef = useRef(0);
+  const nodesInitialized = useNodesInitialized();
 
   const nodeTypes = useMemo(() => ({ tx: TxNode }), []);
 
@@ -51,6 +58,42 @@ export default function GraphPanel() {
   );
 
   const minimapNodeColor = useCallback(() => "var(--accent)", []);
+
+  // After each successful search, center the searched txid and select it.
+  // This runs once per search completion (guarded by request id), not on
+  // subsequent drags/edits.
+  useEffect(() => {
+    if (!nodesInitialized) return;
+    if (!searchFocusTxid) return;
+    if (searchFocusRequestId === 0) return;
+    if (lastCenteredFocusRequestIdRef.current === searchFocusRequestId) return;
+
+    const node = nodes.find((n) => n.id === searchFocusTxid);
+    if (!node) return;
+
+    const width = typeof node.style?.width === "number" ? node.style.width : 0;
+    const height = typeof node.style?.height === "number" ? node.style.height : 0;
+    const centerX = node.position.x + width / 2;
+    const centerY = node.position.y + height / 2;
+
+    setSelectedTxid(searchFocusTxid);
+    void fitView({
+      nodes: [{ id: searchFocusTxid }],
+      duration: 300,
+      padding: 0.35,
+      includeHiddenNodes: true,
+    });
+    setCenter(centerX, centerY, { duration: 300 });
+    lastCenteredFocusRequestIdRef.current = searchFocusRequestId;
+  }, [
+    fitView,
+    nodes,
+    nodesInitialized,
+    searchFocusRequestId,
+    searchFocusTxid,
+    setCenter,
+    setSelectedTxid,
+  ]);
 
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: TxFlowNode) => {
