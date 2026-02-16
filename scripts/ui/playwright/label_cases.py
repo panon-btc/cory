@@ -46,8 +46,9 @@ def test_create_label_file(r: E2ERunner) -> None:
     section.get_by_placeholder("New file name").fill("test-labels")
     section.get_by_role("button", name="Create").click()
 
-    expect(section.get_by_text("test-labels")).to_be_visible(timeout=5000)
-    expect(section.get_by_text("0 labels")).to_be_visible(timeout=5000)
+    created_file = section.locator("li").filter(has_text="test-labels").first
+    expect(created_file).to_be_visible(timeout=5000)
+    expect(created_file.get_by_text("(0)")).to_be_visible(timeout=5000)
 
 
 def test_duplicate_create_fails(r: E2ERunner) -> None:
@@ -68,8 +69,9 @@ def test_import_jsonl(r: E2ERunner) -> None:
     section = r.label_files_section()
     section.locator('input[type="file"]').set_input_files(str(fixture_path()))
 
-    expect(section.get_by_text("e2e_import_fixture")).to_be_visible(timeout=5000)
-    expect(section.get_by_text("2 labels")).to_be_visible(timeout=5000)
+    imported_file = section.locator("li").filter(has_text="e2e_import_fixture").first
+    expect(imported_file).to_be_visible(timeout=5000)
+    expect(imported_file.get_by_text("(2)")).to_be_visible(timeout=5000)
 
 
 def test_duplicate_import_fails(r: E2ERunner) -> None:
@@ -355,4 +357,3 @@ def build_tests(runner: E2ERunner) -> list[tuple[str, Callable[[], None]]]:
         ("test_viewport_stable_on_create", lambda: test_viewport_stable_on_create(runner)),
         ("test_drag_preserved_on_save", lambda: test_drag_preserved_on_save(runner)),
     ]
-
