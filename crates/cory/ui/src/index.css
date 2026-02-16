@@ -108,8 +108,7 @@ input::placeholder {
 input:focus-visible,
 select:focus-visible,
 button:focus-visible,
-summary:focus-visible,
-[role="button"]:focus-visible {
+summary:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
@@ -273,6 +272,11 @@ button:active:not(:disabled) {
   color: var(--text-primary);
 }
 
+.resize-handle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
 .resize-handle-collapsed {
   background: color-mix(in srgb, var(--surface-2) 70%, var(--accent) 30%);
   color: var(--text-primary);
@@ -310,10 +314,10 @@ button:active:not(:disabled) {
   stroke-width: 1.5;
 }
 
-.react-flow__node-tx.selected,
-.react-flow__node.selected {
-  outline: 1px solid color-mix(in srgb, var(--accent) 68%, transparent);
-  outline-offset: 1px;
+/* React Flow nodes are selectable and already visually highlighted.
+   Suppress browser default focus rectangles that look like random blue boxes. */
+.react-flow__node:focus-visible {
+  outline: none !important;
 }
 
 .react-flow__attribution {

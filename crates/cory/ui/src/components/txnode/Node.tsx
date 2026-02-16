@@ -1,6 +1,7 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
+import { Copy } from "lucide-react";
 import type { TxOutputDisplayRow, TxFlowNode } from "../../layout";
 import {
   IO_START_TOP,
@@ -195,7 +196,7 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
             cursor: "pointer",
           }}
         >
-          ⧉
+          <Copy size={12} strokeWidth={2} aria-hidden="true" />
         </button>
         <MiddleEllipsisText
           text={data.txid}
@@ -231,7 +232,6 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
       </div>
 
       <div
-        className="nodrag nopan"
         style={{
           marginTop: 8,
           display: "grid",
