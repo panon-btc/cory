@@ -1,6 +1,7 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
+import { Copy } from "lucide-react";
 import type { TxOutputDisplayRow, TxFlowNode } from "../../layout";
 import {
   IO_START_TOP,
@@ -129,14 +130,16 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
   return (
     <div
       style={{
-        background: "var(--surface)",
-        border: `1.5px solid ${selected ? "var(--accent)" : "var(--border)"}`,
+        background: "var(--surface-1)",
+        border: `1.5px solid ${selected ? "var(--accent)" : "var(--border-subtle)"}`,
         borderRadius: 4,
         padding: "8px 10px",
         width: data.nodeWidth,
         fontFamily: "var(--mono)",
         fontSize: 11,
-        boxShadow: selected ? "0 0 8px var(--accent)" : undefined,
+        boxShadow: selected
+          ? "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent), 0 4px 14px color-mix(in srgb, var(--accent) 24%, transparent)"
+          : undefined,
       }}
     >
       {data.inputRows.map((row, index) => (
@@ -170,7 +173,7 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
             position={Position.Right}
             style={{
               top: measuredOutputHandleTops[row.index] ?? outputHandleTops[row.index],
-              background: "var(--border)",
+              background: "var(--border-strong)",
             }}
           />
         ))}
@@ -193,7 +196,7 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
             cursor: "pointer",
           }}
         >
-          ⧉
+          <Copy size={12} strokeWidth={2} aria-hidden="true" />
         </button>
         <MiddleEllipsisText
           text={data.txid}
@@ -229,7 +232,6 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
       </div>
 
       <div
-        className="nodrag nopan"
         style={{
           marginTop: 8,
           display: "grid",

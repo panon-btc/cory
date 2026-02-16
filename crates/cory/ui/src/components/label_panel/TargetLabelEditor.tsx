@@ -1,4 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { Plus } from "lucide-react";
 import { useAutosave } from "../../hooks/useAutosave";
 import type { Bip329Type, LabelEntry, LabelFileSummary } from "../../types";
 import { AddLabelSection } from "./target_label_editor/AddLabelSection";
@@ -10,7 +11,6 @@ import {
   errorTextStyle,
   headerStyle,
   iconActionButtonStyle,
-  iconImageStyle,
   idleAddMessage,
   mutedTextStyle,
   partitionLabels,
@@ -145,7 +145,7 @@ export default function TargetLabelEditor({
     >
       <div style={headerStyle}>
         <div>
-          <div style={{ color: "var(--accent)", fontSize: 11 }}>{title}</div>
+          <div style={{ color: "var(--text-secondary)", fontSize: 11 }}>{title}</div>
           {subtitle && <div style={subtitleStyle}>{subtitle}</div>}
         </div>
         {canStartAdding && (
@@ -155,7 +155,7 @@ export default function TargetLabelEditor({
             style={iconActionButtonStyle}
             title="Add label"
           >
-            <img src="/img/add.svg" alt="" aria-hidden="true" style={iconImageStyle} />
+            <Plus size={14} strokeWidth={2} aria-hidden="true" />
           </button>
         )}
       </div>

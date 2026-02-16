@@ -3,6 +3,7 @@ import { ReactFlowProvider } from "@xyflow/react";
 import { useAppStore, relayoutIfHeightsChanged } from "./store";
 import { setApiToken } from "./api";
 import { useSidebarResize } from "./hooks/useSidebarResize";
+import { useThemeMode } from "./hooks/useThemeMode";
 import Header from "./components/Header";
 import GraphPanel from "./components/GraphPanel";
 import LabelPanel from "./components/label_panel/Panel";
@@ -19,6 +20,7 @@ export default function App() {
     closeSidebar,
     onResizeStart: handleSidebarResizeStart,
   } = useSidebarResize();
+  const { themeMode, toggleThemeMode } = useThemeMode();
   const graph = useAppStore((s) => s.graph);
 
   // On mount: sync API token, load label files, and kick off the initial
@@ -56,6 +58,7 @@ export default function App() {
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
           <GraphPanel />
           <div
+            className={`resize-handle ${isSidebarOpen ? "" : "resize-handle-collapsed"}`.trim()}
             role={isSidebarOpen ? "separator" : "button"}
             aria-orientation={isSidebarOpen ? "vertical" : undefined}
             // One drag interaction handles both states:
@@ -77,12 +80,10 @@ export default function App() {
             style={{
               width: isSidebarOpen ? 6 : 16,
               cursor: isSidebarOpen ? "col-resize" : "pointer",
-              background: "var(--border)",
               opacity: isSidebarOpen ? 0.45 : 0.75,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              color: "var(--text-muted)",
               userSelect: "none",
             }}
             title={
@@ -93,7 +94,14 @@ export default function App() {
           >
             {!isSidebarOpen && "‹"}
           </div>
-          {isSidebarOpen && <LabelPanel width={sidebarWidth} onClose={closeSidebar} />}
+          {isSidebarOpen && (
+            <LabelPanel
+              width={sidebarWidth}
+              onClose={closeSidebar}
+              themeMode={themeMode}
+              onToggleThemeMode={toggleThemeMode}
+            />
+          )}
         </div>
       </div>
     </ReactFlowProvider>

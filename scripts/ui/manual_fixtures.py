@@ -76,8 +76,20 @@ def dedupe_preserve_order(items: list[str]) -> list[str]:
 
 
 def collect_label_refs(cli_json, scenarios: list[dict[str, Any]]) -> LabelRefs:
+    # Allow scenarios to narrow the txids used for label fixture generation.
+    # This avoids probing intentionally stale/conflicted txids (for example an
+    # RBF-replaced original tx) that are useful for scenario metadata but
+    # unavailable via `getrawtransaction`.
     candidate_txids = dedupe_preserve_order(
-        [txid for s in scenarios for txid in [s["root_txid"], *s["related_txids"]]]
+        [
+            txid
+            for s in scenarios
+            for txid in (
+                s.get("label_txids")
+                if isinstance(s.get("label_txids"), list) and s.get("label_txids")
+                else [s["root_txid"], *s["related_txids"]]
+            )
+        ]
     )
     available_txids: list[str] = []
     input_refs: list[str] = []
@@ -478,6 +490,7 @@ def build_scenarios(
                 "description": "RBF-signaling transaction replaced by a higher-fee spend.",
                 "root_txid": rbf_txid_2,
                 "related_txids": [rbf_txid_1, rbf_txid_2],
+                "label_txids": [rbf_txid_2],
                 "suggested_ui_checks": [
                     "Replacement tx appears as current spend of the same outpoint.",
                     "RBF signaling metadata is visible on the replacement path.",

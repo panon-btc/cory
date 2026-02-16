@@ -13,6 +13,7 @@
   "dependencies": {
     "@xyflow/react": "^12",
     "elkjs": "^0.10",
+    "lucide-react": "^0.564.0",
     "react": "^19",
     "react-dom": "^19",
     "zustand": "^5.0.11"

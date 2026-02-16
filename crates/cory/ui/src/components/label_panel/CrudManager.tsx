@@ -16,6 +16,7 @@ interface CrudManagerProps {
   sectionStyle: CSSProperties;
   summaryStyle: CSSProperties;
   setPanelError: (error: string | null) => void;
+  onOpenFile: (file: LabelFileSummary) => void;
 }
 
 function fileNameWithoutJsonl(fileName: string): string {
@@ -29,6 +30,7 @@ export function CrudManager({
   sectionStyle,
   summaryStyle,
   setPanelError,
+  onOpenFile,
 }: CrudManagerProps) {
   const labelsChanged = useAppStore((s) => s.labelsChanged);
   const storeHandleAuthError = useAppStore((s) => s.handleAuthError);
@@ -202,14 +204,12 @@ export function CrudManager({
         }}
       >
         <div
+          className="notice notice-warning"
           style={{
-            border: "1px solid var(--border)",
-            borderRadius: 4,
             padding: 8,
-            color: "var(--warning)",
             fontSize: 10,
             fontStyle: "italic",
-            fontWeight: 700,
+            fontWeight: 500,
           }}
         >
           Browser label files are stored in memory, if you forget to export before closing the
@@ -231,14 +231,21 @@ export function CrudManager({
             spellCheck={false}
             style={{ flex: 1 }}
           />
-          <button onClick={() => void handleCreateFile()}>Create</button>
+          <button className="btn-primary" onClick={() => void handleCreateFile()}>
+            Create
+          </button>
         </div>
 
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <button onClick={handleImportClick} style={{ fontSize: 11, padding: "4px 8px" }}>
+          <button
+            className="btn-primary"
+            onClick={handleImportClick}
+            style={{ fontSize: 11, padding: "4px 8px" }}
+          >
             Import JSONL
           </button>
           <button
+            className="btn-primary"
             onClick={() => void handleExportAllBrowserLabels()}
             style={{ fontSize: 11, padding: "4px 8px" }}
           >
@@ -273,22 +280,33 @@ export function CrudManager({
                     alignItems: "center",
                   }}
                 >
-                  <div>
-                    <div style={{ color: "var(--text)" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <button
+                      className="row-action-button"
+                      type="button"
+                      onClick={() => onOpenFile(file)}
+                      style={{
+                        padding: 0,
+                        fontSize: 12,
+                      }}
+                      title={`Open labels from '${file.name}'`}
+                    >
                       {file.name}{" "}
                       <span style={{ color: "var(--text-muted)", fontSize: 10 }}>
                         ({file.record_count})
                       </span>
-                    </div>
+                    </button>
                   </div>
                   <div style={{ display: "flex", gap: 4 }}>
                     <button
+                      className="btn-ghost"
                       onClick={() => void handleExport(file)}
                       style={{ fontSize: 10, padding: "2px 6px" }}
                     >
                       Export
                     </button>
                     <button
+                      className="btn-danger"
                       onClick={() => void handleDelete(file)}
                       style={{ fontSize: 10, padding: "2px 6px" }}
                     >

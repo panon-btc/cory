@@ -50,7 +50,7 @@ export default function GraphPanel() {
     [setEdges],
   );
 
-  const minimapNodeColor = useCallback(() => "var(--accent-dim)", []);
+  const minimapNodeColor = useCallback(() => "var(--accent)", []);
 
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: TxFlowNode) => {
@@ -68,7 +68,11 @@ export default function GraphPanel() {
   }
 
   if (error) {
-    return <div style={{ flex: 1, padding: 20, color: "var(--accent)" }}>Error: {error}</div>;
+    return (
+      <div style={{ flex: 1, padding: 20 }} className="text-error">
+        Error: {error}
+      </div>
+    );
   }
 
   if (!graph) {
@@ -83,12 +87,13 @@ export default function GraphPanel() {
     <div style={{ flex: 1, position: "relative" }}>
       {stats && (
         <div
+          className="stats-chip"
           style={{
             position: "absolute",
             top: 10,
             left: 10,
             zIndex: 5,
-            color: "var(--text-muted)",
+            color: "var(--text-secondary)",
             fontSize: 11,
             fontFamily: "var(--mono)",
             maxWidth: "calc(100% - 20px)",
@@ -96,7 +101,11 @@ export default function GraphPanel() {
         >
           {stats.node_count} transactions, {stats.edge_count} edges, max depth{" "}
           {stats.max_depth_reached}
-          {truncated && <span style={{ color: "var(--warning)", marginLeft: 8 }}>(truncated)</span>}
+          {truncated && (
+            <span className="text-warning" style={{ marginLeft: 8 }}>
+              (truncated)
+            </span>
+          )}
         </div>
       )}
       <ReactFlow

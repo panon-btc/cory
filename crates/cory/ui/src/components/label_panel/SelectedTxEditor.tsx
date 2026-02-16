@@ -32,14 +32,12 @@ export default function SelectedTxEditor() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div
+        className="notice notice-warning"
         style={{
-          border: "1px solid var(--border)",
-          borderRadius: 4,
           padding: 8,
-          color: "var(--warning)",
           fontSize: 10,
           fontStyle: "italic",
-          fontWeight: 700,
+          fontWeight: 500,
         }}
       >
         Address labels apply to a single address and are shared wherever that same address appears
@@ -67,7 +65,7 @@ export default function SelectedTxEditor() {
         }}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ color: "var(--accent)", fontSize: 11, marginTop: 2 }}>Inputs</div>
+          <div style={{ color: "var(--text-secondary)", fontSize: 11, marginTop: 2 }}>Inputs</div>
           {tx.inputs.map((_, inputIndex) => {
             const inputRef = `${selectedTxid}:${inputIndex}`;
             const inputAddress = graph.input_address_refs[inputRef] ?? null;
@@ -119,7 +117,7 @@ export default function SelectedTxEditor() {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ color: "var(--accent)", fontSize: 11, marginTop: 2 }}>Outputs</div>
+          <div style={{ color: "var(--text-secondary)", fontSize: 11, marginTop: 2 }}>Outputs</div>
           {tx.outputs.map((_, outputIndex) => {
             const outputRef = `${selectedTxid}:${outputIndex}`;
             const addressRef = graph.output_address_refs[outputRef] ?? null;
