@@ -13,7 +13,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use cory_core::cache::Cache;
 use cory_core::enrich;
-use cory_core::labels::{Bip329Type, LabelFileKind, LabelFileSummary, LabelStore, LabelStoreError};
+use cory_core::labels::{Bip329Type, LabelFile, LabelFileKind, LabelStore, LabelStoreError};
 use cory_core::rpc::BitcoinRpc;
 use cory_core::types::GraphLimits;
 
@@ -153,6 +153,15 @@ struct LabelEntry {
     file_kind: LabelFileKind,
     editable: bool,
     label: String,
+}
+
+#[derive(Serialize)]
+struct LabelFileSummary {
+    id: String,
+    name: String,
+    kind: LabelFileKind,
+    editable: bool,
+    record_count: usize,
 }
 
 #[derive(Default, Serialize)]
@@ -327,7 +336,13 @@ async fn list_local_label_files(
 ) -> Result<Json<Vec<LabelFileSummary>>, AppError> {
     check_auth(&state.api_token, &headers)?;
     let store = state.labels.read().await;
-    Ok(Json(store.list_files()))
+    Ok(Json(
+        store
+            .list_files()
+            .into_iter()
+            .map(label_file_to_summary)
+            .collect(),
+    ))
 }
 
 async fn create_or_import_local_label_file(
@@ -348,7 +363,8 @@ async fn create_or_import_local_label_file(
     .map_err(map_label_store_error)?;
 
     let summary = store
-        .get_local_file_summary(&created.id)
+        .get_local_file(&created)
+        .map(label_file_to_summary)
         .ok_or_else(|| AppError::Internal("created local label file was not found".to_string()))?;
 
     Ok(Json(summary))
@@ -398,7 +414,8 @@ async fn upsert_or_replace_local_label_file(
     .map_err(map_label_store_error)?;
 
     let summary = store
-        .get_local_file_summary(&file_id)
+        .get_local_file(&file_id)
+        .map(label_file_to_summary)
         .ok_or_else(|| AppError::Internal("updated local label file was not found".to_string()))?;
 
     Ok(Json(summary))
@@ -439,7 +456,8 @@ async fn delete_local_label_entry(
         .map_err(map_label_store_error)?;
 
     let summary = store
-        .get_local_file_summary(&file_id)
+        .get_local_file(&file_id)
+        .map(label_file_to_summary)
         .ok_or_else(|| AppError::Internal("updated local label file was not found".to_string()))?;
     Ok(Json(summary))
 }
@@ -451,8 +469,8 @@ async fn export_local_label_file(
 ) -> Result<Response, AppError> {
     check_auth(&state.api_token, &headers)?;
     let store = state.labels.read().await;
-    let summary = store
-        .get_local_file_summary(&file_id)
+    let file = store
+        .get_local_file(&file_id)
         .ok_or_else(|| AppError::NotFound(format!("local label file not found: {file_id}")))?;
     let content = store
         .export_local_file(&file_id)
@@ -463,7 +481,7 @@ async fn export_local_label_file(
         axum::http::header::CONTENT_TYPE,
         axum::http::HeaderValue::from_static("text/plain; charset=utf-8"),
     );
-    let disposition = format!("attachment; filename=\"{}.jsonl\"", summary.name);
+    let disposition = format!("attachment; filename=\"{}.jsonl\"", file.name);
     let disposition_header = axum::http::HeaderValue::from_str(&disposition)
         .map_err(|e| AppError::Internal(format!("invalid content disposition header: {e}")))?;
     response
@@ -529,21 +547,28 @@ fn check_auth(expected_token: &str, headers: &HeaderMap) -> Result<(), AppError>
 }
 
 fn to_label_entries(
-    labels: Vec<(
-        cory_core::labels::LabelFileMeta,
-        cory_core::labels::Bip329Record,
-    )>,
+    labels: Vec<(&LabelFile, &cory_core::labels::Bip329Record)>,
 ) -> Vec<LabelEntry> {
     labels
         .into_iter()
         .map(|(meta, rec)| LabelEntry {
-            file_id: meta.id,
-            file_name: meta.name,
+            file_id: meta.id.clone(),
+            file_name: meta.name.clone(),
             file_kind: meta.kind,
             editable: meta.editable,
-            label: rec.label,
+            label: rec.label.clone(),
         })
         .collect()
+}
+
+fn label_file_to_summary(file: &LabelFile) -> LabelFileSummary {
+    LabelFileSummary {
+        id: file.id.clone(),
+        name: file.name.clone(),
+        kind: file.kind,
+        editable: file.editable,
+        record_count: file.record_count(),
+    }
 }
 fn map_label_store_error(err: LabelStoreError) -> AppError {
     match err {

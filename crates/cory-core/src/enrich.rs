@@ -1,3 +1,8 @@
+//! Transaction enrichment and analysis utilities.
+//!
+//! Provides script classification, fee/feerate computation, RBF signaling
+//! detection, and locktime interpretation.
+
 use bitcoin::{Amount, Script};
 use serde::{Deserialize, Serialize};
 
@@ -40,15 +45,15 @@ pub fn classify_script(script: &Script) -> ScriptType {
 /// transaction, or an input whose prevout was not resolved).
 #[must_use]
 pub fn compute_fee(tx: &TxNode) -> Option<Amount> {
-    let mut total_in = Amount::ZERO;
-    for input in &tx.inputs {
-        total_in = total_in.checked_add(input.value?)?;
-    }
+    let total_in = tx
+        .inputs
+        .iter()
+        .try_fold(Amount::ZERO, |acc, input| acc.checked_add(input.value?))?;
 
-    let mut total_out = Amount::ZERO;
-    for output in &tx.outputs {
-        total_out = total_out.checked_add(output.value)?;
-    }
+    let total_out = tx
+        .outputs
+        .iter()
+        .try_fold(Amount::ZERO, |acc, output| acc.checked_add(output.value))?;
 
     total_in.checked_sub(total_out)
 }
@@ -126,48 +131,8 @@ pub fn locktime_info(locktime: u32, has_non_final_sequence: bool) -> LocktimeInf
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{TxInput, TxOutput};
-    use bitcoin::hashes::Hash;
-
-    fn make_input(value: Option<u64>, sequence: u32) -> TxInput {
-        TxInput {
-            prevout: Some(bitcoin::OutPoint::new(
-                bitcoin::Txid::from_byte_array([0u8; 32]),
-                0,
-            )),
-            sequence,
-            value: value.map(Amount::from_sat),
-            script_type: Some(ScriptType::P2wpkh),
-        }
-    }
-
-    fn make_output(sats: u64) -> TxOutput {
-        let script_bytes = [
-            0x00, 0x14, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
-            0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14,
-        ];
-        TxOutput {
-            value: Amount::from_sat(sats),
-            script_pub_key: bitcoin::ScriptBuf::from_bytes(script_bytes.to_vec()),
-            script_type: ScriptType::P2wpkh,
-        }
-    }
-
-    fn make_tx_node(inputs: Vec<TxInput>, outputs: Vec<TxOutput>, vsize: u64) -> TxNode {
-        TxNode {
-            txid: bitcoin::Txid::from_byte_array([0u8; 32]),
-            version: 2,
-            locktime: 0,
-            size: vsize,
-            vsize,
-            weight: vsize * 4,
-            block_hash: None,
-            block_height: Some(100),
-            block_time: Some(1_700_000_000),
-            inputs,
-            outputs,
-        }
-    }
+    use crate::test_util::{make_input, make_output, make_tx_node};
+    use crate::types::TxInput;
 
     // -- compute_fee tests ----------------------------------------------------
 
@@ -299,5 +264,40 @@ mod tests {
         let info = locktime_info(800_000, false);
         assert_eq!(info.kind, LocktimeKind::BlockHeight);
         assert!(!info.active);
+    }
+
+    // -- classify_script tests ------------------------------------------------
+
+    #[test]
+    fn classify_p2wpkh_script() {
+        // OP_0 PUSH20 <20-byte-hash>
+        let script = bitcoin::ScriptBuf::from_bytes(vec![
+            0x00, 0x14, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+            0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14,
+        ]);
+        assert_eq!(classify_script(script.as_script()), ScriptType::P2wpkh);
+    }
+
+    #[test]
+    fn classify_p2tr_script() {
+        // OP_1 PUSH32 <32-byte-key>
+        let mut bytes = vec![0x51, 0x20];
+        bytes.extend_from_slice(&[0xAA; 32]);
+        let script = bitcoin::ScriptBuf::from_bytes(bytes);
+        assert_eq!(classify_script(script.as_script()), ScriptType::P2tr);
+    }
+
+    #[test]
+    fn classify_op_return_script() {
+        // OP_RETURN followed by arbitrary data.
+        let script = bitcoin::ScriptBuf::from_bytes(vec![0x6a, 0x04, 0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(classify_script(script.as_script()), ScriptType::OpReturn);
+    }
+
+    #[test]
+    fn classify_unknown_script() {
+        // An empty script doesn't match any known pattern.
+        let script = bitcoin::ScriptBuf::new();
+        assert_eq!(classify_script(script.as_script()), ScriptType::Unknown);
     }
 }
