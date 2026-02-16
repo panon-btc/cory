@@ -11,11 +11,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use bitcoin::{Amount, BlockHash, OutPoint, ScriptBuf, Txid};
+use futures::future::try_join_all;
 use lru::LruCache;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use crate::enrich::classify_script;
 use crate::error::{CoreError, RpcError};
@@ -30,6 +31,8 @@ use super::BitcoinRpc;
 
 /// Maximum number of block-hash → height entries cached in memory.
 const BLOCK_HEIGHT_CACHE_CAP: usize = 10_000;
+/// Maximum number of JSON-RPC calls per batch chunk.
+const BATCH_CHUNK_SIZE: usize = 10;
 
 /// HTTP-based Bitcoin Core JSON-RPC client.
 ///
@@ -197,52 +200,25 @@ impl HttpRpcClient {
         Ok(ordered)
     }
 
-    async fn get_block_height(
+    async fn rpc_batch_chunked(
         &self,
-        block_hash: BlockHash,
-    ) -> Result<Option<BlockHeight>, CoreError> {
-        // The LRU cache requires a write lock for `get` (it updates recency),
-        // but the lookup is fast so the write lock is acceptable.
-        if let Some(height) = self
-            .block_height_cache
-            .write()
-            .await
-            .get(&block_hash)
-            .copied()
-        {
-            return Ok(Some(height));
+        calls: &[(String, Vec<serde_json::Value>)],
+    ) -> Result<Vec<serde_json::Value>, CoreError> {
+        if calls.is_empty() {
+            return Ok(Vec::new());
         }
 
-        let raw = self
-            .rpc_call(
-                "getblockheader",
-                vec![
-                    serde_json::json!(block_hash.to_string()),
-                    serde_json::json!(true),
-                ],
-            )
-            .await?;
-        let height = parse_integer_optional::<u32, false>(raw.get("height")).map(BlockHeight);
-        if let Some(height) = height {
-            self.block_height_cache
-                .write()
-                .await
-                .put(block_hash, height);
-        }
-        Ok(height)
+        // Keep each payload small enough for node/proxy limits while still
+        // issuing chunks concurrently to avoid serial round-trip latency.
+        let chunk_futures: Vec<_> = calls
+            .chunks(BATCH_CHUNK_SIZE)
+            .map(|chunk| self.rpc_batch(chunk))
+            .collect();
+        let chunked = try_join_all(chunk_futures).await?;
+        Ok(chunked.into_iter().flatten().collect())
     }
-}
 
-#[async_trait]
-impl BitcoinRpc for HttpRpcClient {
-    async fn get_transaction(&self, txid: &Txid) -> Result<TxNode, CoreError> {
-        let raw = self
-            .rpc_call(
-                "getrawtransaction",
-                vec![serde_json::json!(txid.to_string()), serde_json::json!(1)],
-            )
-            .await?;
-
+    async fn parse_tx_node_from_raw(&self, raw: serde_json::Value) -> Result<TxNode, CoreError> {
         let txid = parse_txid(raw.get("txid"), "txid")?;
         let version = parse_integer_required::<i32, true>(raw.get("version"), "version")?;
         let locktime = parse_integer_required::<u32, false>(raw.get("locktime"), "locktime")?;
@@ -288,6 +264,93 @@ impl BitcoinRpc for HttpRpcClient {
         })
     }
 
+    async fn get_block_height(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockHeight>, CoreError> {
+        // The LRU cache requires a write lock for `get` (it updates recency),
+        // but the lookup is fast so the write lock is acceptable.
+        if let Some(height) = self
+            .block_height_cache
+            .write()
+            .await
+            .get(&block_hash)
+            .copied()
+        {
+            return Ok(Some(height));
+        }
+
+        let raw = self
+            .rpc_call(
+                "getblockheader",
+                vec![
+                    serde_json::json!(block_hash.to_string()),
+                    serde_json::json!(true),
+                ],
+            )
+            .await?;
+        let height = parse_integer_optional::<u32, false>(raw.get("height")).map(BlockHeight);
+        if let Some(height) = height {
+            self.block_height_cache
+                .write()
+                .await
+                .put(block_hash, height);
+        }
+        Ok(height)
+    }
+}
+
+#[async_trait]
+impl BitcoinRpc for HttpRpcClient {
+    async fn get_transaction(&self, txid: &Txid) -> Result<TxNode, CoreError> {
+        let raw = self
+            .rpc_call(
+                "getrawtransaction",
+                vec![serde_json::json!(txid.to_string()), serde_json::json!(1)],
+            )
+            .await?;
+        self.parse_tx_node_from_raw(raw).await
+    }
+
+    async fn get_transactions(&self, txids: &[Txid]) -> Result<Vec<TxNode>, CoreError> {
+        if txids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let calls: Vec<(String, Vec<serde_json::Value>)> = txids
+            .iter()
+            .map(|txid| {
+                (
+                    "getrawtransaction".to_owned(),
+                    vec![serde_json::json!(txid.to_string()), serde_json::json!(1)],
+                )
+            })
+            .collect();
+
+        let raw_results = match self.rpc_batch_chunked(&calls).await {
+            Ok(results) => results,
+            Err(batch_error) => {
+                warn!(
+                    tx_count = txids.len(),
+                    error = %batch_error,
+                    "batch getrawtransaction failed; falling back to sequential requests"
+                );
+
+                let mut sequential = Vec::with_capacity(txids.len());
+                for txid in txids {
+                    sequential.push(self.get_transaction(txid).await?);
+                }
+                return Ok(sequential);
+            }
+        };
+
+        let parse_futures: Vec<_> = raw_results
+            .into_iter()
+            .map(|raw| self.parse_tx_node_from_raw(raw))
+            .collect();
+        try_join_all(parse_futures).await
+    }
+
     async fn get_tx_out(&self, txid: &Txid, vout: u32) -> Result<Option<TxOutput>, CoreError> {
         let raw = self
             .rpc_call(
@@ -307,6 +370,10 @@ impl BitcoinRpc for HttpRpcClient {
         &self,
         outpoints: &[OutPoint],
     ) -> Result<Vec<Option<TxOutput>>, CoreError> {
+        if outpoints.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let calls: Vec<(String, Vec<serde_json::Value>)> = outpoints
             .iter()
             .map(|outpoint| {
@@ -321,7 +388,7 @@ impl BitcoinRpc for HttpRpcClient {
             })
             .collect();
 
-        let raw_results = self.rpc_batch(&calls).await?;
+        let raw_results = self.rpc_batch_chunked(&calls).await?;
         raw_results.into_iter().map(parse_gettxout_result).collect()
     }
 
@@ -579,25 +646,25 @@ fn script_from_hex(hex_str: &str) -> Result<ScriptBuf, CoreError> {
         .map_err(|e| CoreError::InvalidTxData(format!("invalid scriptPubKey hex: {e}")))
 }
 
-/// Parse a BTC amount from a JSON value without intermediate f64 precision loss.
+/// Parse a BTC amount from a JSON value.
 ///
-/// Bitcoin Core returns amounts as JSON numbers like `1.23456789`. We convert
-/// the raw JSON representation to a string first and parse via the `bitcoin`
-/// crate's `Amount::from_str_in`, which avoids the precision hazards of
-/// `f64 * 1e8`.
+/// Number values are parsed via `Amount::from_float_in` to support scientific
+/// notation, while string values are parsed via `Amount::from_str_in`.
 fn parse_btc_amount(value: &serde_json::Value) -> Result<Amount, CoreError> {
-    let s = match value {
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::String(s) => s.clone(),
-        _ => {
-            return Err(CoreError::InvalidTxData(format!(
-                "expected numeric BTC amount, got: {value}"
-            )))
+    match value {
+        serde_json::Value::Number(n) => {
+            let parsed = n
+                .as_f64()
+                .ok_or_else(|| CoreError::InvalidTxData(format!("invalid BTC amount `{value}`")))?;
+            Amount::from_float_in(parsed, bitcoin::Denomination::Bitcoin)
+                .map_err(|e| CoreError::InvalidTxData(format!("invalid BTC amount `{value}`: {e}")))
         }
-    };
-
-    Amount::from_str_in(&s, bitcoin::Denomination::Bitcoin)
-        .map_err(|e| CoreError::InvalidTxData(format!("invalid BTC amount `{s}`: {e}")))
+        serde_json::Value::String(s) => Amount::from_str_in(s, bitcoin::Denomination::Bitcoin)
+            .map_err(|e| CoreError::InvalidTxData(format!("invalid BTC amount `{s}`: {e}"))),
+        _ => Err(CoreError::InvalidTxData(format!(
+            "expected numeric BTC amount, got: {value}"
+        ))),
+    }
 }
 
 fn parse_batch_id(id: &serde_json::Value) -> Result<u64, CoreError> {
@@ -658,6 +725,19 @@ mod tests {
     #[test]
     fn parse_btc_amount_invalid() {
         let val = serde_json::json!(true);
+        assert!(parse_btc_amount(&val).is_err());
+    }
+
+    #[test]
+    fn parse_btc_amount_scientific_number() {
+        let val = serde_json::json!(6.6e-6);
+        let amount = parse_btc_amount(&val).expect("should parse scientific notation");
+        assert_eq!(amount, Amount::from_sat(660));
+    }
+
+    #[test]
+    fn parse_btc_amount_scientific_string() {
+        let val = serde_json::json!("1e-8");
         assert!(parse_btc_amount(&val).is_err());
     }
 

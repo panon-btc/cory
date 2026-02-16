@@ -147,4 +147,19 @@ mod tests {
         assert_eq!(results[1].as_ref().unwrap().value, Amount::from_sat(3000));
         assert!(results[2].is_none());
     }
+
+    #[tokio::test]
+    async fn get_transactions_default_preserves_order() {
+        let txid_a = txid_from_byte(1);
+        let txid_b = txid_from_byte(2);
+        let tx_a = make_raw_tx(txid_a, vec![coinbase_input()], vec![simple_output(5000)]);
+        let tx_b = make_raw_tx(txid_b, vec![coinbase_input()], vec![simple_output(6000)]);
+
+        let rpc = MockRpc::builder().with_tx(tx_a).with_tx(tx_b).build();
+        let results = rpc.get_transactions(&[txid_b, txid_a]).await.unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].txid, txid_b);
+        assert_eq!(results[1].txid, txid_a);
+    }
 }
