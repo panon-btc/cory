@@ -249,18 +249,18 @@ def build_scenarios(
     profile: str,
 ) -> list[dict[str, Any]]:
     profile_cfg = {
-        "fast": {"fan": 20, "equal": 5, "long_depth": 52},
-        "balanced": {"fan": 24, "equal": 6, "long_depth": 60},
-        "rich": {"fan": 40, "equal": 10, "long_depth": 80},
+        "fast": {"fan": 20, "equal": 5, "long_depth": 52, "seed_count": 120},
+        "balanced": {"fan": 24, "equal": 6, "long_depth": 60, "seed_count": 120},
+        "rich": {"fan": 40, "equal": 10, "long_depth": 80, "seed_count": 1_000},
     }
     cfg = profile_cfg[profile]
     fan_count = cfg["fan"]
     equal_count = cfg["equal"]
     long_depth = cfg["long_depth"]
+    seed_count = cfg["seed_count"]
 
     # We pre-fund many small UTXOs to keep scenario construction deterministic and
     # independent from wallet coin selection.
-    seed_count = 120
     utxos = fund_wallet_utxos(
         cli,
         cli_json,
@@ -574,6 +574,141 @@ def build_scenarios(
         }
     )
 
+    # 10) Rich-profile only: extreme dense DAG with many sweep-style
+    # consolidations and cross-layer joins.
+    if profile == "rich":
+        chaos_layer_counts = [60, 55, 50, 45, 40, 35, 30, 25, 20, 15, 12, 10, 8, 7, 6, 5, 4, 3, 2, 2, 1]
+        chaos_layer_shapes = [
+            (5, 4),
+            (4, 4),
+            (4, 3),
+            (4, 3),
+            (3, 3),
+            (3, 2),
+            (3, 2),
+            (3, 2),
+            (3, 2),
+            (3, 2),
+            (3, 2),
+            (3, 2),
+            (2, 2),
+            (2, 2),
+            (2, 2),
+            (2, 2),
+            (2, 2),
+            (2, 2),
+            (2, 2),
+            (2, 1),
+            (2, 1),
+        ]
+        if len(chaos_layer_counts) != len(chaos_layer_shapes):
+            raise RuntimeError("chaos layer count/shape definitions must have the same length")
+
+        def pop_interleaved(pool: list[dict[str, Any]], *, cursor: int, stride: int) -> tuple[dict[str, Any], int]:
+            if not pool:
+                raise RuntimeError("cannot pop from an empty outpoint pool")
+            idx = cursor % len(pool)
+            outpoint = pool.pop(idx)
+            return outpoint, cursor + stride
+
+        def split_outputs(total_sat: int, output_count: int) -> list[int]:
+            if output_count <= 0:
+                raise RuntimeError("output_count must be positive")
+            if total_sat <= output_count:
+                raise RuntimeError(
+                    f"total_sat={total_sat} too small to split into {output_count} outputs"
+                )
+            base = total_sat // output_count
+            remainder = total_sat % output_count
+            return [base + (1 if idx < remainder else 0) for idx in range(output_count)]
+
+        chaos_layers: list[list[str]] = []
+        prev_layer_outs: list[dict[str, Any]] = []
+        two_layers_back_outs: list[dict[str, Any]] = []
+        total_chaos_txs = 0
+
+        for layer_idx, (tx_count, (input_count, output_count)) in enumerate(
+            zip(chaos_layer_counts, chaos_layer_shapes), start=1
+        ):
+            layer_txids: list[str] = []
+            next_layer_outs: list[dict[str, Any]] = []
+            prev_cursor = layer_idx * 2
+            back_cursor = layer_idx * 3
+
+            for tx_idx in range(tx_count):
+                selected_inputs: list[dict[str, Any]] = []
+
+                # Every fifth transaction steals one input from two layers back.
+                # This creates non-local joins that make ancestry tracing harder.
+                if tx_idx % 5 == 0 and two_layers_back_outs and len(selected_inputs) < input_count:
+                    picked, back_cursor = pop_interleaved(
+                        two_layers_back_outs,
+                        cursor=back_cursor + tx_idx,
+                        stride=3 + (tx_idx % 2),
+                    )
+                    selected_inputs.append(picked)
+
+                while len(selected_inputs) < input_count:
+                    if prev_layer_outs:
+                        picked, prev_cursor = pop_interleaved(
+                            prev_layer_outs,
+                            cursor=prev_cursor + tx_idx,
+                            stride=2 + (tx_idx % 3),
+                        )
+                        selected_inputs.append(picked)
+                        continue
+                    selected_inputs.append(take_utxo())
+
+                input_sum = sum(inp["value_sat"] for inp in selected_inputs)
+                output_total = input_sum - PER_TX_FEE_SAT
+                output_values = split_outputs(output_total, output_count)
+
+                txid, tx_outs = spend_inputs(
+                    cli,
+                    cli_json,
+                    wallet=wallet_graph,
+                    inputs=selected_inputs,
+                    output_values=output_values,
+                )
+                layer_txids.append(txid)
+                next_layer_outs.extend(tx_outs)
+                total_chaos_txs += 1
+
+                if total_chaos_txs % 16 == 0:
+                    mine_to_wallet(cli, wallet=wallet_miner, blocks=1)
+
+            chaos_layers.append(layer_txids)
+            two_layers_back_outs = prev_layer_outs
+            prev_layer_outs = next_layer_outs
+
+        mine_to_wallet(cli, wallet=wallet_miner, blocks=1)
+
+        if not chaos_layers or not chaos_layers[-1]:
+            raise RuntimeError("chaos scenario generation produced no root transaction")
+        chaos_root_txid = chaos_layers[-1][0]
+        layer_anchors = [layer_txids[0] for layer_txids in chaos_layers if layer_txids]
+        chaos_related = dedupe_preserve_order([chaos_root_txid, *layer_anchors])
+
+        scenarios.append(
+            {
+                "name": "chaos_sweep_matrix_21x5_rich",
+                "description": (
+                    "21-layer cross-woven sweep lattice with 435 transactions and "
+                    "high edge density under default graph limits."
+                ),
+                "root_txid": chaos_root_txid,
+                "related_txids": chaos_related,
+                "label_txids": [chaos_root_txid],
+                "suggested_ui_checks": [
+                    "Graph remains navigable despite very dense merge/sweep ancestry.",
+                    "Cross-layer joins create non-local edges that still preserve traceability.",
+                    "High-input transactions keep node details and label editor responsive.",
+                ],
+                "why_interesting": "Maximum-complexity manual fixture for UI ancestry readability.",
+                "ui_focus": "Traceability under extreme edge density and repeated sweep patterns.",
+            }
+        )
+
     return scenarios
 
 
@@ -599,6 +734,7 @@ def print_examples(
     """Print example commands using `X-API-Token` authentication."""
     deep = next(s for s in scenarios if s["name"].startswith("deep_chain_"))
     diamond = next(s for s in scenarios if s["name"] == "diamond_merge")
+    chaos = next((s for s in scenarios if s["name"] == "chaos_sweep_matrix_21x5_rich"), None)
     rw_file_id = labels_info["rw_file_ids"][0]
     ro_file_id = labels_info["ro_file_ids"][0]
 
@@ -640,6 +776,10 @@ def print_examples(
         "-H \"content-type: application/json\" "
         f"-d '{{\"type\":\"tx\",\"ref\":\"{deep['root_txid']}\",\"label\":\"manual-fixture-ro\"}}' | jq"
     )
+    if chaos is not None:
+        print()
+        print("7) UI stress walkthrough (chaos sweep matrix):")
+        print(f"   Open: {server_url}/?token={api_token}&search={chaos['root_txid']}")
 
 
 def parse_args() -> argparse.Namespace:
