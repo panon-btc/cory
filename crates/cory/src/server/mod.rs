@@ -72,7 +72,7 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
     let label_routes = Router::new()
         .route(
             "/api/v1/label",
-            get(labels::list_local_label_files).post(labels::create_or_import_local_label_file),
+            get(labels::list_label_files).post(labels::create_or_import_local_label_file),
         )
         .route(
             "/api/v1/label/{file_id}",
