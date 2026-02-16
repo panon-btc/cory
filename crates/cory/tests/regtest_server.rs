@@ -44,14 +44,17 @@ async fn regtest_server_endpoints_cover_api_surface() {
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .expect("reqwest client must build");
-    let no_cookie_client = Client::builder()
+    let unauthed_client = Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .expect("no-cookie client must build");
+        .expect("unauthed client must build");
 
     wait_for_server(&client, &base_url).await;
 
-    // Health endpoint (public, no auth required).
+    // =========================================================================
+    // Health (public, no auth required)
+    // =========================================================================
+
     let health_url = format!("{base_url}/api/v1/health");
     let health_resp = client
         .get(&health_url)
@@ -65,18 +68,21 @@ async fn regtest_server_endpoints_cover_api_surface() {
         .expect("health response must be valid JSON");
     assert_eq!(health_json.get("status"), Some(&Value::String("ok".into())));
 
-    // Graph endpoint: valid txid payload shape.
+    // =========================================================================
+    // Graph
+    // =========================================================================
+
     let graph_url = format!("{base_url}/api/v1/graph/tx/{valid_txid}");
 
-    // Request without auth should fail
-    let graph_no_auth = no_cookie_client
+    // Request without auth should fail.
+    let graph_no_auth = unauthed_client
         .get(&graph_url)
         .send()
         .await
         .expect("graph request without auth should return response");
     assert_eq!(graph_no_auth.status(), StatusCode::UNAUTHORIZED);
 
-    // Request with API token should succeed
+    // Request with API token should succeed and include all expected fields.
     let graph_resp = client
         .get(&graph_url)
         .header("X-API-Token", &api_token)
@@ -106,7 +112,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
         );
     }
 
-    // Graph endpoint: invalid txid returns client error.
+    // Invalid txid returns client error.
     let invalid_graph_url = format!("{base_url}/api/v1/graph/tx/not-a-txid");
     let invalid_graph_resp = client
         .get(&invalid_graph_url)
@@ -128,11 +134,14 @@ async fn regtest_server_endpoints_cover_api_surface() {
         "invalid txid error should mention invalid txid, got: {invalid_graph_error}"
     );
 
+    // =========================================================================
+    // Labels — create
+    // =========================================================================
+
     let label_url = format!("{base_url}/api/v1/label");
 
-    // Local file create auth checks.
     let create_payload = serde_json::json!({ "name": "runner-file" });
-    let create_missing_auth = no_cookie_client
+    let create_missing_auth = unauthed_client
         .post(&label_url)
         .json(&create_payload)
         .send()
@@ -171,7 +180,10 @@ async fn regtest_server_endpoints_cover_api_surface() {
         .expect("duplicate create should return response");
     assert_eq!(duplicate_create.status(), StatusCode::CONFLICT);
 
-    // Import as new file.
+    // =========================================================================
+    // Labels — import
+    // =========================================================================
+
     let import_payload = serde_json::json!({
         "name": "runner-import-file",
         "content": format!(
@@ -181,7 +193,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
         )
     });
 
-    let import_missing_auth = no_cookie_client
+    let import_missing_auth = unauthed_client
         .post(&label_url)
         .json(&import_payload)
         .send()
@@ -211,7 +223,10 @@ async fn regtest_server_endpoints_cover_api_surface() {
         "import response should include file id"
     );
 
-    // Upsert label in created file.
+    // =========================================================================
+    // Labels — upsert and replace
+    // =========================================================================
+
     let upsert_url = format!("{base_url}/api/v1/label/{file_id}");
     let upsert_payload = serde_json::json!({
         "type": "tx",
@@ -219,7 +234,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
         "label": "runner-set-label"
     });
 
-    let upsert_missing_auth = no_cookie_client
+    let upsert_missing_auth = unauthed_client
         .post(&upsert_url)
         .json(&upsert_payload)
         .send()
@@ -282,7 +297,10 @@ async fn regtest_server_endpoints_cover_api_surface() {
         .expect("malformed replace should return response");
     assert_eq!(replace_malformed.status(), StatusCode::BAD_REQUEST);
 
-    // List files should include both created files.
+    // =========================================================================
+    // Labels — list
+    // =========================================================================
+
     let list_resp = client
         .get(&label_url)
         .header("X-API-Token", &api_token)
@@ -309,7 +327,10 @@ async fn regtest_server_endpoints_cover_api_surface() {
         "list should include imported file"
     );
 
-    // Export imported file.
+    // =========================================================================
+    // Labels — export
+    // =========================================================================
+
     let export_url = format!("{base_url}/api/v1/label/{import_file_id}/export");
     let export_resp = client
         .get(&export_url)
@@ -370,8 +391,40 @@ async fn regtest_server_endpoints_cover_api_surface() {
         "export should include imported addr label"
     );
 
+    // =========================================================================
+    // Labels — delete entry and delete file
+    // =========================================================================
+
+    // Delete a single label entry from the imported file.
+    let delete_entry_url =
+        format!("{base_url}/api/v1/label/{import_file_id}/entry?type=tx&ref={valid_txid}");
+    let delete_entry_missing_auth = unauthed_client
+        .delete(&delete_entry_url)
+        .send()
+        .await
+        .expect("delete entry without auth should return response");
+    assert_eq!(delete_entry_missing_auth.status(), StatusCode::UNAUTHORIZED);
+
+    let delete_entry_ok = client
+        .delete(&delete_entry_url)
+        .header("X-API-Token", &api_token)
+        .send()
+        .await
+        .expect("delete entry with auth should succeed");
+    assert_eq!(delete_entry_ok.status(), StatusCode::OK);
+    let delete_entry_json: Value = delete_entry_ok
+        .json()
+        .await
+        .expect("delete entry response must be JSON");
+    // After deleting one of two records, the file should have one record left.
+    assert_eq!(
+        delete_entry_json.get("record_count"),
+        Some(&Value::Number(1.into())),
+        "imported file should have one record after deleting a label entry"
+    );
+
     // Delete imported file.
-    let delete_missing_auth = no_cookie_client
+    let delete_missing_auth = unauthed_client
         .delete(format!("{base_url}/api/v1/label/{import_file_id}"))
         .send()
         .await
@@ -386,7 +439,10 @@ async fn regtest_server_endpoints_cover_api_surface() {
         .expect("delete with auth should return response");
     assert_eq!(delete_ok.status(), StatusCode::OK);
 
-    // Fallback static UI endpoint.
+    // =========================================================================
+    // Static file serving
+    // =========================================================================
+
     let root_resp = client
         .get(format!("{base_url}/"))
         .send()
@@ -419,7 +475,11 @@ async fn regtest_server_endpoints_cover_api_surface() {
         .expect("deep fallback request must succeed");
     assert_eq!(deep_fallback_resp.status(), StatusCode::OK);
 
-    // CORS behavior checks: exact allowed origin, no wildcard, disallowed origin omitted.
+    // =========================================================================
+    // CORS
+    // =========================================================================
+
+    // Exact allowed origin is reflected back.
     let allowed_origin = base_url.clone();
     let allowed_resp = client
         .get(&health_url)
@@ -439,6 +499,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
         .unwrap_or_default();
     assert_eq!(allowed_cors, allowed_origin);
 
+    // Disallowed origin gets no access-control-allow-origin header.
     let disallowed_origin = "http://evil.local";
     let disallowed_resp = client
         .get(&health_url)
@@ -460,7 +521,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
         "server should omit access-control-allow-origin for disallowed origins"
     );
 
-    // CORS preflight checks.
+    // Preflight with allowed origin succeeds and lists expected methods/headers.
     let preflight_allowed = client
         .request(Method::OPTIONS, &label_url)
         .header(
@@ -503,6 +564,7 @@ async fn regtest_server_endpoints_cover_api_surface() {
         "preflight allow-headers should include x-api-token"
     );
 
+    // Preflight with disallowed origin gets no access-control-allow-origin.
     let preflight_disallowed = client
         .request(Method::OPTIONS, &label_url)
         .header(ORIGIN, HeaderValue::from_static(disallowed_origin))

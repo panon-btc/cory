@@ -21,6 +21,17 @@ macro_rules! log {
     };
 }
 
+/// Config files whose changes should trigger a UI rebuild.
+const UI_CONFIG_FILES: &[&str] = &[
+    "package.json",
+    "package-lock.json",
+    "index.html",
+    "vite.config.ts",
+    "tsconfig.json",
+    "tsconfig.app.json",
+    "tsconfig.node.json",
+];
+
 fn main() {
     // When CORY_REQUIRE_UI=1 (set in CI), npm/vite failures abort the build
     // instead of falling back to the "UI not built" runtime message.
@@ -64,12 +75,12 @@ fn main() {
         }
         _ => {
             log!("npm not found — skipping UI build");
-            log!("╔══════════════════════════════════════════════════════╗");
-            log!("║  The server will compile, but the UI will show:     ║");
-            log!("║    \"UI not built. Run: cd ui && npm run build\"       ║");
-            log!("║                                                     ║");
-            log!("║  Install Node.js + npm and rebuild to get the UI.   ║");
-            log!("╚══════════════════════════════════════════════════════╝");
+            log_ui_warning(&[
+                "The server will compile, but the UI will show:",
+                "  \"UI not built. Run: cd ui && npm run build\"",
+                "",
+                "Install Node.js + npm and rebuild to get the UI.",
+            ]);
             if require_ui {
                 std::process::exit(1);
             }
@@ -84,75 +95,57 @@ fn main() {
 
     log!("running `npm ci`...");
 
-    let install = Command::new("npm").arg("ci").current_dir(ui_dir).status();
-
-    match install {
-        Ok(s) if s.success() => {
-            log!("`npm ci` done");
-        }
-        Ok(s) => {
-            log!("╔══════════════════════════════════════════════════════╗");
-            log!("║  `npm ci` failed (exit code: {:<22}║", format!("{s})"));
-            log!("║                                                     ║");
-            log!("║  UI will not be embedded. Check ui/package.json     ║");
-            log!("║  and your Node.js installation.                     ║");
-            log!("╚══════════════════════════════════════════════════════╝");
-            if require_ui {
-                std::process::exit(1);
-            }
-            return;
-        }
-        Err(e) => {
-            log!("╔══════════════════════════════════════════════════════╗");
-            log!("║  `npm ci` could not be executed:                    ║");
-            log!("║  {:<52}║", e);
-            log!("╚══════════════════════════════════════════════════════╝");
-            if require_ui {
-                std::process::exit(1);
-            }
-            return;
-        }
+    if !run_npm_step(&["ci"], ui_dir, require_ui) {
+        return;
     }
+    log!("`npm ci` done");
 
     // --- npm run build ------------------------------------------------------
 
     log!("running `npm run build`...");
 
-    let build = Command::new("npm")
-        .args(["run", "build"])
-        .current_dir(ui_dir)
-        .status();
+    if run_npm_step(&["run", "build"], ui_dir, require_ui) {
+        log!("`npm run build` done — UI assets ready in ui/dist/");
+        // Write the hash marker so subsequent builds can skip npm.
+        let _ = std::fs::write(&hash_marker, &current_hash);
+    }
+}
 
-    match build {
-        Ok(s) if s.success() => {
-            log!("`npm run build` done — UI assets ready in ui/dist/");
-            // Write the hash marker so subsequent builds can skip npm.
-            let _ = std::fs::write(&hash_marker, &current_hash);
-        }
+/// Runs an npm command in `ui_dir`. Returns `true` on success, `false` on
+/// failure. When `require_ui` is set, a failure exits the process.
+fn run_npm_step(args: &[&str], ui_dir: &Path, require_ui: bool) -> bool {
+    let label = format!("npm {}", args.join(" "));
+
+    match Command::new("npm").args(args).current_dir(ui_dir).status() {
+        Ok(s) if s.success() => true,
         Ok(s) => {
-            log!("╔══════════════════════════════════════════════════════╗");
-            log!(
-                "║  `npm run build` failed (exit code: {:<15}║",
-                format!("{s})")
-            );
-            log!("║                                                     ║");
-            log!("║  UI will not be embedded. Check the TypeScript and  ║");
-            log!("║  Vite output above for errors.                      ║");
-            log!("╚══════════════════════════════════════════════════════╝");
+            log_ui_warning(&[
+                &format!("`{label}` failed (exit code: {s})"),
+                "",
+                "UI will not be embedded. Check the build output above.",
+            ]);
             if require_ui {
                 std::process::exit(1);
             }
+            false
         }
         Err(e) => {
-            log!("╔══════════════════════════════════════════════════════╗");
-            log!("║  `npm run build` could not be executed:             ║");
-            log!("║  {:<52}║", e);
-            log!("╚══════════════════════════════════════════════════════╝");
+            log_ui_warning(&[&format!("`{label}` could not be executed: {e}")]);
             if require_ui {
                 std::process::exit(1);
             }
+            false
         }
     }
+}
+
+/// Prints a warning box with the given lines.
+fn log_ui_warning(lines: &[&str]) {
+    log!("╔══════════════════════════════════════════════════════╗");
+    for line in lines {
+        log!("║  {:<52}║", line);
+    }
+    log!("╚══════════════════════════════════════════════════════╝");
 }
 
 // ==============================================================================
@@ -164,16 +157,7 @@ fn main() {
 fn emit_rerun_directives(ui_dir: &Path) -> usize {
     let mut count = 0;
 
-    // Config files — any change here should trigger a rebuild.
-    for name in [
-        "package.json",
-        "package-lock.json",
-        "index.html",
-        "vite.config.ts",
-        "tsconfig.json",
-        "tsconfig.app.json",
-        "tsconfig.node.json",
-    ] {
+    for name in UI_CONFIG_FILES {
         println!("cargo:rerun-if-changed=ui/{name}");
         count += 1;
     }
@@ -198,16 +182,7 @@ fn emit_rerun_directives(ui_dir: &Path) -> usize {
 fn hash_ui_sources(ui_dir: &Path) -> String {
     let mut hasher = DefaultHasher::new();
 
-    // Hash config files.
-    for name in [
-        "package.json",
-        "package-lock.json",
-        "index.html",
-        "vite.config.ts",
-        "tsconfig.json",
-        "tsconfig.app.json",
-        "tsconfig.node.json",
-    ] {
+    for name in UI_CONFIG_FILES {
         let path = ui_dir.join(name);
         if let Ok(meta) = std::fs::metadata(&path) {
             path.display().to_string().hash(&mut hasher);
