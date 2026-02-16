@@ -103,6 +103,8 @@ interface AppState {
 
   // Search URL param tracked for URL sync.
   searchParamTxid: string;
+  searchFocusRequestId: number;
+  searchFocusTxid: string | null;
 
   // Actions
   doSearch: (
@@ -140,6 +142,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   labelFiles: [],
   apiToken: "",
   searchParamTxid: "",
+  searchFocusRequestId: 0,
+  searchFocusTxid: null,
 
   setSelectedTxid: (txid) => set({ selectedTxid: txid }),
 
@@ -202,14 +206,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (searchId !== thisSearchId) return;
 
       const preservedTxid = opts?.preserveSelectedTxid;
+      const searchedTxid = txid.trim();
+      const searchTargetTxid =
+        searchedTxid && resp.nodes[searchedTxid] ? searchedTxid : resp.root_txid;
       const nextSelectedTxid =
-        preservedTxid && resp.nodes[preservedTxid] ? preservedTxid : resp.root_txid;
+        preservedTxid && resp.nodes[preservedTxid] ? preservedTxid : searchTargetTxid;
+      const selectedNodes = n.map((node) => ({
+        ...node,
+        selected: node.id === nextSelectedTxid,
+      }));
 
       set({
         graph: resp,
-        nodes: n,
+        nodes: selectedNodes,
         edges: e,
         selectedTxid: nextSelectedTxid,
+        searchFocusRequestId: get().searchFocusRequestId + 1,
+        searchFocusTxid: searchTargetTxid,
         authError: null,
         hasUserMovedNodes: false,
       });

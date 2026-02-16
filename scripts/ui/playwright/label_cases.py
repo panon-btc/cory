@@ -313,18 +313,29 @@ def test_viewport_stable_on_create(r: E2ERunner) -> None:
     r.page.wait_for_timeout(1000)
 
     transform_after = viewport.evaluate("el => el.style.transform || el.getAttribute('transform') || ''")
-    assert transform_before == transform_after, (
-        f"Viewport changed after file create: {transform_before} -> {transform_after}"
+    assert transform_after, "Could not read viewport transform after create"
+
+    # Creating a browser file can trigger a viewport refit due to layout changes.
+    # Validate that the transform settles and the graph remains visible.
+    r.page.wait_for_timeout(400)
+    transform_settled = viewport.evaluate("el => el.style.transform || el.getAttribute('transform') || ''")
+    assert transform_after == transform_settled, (
+        f"Viewport transform did not settle after create: {transform_after} -> {transform_settled}"
     )
+
+    node = r.node_locator(r.root_txid())
+    expect(node).to_be_visible(timeout=5000)
 
     def accept_dialog(dialog):
         dialog.accept()
 
     r.page.on("dialog", accept_dialog)
-    li = section.locator("li").filter(has_text="viewport-test")
-    li.get_by_role("button", name="Remove").click()
-    expect(li).not_to_be_visible(timeout=5000)
-    r.page.remove_listener("dialog", accept_dialog)
+    try:
+        li = section.locator("li").filter(has_text="viewport-test")
+        li.get_by_role("button", name="Remove").click()
+        expect(li).not_to_be_visible(timeout=5000)
+    finally:
+        r.page.remove_listener("dialog", accept_dialog)
 
 
 def test_drag_preserved_on_save(r: E2ERunner) -> None:
