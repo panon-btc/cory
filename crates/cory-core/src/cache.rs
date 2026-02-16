@@ -1,14 +1,10 @@
-//! In-memory LRU caches for decoded transactions and resolved prevout data.
+//! In-memory caches for decoded transactions and resolved prevout data.
 //!
 //! The cache is shared across concurrent graph-building tasks via
-//! `Arc<Cache>`. Lookups mutate LRU recency state, so both operations
-//! require mutable access.
-
-use std::num::NonZeroUsize;
+//! `Arc<Cache>`.
 
 use bitcoin::Txid;
-use lru::LruCache;
-use tokio::sync::Mutex;
+use quick_cache::sync::Cache as QuickCache;
 
 use crate::types::{TxNode, TxOutput};
 
@@ -26,15 +22,15 @@ const DEFAULT_PREVOUT_CAPACITY: usize = 100_000;
 // Cache
 // ==============================================================================
 
-/// In-memory LRU caches for decoded transactions and resolved prevouts.
+/// In-memory caches for decoded transactions and resolved prevouts.
 ///
 /// Shared across the graph builder and server via `Arc<Cache>`.
-/// Uses `tokio::sync::Mutex` for async-friendly concurrent access.
-/// Mutex and not RwLock is needed since LRU reads update recency tracking.
-/// Entries are evicted in least-recently-used order when the cache is full.
+/// Uses a concurrent quick cache implementation so lookups and inserts
+/// do not require an external async mutex.
+/// Entries are evicted automatically once the configured capacities are reached.
 pub struct Cache {
-    transactions: Mutex<LruCache<Txid, TxNode>>,
-    prevouts: Mutex<LruCache<(Txid, u32), TxOutput>>,
+    transactions: QuickCache<Txid, TxNode>,
+    prevouts: QuickCache<(Txid, u32), TxOutput>,
 }
 
 impl Cache {
@@ -45,38 +41,33 @@ impl Cache {
 
     /// Create a cache with explicit capacities. Both values must be > 0.
     pub fn with_capacity(tx_cap: usize, prevout_cap: usize) -> Self {
+        assert!(tx_cap > 0, "tx capacity must be > 0");
+        assert!(prevout_cap > 0, "prevout capacity must be > 0");
+
         Self {
-            transactions: Mutex::new(LruCache::new(
-                NonZeroUsize::new(tx_cap).expect("tx capacity must be > 0"),
-            )),
-            prevouts: Mutex::new(LruCache::new(
-                NonZeroUsize::new(prevout_cap).expect("prevout capacity must be > 0"),
-            )),
+            transactions: QuickCache::new(tx_cap),
+            prevouts: QuickCache::new(prevout_cap),
         }
     }
 
     /// Look up a cached transaction by txid.
-    ///
-    /// Takes a mutex lock because LRU `get` updates recency tracking.
     pub async fn get_tx(&self, txid: &Txid) -> Option<TxNode> {
-        self.transactions.lock().await.get(txid).cloned()
+        self.transactions.get(txid)
     }
 
     /// Insert a decoded transaction into the cache.
     pub async fn insert_tx(&self, txid: Txid, node: TxNode) {
-        self.transactions.lock().await.put(txid, node);
+        self.transactions.insert(txid, node);
     }
 
     /// Look up cached prevout info for a specific outpoint.
-    ///
-    /// Takes a mutex lock because LRU `get` updates recency tracking.
     pub async fn get_prevout(&self, txid: &Txid, vout: u32) -> Option<TxOutput> {
-        self.prevouts.lock().await.get(&(*txid, vout)).cloned()
+        self.prevouts.get(&(*txid, vout))
     }
 
     /// Cache resolved prevout data for a specific outpoint.
     pub async fn insert_prevout(&self, txid: Txid, vout: u32, info: TxOutput) {
-        self.prevouts.lock().await.put((txid, vout), info);
+        self.prevouts.insert((txid, vout), info);
     }
 }
 
@@ -110,7 +101,8 @@ mod tests {
 
     #[tokio::test]
     async fn cache_evicts_lru_entry() {
-        // Capacity of 2: inserting a third entry should evict the first.
+        // Capacity of 2: inserting a third entry should evict one older entry.
+        // quick_cache does not guarantee strict LRU victim selection.
         let cache = Cache::with_capacity(2, 1);
         let txid_a = txid_from_byte(1);
         let txid_b = txid_from_byte(2);
@@ -122,10 +114,9 @@ mod tests {
         cache.insert_tx(txid_c, node.clone()).await;
 
         assert!(
-            cache.get_tx(&txid_a).await.is_none(),
-            "oldest should be evicted"
+            cache.get_tx(&txid_a).await.is_none() || cache.get_tx(&txid_b).await.is_none(),
+            "one of the two older entries should be evicted"
         );
-        assert!(cache.get_tx(&txid_b).await.is_some());
         assert!(cache.get_tx(&txid_c).await.is_some());
     }
 
