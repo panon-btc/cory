@@ -34,6 +34,9 @@ export const IO_COLUMNS_MIN_GUTTER = 16;
 // Minimum sidebar width to keep label editors usable.
 export const SIDEBAR_MIN_WIDTH = 320;
 
+// Dragging narrower than this intent threshold collapses the sidebar.
+export const SIDEBAR_COLLAPSE_WIDTH = 250;
+
 // Maximum sidebar width so the graph panel remains visible.
 export const SIDEBAR_MAX_WIDTH = 960;
 

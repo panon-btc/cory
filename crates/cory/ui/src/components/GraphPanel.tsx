@@ -29,14 +29,18 @@ export default function GraphPanel() {
   const setSelectedTxid = useAppStore((s) => s.setSelectedTxid);
   const setNodes = useAppStore((s) => s.setNodes);
   const setEdges = useAppStore((s) => s.setEdges);
+  const setHasUserMovedNodes = useAppStore((s) => s.setHasUserMovedNodes);
 
   const nodeTypes = useMemo(() => ({ tx: TxNode }), []);
 
   const onNodesChange = useCallback(
     (changes: NodeChange<TxFlowNode>[]) => {
+      if (changes.some((change) => change.type === "position")) {
+        setHasUserMovedNodes(true);
+      }
       setNodes((prev) => applyNodeChanges(changes, prev));
     },
-    [setNodes],
+    [setHasUserMovedNodes, setNodes],
   );
 
   const onEdgesChange = useCallback(

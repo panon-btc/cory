@@ -5,9 +5,10 @@ import { CrudManager } from "./CrudManager";
 
 interface LabelPanelProps {
   width: number;
+  onClose: () => void;
 }
 
-export default function LabelPanel({ width }: LabelPanelProps) {
+export default function LabelPanel({ width, onClose }: LabelPanelProps) {
   const labelFiles = useAppStore((s) => s.labelFiles);
 
   const [panelError, setPanelError] = useState<string | null>(null);
@@ -65,6 +66,25 @@ export default function LabelPanel({ width }: LabelPanelProps) {
         gap: 8,
       }}
     >
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button
+          type="button"
+          onClick={onClose}
+          title="Close label panel"
+          aria-label="Close label panel"
+          style={{
+            width: 22,
+            height: 22,
+            padding: 0,
+            lineHeight: 1,
+            fontSize: 14,
+            borderRadius: 3,
+          }}
+        >
+          ×
+        </button>
+      </div>
+
       <details open style={sectionStyle}>
         <summary style={summaryStyle}>Server Labels</summary>
         <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -89,7 +109,7 @@ export default function LabelPanel({ width }: LabelPanelProps) {
               <ul style={serverListStyle}>{persistentRwFiles.map(renderServerFileItem)}</ul>
             ) : (
               <div style={{ color: "var(--text-muted)", fontSize: 11 }}>
-                Load read only labels on CLI via --labels-rw
+                Load read write labels on CLI via --labels-rw
               </div>
             )}
           </div>

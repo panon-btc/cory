@@ -9,6 +9,9 @@ import {
   editorContainerStyle,
   errorTextStyle,
   headerStyle,
+  iconActionButtonStyle,
+  iconImageStyle,
+  idleAddMessage,
   mutedTextStyle,
   partitionLabels,
   sectionSeparatorStyle,
@@ -109,9 +112,18 @@ export default function TargetLabelEditor({
   const hasBrowserEditableEntries = browserEditableEntries.length > 0;
   const hasLabelSection =
     hasReadonlyEntries || hasPersistentEditableEntries || hasBrowserEditableEntries;
+  const addMessage = idleAddMessage(addableFiles.length, editableFiles.length);
+  const canStartAdding = !isAdding && !disabled && addMessage === null;
 
   const handleStartAdding = useCallback(() => {
     setIsAdding(true);
+    setEditorError(null);
+    setNewLabelState("saved");
+  }, [setNewLabelState]);
+
+  const handleCancelAdding = useCallback(() => {
+    setIsAdding(false);
+    setNewLabel("");
     setEditorError(null);
     setNewLabelState("saved");
   }, [setNewLabelState]);
@@ -136,6 +148,16 @@ export default function TargetLabelEditor({
           <div style={{ color: "var(--accent)", fontSize: 11 }}>{title}</div>
           {subtitle && <div style={subtitleStyle}>{subtitle}</div>}
         </div>
+        {canStartAdding && (
+          <button
+            type="button"
+            onClick={handleStartAdding}
+            style={iconActionButtonStyle}
+            title="Add label"
+          >
+            <img src="/img/add.svg" alt="" aria-hidden="true" style={iconImageStyle} />
+          </button>
+        )}
       </div>
 
       {note && <div style={mutedTextStyle}>{note}</div>}
@@ -189,8 +211,8 @@ export default function TargetLabelEditor({
             newLabel={newLabel}
             newLabelState={newLabelState}
             addableFiles={addableFiles}
-            editableFileCount={editableFiles.length}
-            onStartAdding={handleStartAdding}
+            idleMessage={addMessage}
+            onCancelAdding={handleCancelAdding}
             onChangeFileId={setNewFileId}
             onChangeLabelDraft={handleLabelDraftChange}
           />

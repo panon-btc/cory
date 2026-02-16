@@ -93,6 +93,7 @@ interface AppState {
   loading: boolean;
   error: string | null;
   authError: string | null;
+  hasUserMovedNodes: boolean;
 
   // Labels
   labelFiles: LabelFileSummary[];
@@ -112,6 +113,7 @@ interface AppState {
   setNodes: (updater: TxFlowNode[] | ((prev: TxFlowNode[]) => TxFlowNode[])) => void;
   setEdges: (updater: Edge[] | ((prev: Edge[]) => Edge[])) => void;
   setAuthError: (message: string | null) => void;
+  setHasUserMovedNodes: (moved: boolean) => void;
   /** Returns true (and sets authError) if err is a 401. Callers can
    *  short-circuit their own error handling when this returns true. */
   handleAuthError: (err: unknown) => boolean;
@@ -134,6 +136,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   loading: false,
   error: null,
   authError: null,
+  hasUserMovedNodes: false,
   labelFiles: [],
   apiToken: "",
   searchParamTxid: "",
@@ -151,6 +154,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
 
   setAuthError: (message) => set({ authError: message }),
+
+  setHasUserMovedNodes: (moved) => set({ hasUserMovedNodes: moved }),
 
   handleAuthError: (err) => {
     if (!isAuthError(err)) return false;
@@ -200,7 +205,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       const nextSelectedTxid =
         preservedTxid && resp.nodes[preservedTxid] ? preservedTxid : resp.root_txid;
 
-      set({ graph: resp, nodes: n, edges: e, selectedTxid: nextSelectedTxid, authError: null });
+      set({
+        graph: resp,
+        nodes: n,
+        edges: e,
+        selectedTxid: nextSelectedTxid,
+        authError: null,
+        hasUserMovedNodes: false,
+      });
     } catch (e) {
       // Aborted requests are not errors — just ignore them.
       if ((e as Error).name === "AbortError") return;
@@ -336,7 +348,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 // Called from a useEffect in App.tsx.
 
 export function relayoutIfHeightsChanged(graph: GraphResponse): void {
-  const { nodes: prevNodes, setNodes, setEdges } = useAppStore.getState();
+  const { nodes: prevNodes, setNodes, setEdges, hasUserMovedNodes } = useAppStore.getState();
   const nextNodes = refreshNodesFromGraph(graph, prevNodes);
 
   const heightChanged = nextNodes.some((node, i) => {
@@ -348,6 +360,12 @@ export function relayoutIfHeightsChanged(graph: GraphResponse): void {
   });
 
   setNodes(nextNodes);
+
+  // If the user dragged nodes, preserve their manual arrangement and only
+  // refresh node content/size. Re-running ELK would snap nodes back.
+  if (hasUserMovedNodes) {
+    return;
+  }
 
   if (heightChanged) {
     void computeLayout(graph)

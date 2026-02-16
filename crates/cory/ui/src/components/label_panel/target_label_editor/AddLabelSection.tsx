@@ -5,9 +5,8 @@ import {
   compactInputStyle,
   compactRowStyle,
   compactSelectStyle,
+  deleteButtonStyle,
   iconImageStyle,
-  iconActionButtonStyle,
-  idleAddMessage,
   mutedTextStyle,
   sectionDividerStyle,
   statusIconStyle,
@@ -20,8 +19,8 @@ interface AddLabelSectionProps {
   newLabel: string;
   newLabelState: SaveState;
   addableFiles: LabelFileSummary[];
-  editableFileCount: number;
-  onStartAdding: () => void;
+  idleMessage: string | null;
+  onCancelAdding: () => void;
   onChangeFileId: (fileId: string) => void;
   onChangeLabelDraft: (label: string) => void;
 }
@@ -33,26 +32,17 @@ export function AddLabelSection({
   newLabel,
   newLabelState,
   addableFiles,
-  editableFileCount,
-  onStartAdding,
+  idleMessage,
+  onCancelAdding,
   onChangeFileId,
   onChangeLabelDraft,
 }: AddLabelSectionProps) {
   const containerStyle = showDivider ? sectionDividerStyle : undefined;
 
   if (!isAdding) {
-    const message = idleAddMessage(addableFiles.length, editableFileCount);
     return (
       <div style={containerStyle}>
-        {message ? (
-          <div style={mutedTextStyle}>{message}</div>
-        ) : (
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <button onClick={onStartAdding} style={iconActionButtonStyle} title="Add label">
-              <img src="/img/add.svg" alt="" aria-hidden="true" style={iconImageStyle} />
-            </button>
-          </div>
-        )}
+        {idleMessage && <div style={mutedTextStyle}>{idleMessage}</div>}
       </div>
     );
   }
@@ -96,6 +86,15 @@ export function AddLabelSection({
         >
           <img src={checkIconSrc(newLabelState)} alt="" aria-hidden="true" style={iconImageStyle} />
         </span>
+        <button
+          type="button"
+          onClick={onCancelAdding}
+          style={deleteButtonStyle}
+          title="Cancel add label"
+          aria-label="Cancel add label"
+        >
+          <img src="/img/delete.svg" alt="" aria-hidden="true" style={iconImageStyle} />
+        </button>
       </div>
     </div>
   );

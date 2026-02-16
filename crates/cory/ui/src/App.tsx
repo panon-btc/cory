@@ -12,7 +12,13 @@ export default function App() {
   const initialSearch = initialParams.get("search")?.trim() ?? "";
   const initialToken = initialParams.get("token")?.trim() ?? "";
 
-  const { width: sidebarWidth, onResizeStart: handleSidebarResizeStart } = useSidebarResize();
+  const {
+    width: sidebarWidth,
+    isOpen: isSidebarOpen,
+    openSidebar,
+    closeSidebar,
+    onResizeStart: handleSidebarResizeStart,
+  } = useSidebarResize();
   const graph = useAppStore((s) => s.graph);
 
   // On mount: sync API token, load label files, and kick off the initial
@@ -50,18 +56,44 @@ export default function App() {
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
           <GraphPanel />
           <div
-            role="separator"
-            aria-orientation="vertical"
+            role={isSidebarOpen ? "separator" : "button"}
+            aria-orientation={isSidebarOpen ? "vertical" : undefined}
+            // One drag interaction handles both states:
+            // - open panel: resize/collapse
+            // - collapsed panel: drag-left to reopen + resize
             onMouseDown={handleSidebarResizeStart}
+            onKeyDown={
+              isSidebarOpen
+                ? undefined
+                : (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openSidebar();
+                    }
+                  }
+            }
+            tabIndex={isSidebarOpen ? undefined : 0}
+            aria-label={isSidebarOpen ? "Resize label panel" : "Open label panel"}
             style={{
-              width: 6,
-              cursor: "col-resize",
+              width: isSidebarOpen ? 6 : 16,
+              cursor: isSidebarOpen ? "col-resize" : "pointer",
               background: "var(--border)",
-              opacity: 0.45,
+              opacity: isSidebarOpen ? 0.45 : 0.75,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--text-muted)",
+              userSelect: "none",
             }}
-            title="Drag to resize panel"
-          />
-          <LabelPanel width={sidebarWidth} />
+            title={
+              isSidebarOpen
+                ? "Drag left to resize. Drag far left to collapse panel."
+                : "Click to open label panel"
+            }
+          >
+            {!isSidebarOpen && "‹"}
+          </div>
+          {isSidebarOpen && <LabelPanel width={sidebarWidth} onClose={closeSidebar} />}
         </div>
       </div>
     </ReactFlowProvider>
