@@ -11,10 +11,20 @@ import type { GraphResponse } from "./types";
 import {
   NODE_MIN_HEIGHT,
   NODE_BASE_HEIGHT,
+  NODE_MIN_WIDTH,
   PRIMARY_ROW_HEIGHT,
   LABEL_LINE_HEIGHT,
+  IO_COLUMNS_MIN_GUTTER,
 } from "./constants";
-import { shortTxid, formatLabelEntry } from "./format";
+import {
+  shortTxid,
+  shortOutpoint,
+  shortAddress,
+  formatSats,
+  formatLabelEntry,
+  buildTxMetaParts,
+} from "./format";
+import { measureTextWidth } from "./textMeasure";
 
 // ==============================================================================
 // View-Model Interfaces
@@ -54,7 +64,9 @@ export type TxOutputDisplayRow = TxOutputGapView | TxOutputRowView;
 // which requires an index signature that plain interfaces lack.
 export interface TxNodeData extends Record<string, unknown> {
   txid: string;
-  shortTxid: string;
+  nodeWidth: number;
+  inputColumnWidth: number;
+  outputColumnWidth: number;
   blockHeight: number | null;
   feeSats: number | null;
   feerateSatVb: number | null;
@@ -72,6 +84,102 @@ export interface TxNodeData extends Record<string, unknown> {
 export function estimateNodeHeight(inputRowsHeight: number, outputRowsHeight: number): number {
   const rowsHeight = Math.max(inputRowsHeight, outputRowsHeight);
   return Math.max(NODE_MIN_HEIGHT, NODE_BASE_HEIGHT + rowsHeight);
+}
+
+let monoFamilyCache: string | undefined;
+
+function monoFamily(): string {
+  if (monoFamilyCache) return monoFamilyCache;
+  if (typeof document !== "undefined") {
+    const fromVar = getComputedStyle(document.documentElement).getPropertyValue("--mono").trim();
+    if (fromVar) {
+      monoFamilyCache = fromVar;
+      return monoFamilyCache;
+    }
+  }
+  monoFamilyCache = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+  return monoFamilyCache;
+}
+
+function measureTextPx(text: string, font: string): number {
+  return Math.ceil(measureTextWidth(text, font));
+}
+
+export function estimateNodeWidths(
+  txPreview: string,
+  isCoinbase: boolean,
+  blockHeight: number | null,
+  feeSats: number | null,
+  feerateSatVb: number | null,
+  rbfSignaling: boolean,
+  txLabels: string[],
+  inputRows: TxInputView[],
+  outputRows: TxOutputDisplayRow[],
+): { nodeWidth: number; inputColumnWidth: number; outputColumnWidth: number } {
+  const mono = monoFamily();
+  const mainFont = `11px ${mono}`;
+  const mainBoldFont = `600 11px ${mono}`;
+  const smallFont = `9px ${mono}`;
+  const smallItalicFont = `italic 9px ${mono}`;
+  const titleFont = `600 12px ${mono}`;
+  const metaFont = `10px ${mono}`;
+
+  let inputColumnWidth = Math.ceil(measureTextPx("Inputs", metaFont));
+  let outputColumnWidth = Math.ceil(measureTextPx("Outputs", metaFont));
+
+  for (const row of inputRows) {
+    // Use compact previews for sizing so long addresses/txids don't force
+    // permanently wide nodes; rendering still uses full text + middle ellipsis.
+    const primary = row.address ? shortAddress(row.address) : shortOutpoint(row.prevout);
+    const primaryWidth = 24 + 6 + measureTextPx(primary, mainFont);
+    inputColumnWidth = Math.max(inputColumnWidth, primaryWidth);
+
+    for (const label of row.labelLines) {
+      const labelWidth = 30 + measureTextPx(label, smallItalicFont);
+      inputColumnWidth = Math.max(inputColumnWidth, labelWidth);
+    }
+  }
+
+  for (const row of outputRows) {
+    if (row.kind === "gap") {
+      const gapText = `... ${row.hiddenCount} hidden ...`;
+      outputColumnWidth = Math.max(outputColumnWidth, 24 + 6 + measureTextPx(gapText, metaFont));
+      continue;
+    }
+
+    const primary = row.address ? shortAddress(row.address) : row.scriptType;
+    const primaryWidth = 24 + 6 + measureTextPx(primary, row.connected ? mainBoldFont : mainFont);
+    const valueWidth = 24 + 6 + measureTextPx(formatSats(row.value), smallFont);
+    outputColumnWidth = Math.max(outputColumnWidth, primaryWidth, valueWidth);
+
+    for (const label of row.labelLines) {
+      const labelWidth = 24 + 6 + measureTextPx(label, smallItalicFont);
+      outputColumnWidth = Math.max(outputColumnWidth, labelWidth);
+    }
+  }
+
+  // Header rows span both columns. Ensure txid/meta/tx-label lines fit too.
+  const metaItems = buildTxMetaParts({
+    blockHeight,
+    feeSats,
+    feerateSatVb,
+    rbfSignaling,
+    isCoinbase,
+  });
+
+  const txLabelLine = txLabels.join(", ");
+  const headerWidth = Math.max(
+    24 + 6 + measureTextPx(txPreview, titleFont),
+    measureTextPx(metaItems.join(" | "), metaFont),
+    txLabelLine.length > 0 ? measureTextPx(txLabelLine, smallItalicFont) : 0,
+  );
+
+  const nodeWidth = Math.max(
+    NODE_MIN_WIDTH,
+    20 + inputColumnWidth + IO_COLUMNS_MIN_GUTTER + outputColumnWidth,
+    20 + headerWidth,
+  );
+  return { nodeWidth, inputColumnWidth, outputColumnWidth };
 }
 
 // ==============================================================================
@@ -209,10 +317,23 @@ export function buildNodeRenderModel(
   const txLabels = (response.labels_by_type.tx[txid] ?? []).map(formatLabelEntry);
   const inputTotalHeight = inputRows.reduce((sum, row) => sum + row.rowHeight, 0);
   const outputTotalHeight = outputRows.reduce((sum, row) => sum + row.rowHeight, 0);
+  const { nodeWidth, inputColumnWidth, outputColumnWidth } = estimateNodeWidths(
+    shortTxid(txid),
+    isCoinbase,
+    nodeData.block_height,
+    enrichment?.fee_sats ?? null,
+    enrichment?.feerate_sat_vb ?? null,
+    enrichment?.rbf_signaling ?? false,
+    txLabels,
+    inputRows,
+    outputRows,
+  );
 
   const data: TxNodeData = {
     txid,
-    shortTxid: shortTxid(txid),
+    nodeWidth,
+    inputColumnWidth,
+    outputColumnWidth,
     blockHeight: nodeData.block_height,
     feeSats: enrichment?.fee_sats ?? null,
     feerateSatVb: enrichment?.feerate_sat_vb ?? null,
@@ -255,6 +376,7 @@ export function refreshNodesFromGraph(
       data,
       style: {
         ...(node.style ?? {}),
+        width: data.nodeWidth,
         height: nodeHeight,
       },
     };

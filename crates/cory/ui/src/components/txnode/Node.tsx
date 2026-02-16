@@ -2,10 +2,16 @@ import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "r
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
 import type { TxOutputDisplayRow, TxFlowNode } from "../../layout";
-import { IO_START_TOP, PRIMARY_ROW_HEIGHT, IO_ROW_GAP } from "../../constants";
-import { formatFeerate, copyToClipboard } from "../../format";
+import {
+  IO_START_TOP,
+  PRIMARY_ROW_HEIGHT,
+  IO_ROW_GAP,
+  IO_COLUMNS_MIN_GUTTER,
+} from "../../constants";
+import { copyToClipboard, buildTxMetaParts } from "../../format";
 import { InputRow } from "./InputRow";
 import { OutputRow } from "./OutputRow";
+import { MiddleEllipsisText } from "./MiddleEllipsisText";
 
 // Two-pass handle positioning:
 //
@@ -29,22 +35,29 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
   );
 
   // Compute node enriched header below TXID title
-  const meta = useMemo(() => {
-    const items: string[] = [];
-    items.push(data.blockHeight != null ? `${data.blockHeight}` : "unconfirmed");
-    if (data.feeSats != null) {
-      const feeText =
-        data.feerateSatVb != null
-          ? `${data.feeSats} sat (${formatFeerate(data.feerateSatVb)} sat/vB)`
-          : `${data.feeSats} sat`;
-      items.push(feeText);
-    } else if (data.feerateSatVb == null) {
-      items.push("fee n/a");
-    }
-    if (data.rbfSignaling) items.push("RBF");
-    if (data.isCoinbase) items.push("coinbase");
-    return items;
-  }, [data]);
+  const meta = useMemo(
+    () =>
+      buildTxMetaParts({
+        blockHeight: data.blockHeight,
+        feeSats: data.feeSats,
+        feerateSatVb: data.feerateSatVb,
+        rbfSignaling: data.rbfSignaling,
+        isCoinbase: data.isCoinbase,
+      }),
+    [data.blockHeight, data.feeSats, data.feerateSatVb, data.rbfSignaling, data.isCoinbase],
+  );
+
+  const inputRowsHeight = useMemo(
+    () => data.inputRows.reduce((sum, row) => sum + row.rowHeight, 0),
+    [data.inputRows],
+  );
+  const outputRowsHeight = useMemo(
+    () => data.outputRows.reduce((sum, row) => sum + row.rowHeight, 0),
+    [data.outputRows],
+  );
+  const columnHeightDelta = Math.abs(inputRowsHeight - outputRowsHeight);
+  const inputTopOffset = inputRowsHeight < outputRowsHeight ? columnHeightDelta / 2 : 0;
+  const outputTopOffset = outputRowsHeight < inputRowsHeight ? columnHeightDelta / 2 : 0;
 
   // Compute handle positions with a single prefix-sum pass per side,
   // avoiding the O(n^2) repeated slice+reduce.
@@ -52,18 +65,18 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
     const tops: Record<number, number> = {};
     let offset = 0;
     for (const row of data.inputRows) {
-      tops[row.index] = IO_START_TOP + offset + PRIMARY_ROW_HEIGHT / 2;
+      tops[row.index] = IO_START_TOP + inputTopOffset + offset + PRIMARY_ROW_HEIGHT / 2;
       offset += row.rowHeight;
     }
     return tops;
-  }, [data.inputRows]);
+  }, [data.inputRows, inputTopOffset]);
 
   const outputHandleTops = useMemo(() => {
     const tops: Record<number, number> = {};
     let offset = 0;
     for (const row of data.outputRows) {
       if (row.kind === "output" && row.connected) {
-        tops[row.index] = IO_START_TOP + offset + PRIMARY_ROW_HEIGHT / 2;
+        tops[row.index] = IO_START_TOP + outputTopOffset + offset + PRIMARY_ROW_HEIGHT / 2;
       }
       offset += row.rowHeight;
       if (row.kind === "gap") {
@@ -74,7 +87,7 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
       }
     }
     return tops;
-  }, [data.outputRows]);
+  }, [data.outputRows, outputTopOffset]);
 
   // Measure rendered row positions so handle anchors align with the actual
   // DOM rows even when output lists are collapsed with gap placeholders.
@@ -120,7 +133,7 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
         border: `1.5px solid ${selected ? "var(--accent)" : "var(--border)"}`,
         borderRadius: 4,
         padding: "8px 10px",
-        width: 360,
+        width: data.nodeWidth,
         fontFamily: "var(--mono)",
         fontSize: 11,
         boxShadow: selected ? "0 0 8px var(--accent)" : undefined,
@@ -137,7 +150,9 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
               measuredInputHandleTops[row.index] ??
               inputHandleTops[row.index] ??
               inputHandleTops[index],
-            background: "var(--border)",
+            background: "transparent",
+            border: "none",
+            opacity: 0,
           }}
         />
       ))}
@@ -180,19 +195,16 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
         >
           ⧉
         </button>
-        <div
-          title={data.txid}
+        <MiddleEllipsisText
+          text={data.txid}
           style={{
+            minWidth: 0,
+            flex: 1,
             color: "var(--accent)",
             fontWeight: 600,
             fontSize: 12,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
           }}
-        >
-          {data.shortTxid}
-        </div>
+        />
       </div>
 
       {data.txLabels.length > 0 && (
@@ -221,11 +233,10 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
         style={{
           marginTop: 8,
           display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: 8,
+          gridTemplateColumns: `${data.inputColumnWidth}px minmax(${IO_COLUMNS_MIN_GUTTER}px, 1fr) ${data.outputColumnWidth}px`,
         }}
       >
-        <div style={{ minWidth: 0 }}>
+        <div style={{ minWidth: 0, paddingTop: inputTopOffset }}>
           <div style={{ color: "var(--text-muted)", fontSize: 10 }}>Inputs</div>
           <div style={{ display: "grid", gap: 2, marginTop: 3 }}>
             {data.inputRows.map((row) => (
@@ -239,7 +250,7 @@ export default memo(function TxNode({ data, selected }: NodeProps<TxFlowNode>) {
           </div>
         </div>
 
-        <div style={{ minWidth: 0 }}>
+        <div style={{ minWidth: 0, paddingTop: outputTopOffset, gridColumn: 3 }}>
           <div style={{ color: "var(--text-muted)", fontSize: 10 }}>Outputs</div>
           <div style={{ display: "grid", gap: 2, marginTop: 3 }}>
             {data.outputRows.map((row, rowIndex) => (

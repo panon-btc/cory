@@ -6,9 +6,9 @@
 // compute node positions. Delegates render-model construction to model.ts.
 
 import type { ElkNode, ElkExtendedEdge } from "elkjs/lib/elk.bundled.js";
+import { MarkerType } from "@xyflow/react";
 import type { Node, Edge } from "@xyflow/react";
 import type { GraphResponse } from "./types";
-import { NODE_WIDTH } from "./constants";
 import { buildConnectedOutputsByTx, buildNodeRenderModel } from "./model";
 import type { TxNodeData } from "./model";
 
@@ -65,7 +65,7 @@ export async function computeLayout(
     const model = renderModels.get(txid)!;
     return {
       id: txid,
-      width: NODE_WIDTH,
+      width: model.data.nodeWidth,
       height: model.nodeHeight,
     };
   });
@@ -103,6 +103,7 @@ export async function computeLayout(
       type: "tx",
       position: { x: n.x ?? 0, y: n.y ?? 0 },
       style: {
+        width: model.data.nodeWidth,
         height: model.nodeHeight,
       },
       data: model.data,
@@ -116,6 +117,14 @@ export async function computeLayout(
     sourceHandle: `out-${e.funding_vout}`,
     targetHandle: `in-${e.input_index}`,
     type: "smoothstep",
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      color: "var(--border)",
+    },
+    style: {
+      stroke: "var(--border)",
+      strokeWidth: 1.5,
+    },
   }));
 
   return { nodes, edges };
