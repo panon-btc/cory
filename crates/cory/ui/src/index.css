@@ -1,6 +1,7 @@
 @import "@xyflow/react/dist/style.css";
 
-:root {
+:root,
+:root[data-theme="dark"] {
   --bg: #1a1a2e;
   --surface: #16213e;
   --border: #0f3460;
@@ -13,6 +14,20 @@
   --overlay-subtle: rgba(0, 0, 0, 0.12);
   --overlay-mask: rgba(0, 0, 0, 0.6);
   --mono: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+}
+
+:root[data-theme="light"] {
+  --bg: #f6f8fb;
+  --surface: #ffffff;
+  --border: #cfd8e3;
+  --text: #0f172a;
+  --text-muted: #52607a;
+  --accent: #2563eb;
+  --ok: #1f8a5b;
+  --warning: #3b6ea8;
+  --accent-dim: #dbe7ff;
+  --overlay-subtle: rgba(15, 23, 42, 0.05);
+  --overlay-mask: rgba(15, 23, 42, 0.45);
 }
 
 * {
@@ -66,6 +81,10 @@ button {
 }
 button:hover {
   background: var(--accent);
+}
+
+:root[data-theme="light"] button {
+  color: #0f172a;
 }
 
 /* React Flow dark theme overrides */

@@ -1,4 +1,5 @@
 import { type CSSProperties, useEffect } from "react";
+import { X } from "lucide-react";
 import type { LabelFileSummary } from "../../types";
 import type { ParsedLabelRow } from "./label_file_popup_parse";
 
@@ -146,7 +147,7 @@ export function LabelFilePopup({
             aria-label="Close labels popup"
             style={{ width: 22, height: 22, padding: 0, lineHeight: 1, fontSize: 14, borderRadius: 3 }}
           >
-            ×
+            <X size={14} strokeWidth={2} aria-hidden="true" />
           </button>
         </div>
 

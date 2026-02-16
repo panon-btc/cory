@@ -1,13 +1,13 @@
+import { CheckCircle2, Circle, Trash2 } from "lucide-react";
 import type { SaveState } from "../../../hooks/useAutosave";
 import type { LabelFileSummary } from "../../../types";
 import {
-  checkIconSrc,
   compactInputStyle,
   compactRowStyle,
   compactSelectStyle,
   deleteButtonStyle,
-  iconImageStyle,
   mutedTextStyle,
+  stateColor,
   sectionDividerStyle,
   statusIconStyle,
 } from "./index";
@@ -81,10 +81,15 @@ export function AddLabelSection({
         <span
           style={{
             ...statusIconStyle,
+            color: stateColor(newLabelState),
           }}
           title={newLabelState}
         >
-          <img src={checkIconSrc(newLabelState)} alt="" aria-hidden="true" style={iconImageStyle} />
+          {newLabelState === "saved" ? (
+            <CheckCircle2 size={14} strokeWidth={2} aria-hidden="true" />
+          ) : (
+            <Circle size={14} strokeWidth={2} aria-hidden="true" />
+          )}
         </span>
         <button
           type="button"
@@ -93,7 +98,7 @@ export function AddLabelSection({
           title="Cancel add label"
           aria-label="Cancel add label"
         >
-          <img src="/img/delete.svg" alt="" aria-hidden="true" style={iconImageStyle} />
+          <Trash2 size={14} strokeWidth={2} aria-hidden="true" />
         </button>
       </div>
     </div>

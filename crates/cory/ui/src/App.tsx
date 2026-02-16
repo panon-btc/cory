@@ -3,6 +3,7 @@ import { ReactFlowProvider } from "@xyflow/react";
 import { useAppStore, relayoutIfHeightsChanged } from "./store";
 import { setApiToken } from "./api";
 import { useSidebarResize } from "./hooks/useSidebarResize";
+import { useThemeMode } from "./hooks/useThemeMode";
 import Header from "./components/Header";
 import GraphPanel from "./components/GraphPanel";
 import LabelPanel from "./components/label_panel/Panel";
@@ -19,6 +20,7 @@ export default function App() {
     closeSidebar,
     onResizeStart: handleSidebarResizeStart,
   } = useSidebarResize();
+  const { themeMode, toggleThemeMode } = useThemeMode();
   const graph = useAppStore((s) => s.graph);
 
   // On mount: sync API token, load label files, and kick off the initial
@@ -93,7 +95,14 @@ export default function App() {
           >
             {!isSidebarOpen && "‹"}
           </div>
-          {isSidebarOpen && <LabelPanel width={sidebarWidth} onClose={closeSidebar} />}
+          {isSidebarOpen && (
+            <LabelPanel
+              width={sidebarWidth}
+              onClose={closeSidebar}
+              themeMode={themeMode}
+              onToggleThemeMode={toggleThemeMode}
+            />
+          )}
         </div>
       </div>
     </ReactFlowProvider>

@@ -2,6 +2,8 @@ import { type CSSProperties, useCallback, useRef, useState } from "react";
 import { useAppStore } from "../../store";
 import { errorMessage, exportLabelFile } from "../../api";
 import type { LabelFileSummary } from "../../types";
+import type { ThemeMode } from "../../hooks/useThemeMode";
+import { Moon, Sun, X } from "lucide-react";
 import SelectedTxEditor from "./SelectedTxEditor";
 import { CrudManager } from "./CrudManager";
 import { LabelFilePopup } from "./LabelFilePopup";
@@ -10,9 +12,16 @@ import { parseLabelFileJsonl, type ParsedLabelRow } from "./label_file_popup_par
 interface LabelPanelProps {
   width: number;
   onClose: () => void;
+  themeMode: ThemeMode;
+  onToggleThemeMode: () => void;
 }
 
-export default function LabelPanel({ width, onClose }: LabelPanelProps) {
+export default function LabelPanel({
+  width,
+  onClose,
+  themeMode,
+  onToggleThemeMode,
+}: LabelPanelProps) {
   const labelFiles = useAppStore((s) => s.labelFiles);
   const doSearch = useAppStore((s) => s.doSearch);
   const storeHandleAuthError = useAppStore((s) => s.handleAuthError);
@@ -150,7 +159,26 @@ export default function LabelPanel({ width, onClose }: LabelPanelProps) {
         gap: 8,
       }}
     >
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+        <button
+          type="button"
+          onClick={onToggleThemeMode}
+          title={themeMode === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          aria-label={themeMode === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          style={{
+            width: 28,
+            height: 22,
+            padding: 0,
+            borderRadius: 999,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "var(--overlay-subtle)",
+            border: "1px solid var(--border)",
+          }}
+        >
+          {themeMode === "dark" ? <Sun size={14} strokeWidth={2} /> : <Moon size={14} strokeWidth={2} />}
+        </button>
         <button
           type="button"
           onClick={onClose}
@@ -165,7 +193,7 @@ export default function LabelPanel({ width, onClose }: LabelPanelProps) {
             borderRadius: 3,
           }}
         >
-          ×
+          <X size={14} strokeWidth={2} aria-hidden="true" />
         </button>
       </div>
 

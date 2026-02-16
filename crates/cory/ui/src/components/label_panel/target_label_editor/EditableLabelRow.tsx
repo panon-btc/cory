@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
+import { CheckCircle2, Circle, Trash2 } from "lucide-react";
 import { errorMessage, isAuthError } from "../../../api";
 import { useAutosave } from "../../../hooks/useAutosave";
 import type { Bip329Type, LabelEntry } from "../../../types";
 import {
   autosaveErrorHandler,
-  checkIconSrc,
   compactInputStyle,
   compactRowStyle,
   deleteButtonStyle,
   editableFileTagStyle,
-  iconImageStyle,
+  stateColor,
   statusIconStyle,
   type DeleteLabelFn,
   type SaveLabelFn,
@@ -88,13 +88,18 @@ export function EditableLabelRow({
       <span
         style={{
           ...statusIconStyle,
+          color: stateColor(state),
         }}
         title={state}
       >
-        <img src={checkIconSrc(state)} alt="" aria-hidden="true" style={iconImageStyle} />
+        {state === "saved" ? (
+          <CheckCircle2 size={14} strokeWidth={2} aria-hidden="true" />
+        ) : (
+          <Circle size={14} strokeWidth={2} aria-hidden="true" />
+        )}
       </span>
       <button onClick={() => void handleDelete()} style={deleteButtonStyle} title="Delete label">
-        <img src="/img/delete.svg" alt="" aria-hidden="true" style={iconImageStyle} />
+        <Trash2 size={14} strokeWidth={2} aria-hidden="true" />
       </button>
     </div>
   );

@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { Search } from "lucide-react";
 import { useAppStore } from "../store";
 
 interface HeaderProps {
@@ -66,7 +67,9 @@ export default function Header({ initialTxid = "" }: HeaderProps) {
           spellCheck={false}
           style={{ flex: 1, fontFamily: "var(--mono)" }}
         />
-        <button onClick={handleSearch}>Search</button>
+        <button onClick={handleSearch} title="Search txid" aria-label="Search txid">
+          <Search size={14} strokeWidth={2} aria-hidden="true" />
+        </button>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>

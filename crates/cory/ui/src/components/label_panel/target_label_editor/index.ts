@@ -76,14 +76,13 @@ export const compactSelectStyle: CSSProperties = {
 };
 
 export const statusIconStyle: CSSProperties = {
-  fontSize: 12,
   alignSelf: "center",
-};
-
-export const iconImageStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
   width: 14,
   height: 14,
-  display: "block",
+  lineHeight: 0,
 };
 
 export const iconActionButtonStyle: CSSProperties = {
@@ -130,10 +129,6 @@ export const readOnlyRowStyle: CSSProperties = {
 
 export function stateColor(state: SaveState): string {
   return state === "saved" ? "var(--ok)" : "var(--text-muted)";
-}
-
-export function checkIconSrc(state: SaveState): string {
-  return state === "saved" ? "/img/check-green.svg" : "/img/check-grey.svg";
 }
 
 export function partitionLabels(labels: LabelEntry[]): readonly [LabelEntry[], LabelEntry[]] {
