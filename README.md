@@ -2,197 +2,160 @@
   <img src="logo.svg" alt="Cory logo" width="360" />
 </p>
 
-<p align="center">Local-first Bitcoin transaction ancestry explorer and BIP-329 label editor.</p>
+<p align="center">
+Local-first Bitcoin transaction ancestry explorer and BIP-329 label editor.
+</p>
 
 <p align="center">
   <video src="https://github.com/user-attachments/assets/0338f1f3-111d-41ef-9769-6c4e46c9e298" alt="Cory screenshot" controls></video>
 </p>
 
-This project aims to be a privacy-preserving tool that:
-- Connects to a local Bitcoin Core node over RPC.
-- Builds a transaction spending ancestry graph (DAG with merges) starting from a user-provided `txid`.
-- Lets you create/import/export in-memory local label files in BIP-329 (JSONL) from the Web UI.
-- Lets you load additional server labels (e.g. exchanges, hacks) from folders and apply them as annotations in the graph.
 
-## Requirements
+Cory helps you inspect where a Bitcoin transaction's funds came from,
+interactively, on your own machine.
 
-- Rust toolchain (stable)
-- A local Bitcoin Core node with RPC enabled (`txindex=1`)
-- Node.js + npm (required to build the embedded UI from source, won't be needed by end users once we have releases)
+- Local-first: runs against your own Bitcoin Core node.
+- Private by default: localhost server, no CDN dependencies.
+- Analyst-friendly graph view: ancestry DAG with script/fee/RBF/locktime context.
+- Practical labeling: BIP-329 import/export and in-app editing.
+
+## Features
+
+- Build ancestry graphs from any txid, with configurable depth/node/edge limits.
+- Resolve and display labels for:
+  - `tx`
+  - `input`
+  - `output`
+  - derived `addr`
+- Manage label files in the UI:
+  - create/import/export/delete browser files
+  - export all browser files as a ZIP
+- Load persistent label directories:
+  - `--labels-rw` (editable, auto-flushed to disk)
+  - `--labels-ro` (read-only)
+- Search history endpoint and UI panel for recent lookups.
 
 ## Quick Start
 
-1. Start your Bitcoin Core node with RPC and `txindex=1`.
-2. Run Cory from source:
-   - `cargo run --bin cory -- --connection http://127.0.0.1:8332 --rpc-user <user> --rpc-pass <pass>`
-3. Open `http://127.0.0.1:3080`.
+### Requirements
 
-Install a local binary instead:
-1. `cargo install --path crates/cory`
-2. `cory --connection http://127.0.0.1:8332 --rpc-user <user> --rpc-pass <pass>`
+- Rust (stable)
+- Bitcoin Core RPC endpoint
+- Node.js + npm (required when building from source)
 
-Notes:
-- On first build (or when UI files change), `build.rs` runs `npm` in `crates/cory/ui/` to compile the embedded frontend.
-- If `node`/`npm` are missing, server builds that require a UI rebuild will fail.
+For reliable historical lookups, run Bitcoin Core with `txindex=1`.
 
-## Regtest Quick Try (UI Fixtures)
+### Run From Source
 
-Use this when you want realistic sample data and a guided UI exploration flow.
+```bash
+cargo run --bin cory -- \
+  --connection http://127.0.0.1:8332 \
+  --rpc-user <user> \
+  --rpc-pass <pass>
+```
 
-Requirements:
-- Rust + Cargo
-- Node.js + npm
-- Python 3
-- `bitcoind` + `bitcoin-cli` in `PATH`
+Then open:
 
-Run:
-- `python3 scripts/ui/manual_fixtures.py`
+```text
+http://127.0.0.1:3080
+```
 
-What it does:
-- starts `bitcoind` in regtest mode
-- starts a local `cory` server
-- creates multiple fixture scenarios
-- writes a catalog file under `tmp/ui_manual_fixture-<timestamp>-<pid>.json`
-- prints a manual test guide in the terminal
+On startup, Cory prints:
+- a session API token
+- a safe URL (no token in query string)
+- an optional bootstrap URL with `?token=...` and a leak warning
 
-## Privacy Model
+## Security and Privacy Notes
 
-- Designed to run fully offline against your own node.
-- The local web server binds to `127.0.0.1` by default.
-- The UI serves local static assets only (no CDNs).
-- Protected API calls require an `X-API-Token` header. Cory prints a random
-  API token at startup; paste it into the UI token field.
-
+- Server binds to `127.0.0.1` by default.
+- Protected endpoints require `X-API-Token`.
+- The UI accepts `?token=` once for bootstrap, then removes it from the URL.
+- Token persistence is session-scoped (`sessionStorage`), not `localStorage`.
 
 ## Labels
 
-Import/export format: BIP-329 JSONL. Three label kinds:
+Import/export format: BIP-329 JSONL.
 
-1. **Persistent (read-write)** — loaded from `--labels-rw` directories,
-   editable in the UI and auto-flushed to disk on every change.
-2. **Persistent (read-only)** — loaded from `--labels-ro` directories,
-   displayed in the UI but not editable. Ideal for label packs
-   (exchanges, hacks, etc.).
-3. **Browser** — created/imported/exported in the browser UI, editable
-   but ephemeral (lost when the server stops).
+Label file kinds:
+1. `PersistentRw`: loaded from `--labels-rw`, editable, auto-flushed to disk.
+2. `PersistentRo`: loaded from `--labels-ro`, read-only.
+3. `BrowserRw`: created/imported in UI, editable, in-memory.
 
-Browser labels can be exported either per-file (`Export`) or as a
-single ZIP archive (`Export all browser labels`).
+Resolution order:
+1. `PersistentRw`
+2. `BrowserRw`
+3. `PersistentRo`
 
-Label resolution order:
-1. Persistent read-write
-2. Browser
-3. Persistent read-only
+## API Summary
 
-If multiple labels apply, the UI displays all matches.
+Public:
+- `GET /api/v1/health`
 
-A label directory is a folder containing one or more `.jsonl` files.
-File IDs are derived from the relative path within the directory (e.g.
-`--labels-ro labels/` with `labels/exchanges/binance.jsonl` →
-`exchanges/binance`).
+Protected:
+- `GET /api/v1/graph/tx/{txid}`
+- `GET /api/v1/history`
+- `GET/POST /api/v1/label`
+- `POST/DELETE /api/v1/label/{file_id}`
+- `DELETE /api/v1/label/{file_id}/entry`
+- `GET /api/v1/label/{file_id}/export`
+- `GET /api/v1/labels.zip`
 
-## Repo Layout
-
-Rust workspace:
-- `crates/cory-core` (library)
-  - RPC client wrapper (behind a mockable trait)
-  - Graph builder (ancestry DAG)
-  - Label store (BIP-329 import/export, namespaces)
-  - Caching layer (in-memory; optional disk cache opt-in)
-  - Enrichments (script types, locktime/RBF flags, fee/feerate)
-- `crates/cory` (binary)
-  - CLI flags/config
-  - Axum server, JSON API, static UI serving
-
-UI:
-- React + React Flow SPA under `crates/cory/ui/` (built automatically by `build.rs` and embedded into the binary via `rust-embed`)
-
-## Optional Enrichments
-
-Recommended deterministic enrichments:
-- script types for inputs/outputs (P2WPKH/P2TR/etc)
-- locktime and RBF signaling flags
-- fee and feerate (requires prevout values)
-
-Optional heuristics (must be opt-in and clearly labeled as uncertain):
-- coinjoin detection warnings
-- likely-change hints
+Behavior notes:
+- Unknown API paths return JSON `404`.
+- Graph endpoint returns semantic errors (`400`, `404`, `502`, `500`).
 
 ## Development
 
-### Requirements
-
-- Rust toolchain (stable)
-- Node.js + npm (required for UI builds from source)
-- Python 3 (for regtest/UI test scripts)
-- `bitcoind` + `bitcoin-cli` in PATH (for regtest and UI tests)
-
-### Make targets
+### Common Commands
 
 | Command | Description |
-|---------|-------------|
-| `make build` | Build everything — UI is compiled automatically via `build.rs` |
-| `make test` | Run unit tests across all crates |
-| `make fmt` | Format all code (Rust + UI) |
-| `make regtest` | Run regtest e2e scripts (requires `bitcoind` in PATH) |
-| `make uireg` | Run manual UI fixture workflow (requires `bitcoind` in PATH) |
-| `make playwright` | Run Playwright E2E tests (requires `playwright` + Chromium) |
-| `make ui` | Start Vite dev server with HMR on `:5173` (for UI development) |
-| `make run` | Start the Cory server on `:3080` |
-| `make clean` | Remove all build artifacts (Rust `target/` + UI `node_modules/` and `dist/`) |
+|---|---|
+| `make build` | Build workspace (UI build runs via `build.rs`) |
+| `make test` | Run Rust tests |
+| `make fmt` | Format Rust + UI code |
+| `make run` | Start Cory server |
+| `make ui` | Start Vite dev server (`:5173`) |
+| `make regtest` | Run regtest integration scripts |
+| `make uireg` | Generate manual UI fixture scenarios |
+| `make playwright` | Run Playwright UI tests |
 
-### UI development workflow
+### UI Workflow
 
-For fast UI iteration with hot-module reloading:
+1. Terminal 1: `make run`
+2. Terminal 2: `make ui`
+3. Open `http://localhost:5173` (proxies `/api` to Cory on `:3080`)
 
-1. **Terminal 1** — start the Rust server: `make run` (or `cargo run -- [flags]`)
-2. **Terminal 2** — start the Vite dev server: `make ui`
-3. Open `http://localhost:5173` — Vite proxies `/api` to the Rust server
+## Testing
 
-Edit any React file under `crates/cory/ui/src/` for instant hot reload.
-No Rust recompile needed for UI changes.
+- Fast path: Rust unit/integration tests via `make test`
+- Regtest path:
+  - `python3 scripts/regtest/rpc_e2e.py`
+  - `python3 scripts/regtest/graph.py`
+  - `python3 scripts/regtest/server_e2e.py`
+- UI/manual and browser E2E:
+  - `python3 scripts/ui/manual_fixtures.py`
+  - `python3 scripts/ui/playwright/label.py`
 
-### Linting
+## Project Layout
 
-- `cargo fmt --all`
-- `cargo clippy --all-targets --all-features -- -D warnings`
+```text
+crates/cory-core   # domain logic, graph builder, RPC adapter, labels, cache
+crates/cory        # CLI + Axum server + embedded static UI
+crates/cory/ui     # React/Vite SPA
+scripts/           # regtest and UI automation helpers
+docs/              # architecture and contributor docs
+```
 
-### Regtest scripts
+## Documentation
 
-- `python3 scripts/regtest/rpc_e2e.py` — native RPC runner
-- `python3 scripts/regtest/graph.py` — graph runner (functional + stress scenarios)
-- `python3 scripts/regtest/server_e2e.py` — server API runner (full endpoint coverage)
-- `python3 scripts/ui/manual_fixtures.py` — manual UI fixture workflow (starts live server + prints exploration guide)
+- Architecture overview: `docs/ARCHITECTURE.md`
+- Contributor runtime/style guidance: `AGENTS.md`
 
-The script starts a temporary regtest node in `tmp/regtest-it-<timestamp>-<pid>/`, mines
-funding blocks, creates sample transactions, and runs
-`crates/cory-core/tests/regtest_rpc.rs` against the live RPC endpoint.
-It also enables verbose test output (`--nocapture`) and sets
-`RUST_LOG=cory_core=trace` by default so RPC traces are visible.
+## Contributing
 
-The graph runner writes a deterministic scenario fixture to
-`tmp/regtest_graph_fixture-<timestamp>-<pid>.json` and executes
-`crates/cory-core/tests/regtest_graph.rs`. By default it runs both tiers:
-functional edge cases and stress scenarios (including ~500 tx topologies).
-Use `GRAPH_SCENARIO_TIER=functional|stress|all` and
-`GRAPH_STRESS_TX_TARGET=<n>` to tune runtime.
-
-The server runner provisions a regtest fixture transaction, starts a live
-`cory` process bound to localhost, writes a server fixture to
-`tmp/regtest_server_fixture-<timestamp>-<pid>.json`, and executes
-`crates/cory/tests/regtest_server.rs` to validate every HTTP endpoint
-(health, graph, label file CRUD, per-file export, per-entry upsert/delete auth paths,
-static fallback, and CORS).
-
-The manual UI fixture runner generates in-the-wild-like ancestry patterns
-(chains, merges, fan-in/out, RBF replacement, OP_RETURN, and truncation-depth
-cases), starts a live localhost `cory` process, and writes a machine-readable
-catalog to `tmp/ui_manual_fixture-<timestamp>-<pid>.json` for reproducible
-exploration sessions. Use `--no-hold` for setup-only mode.
-
-Architecture details:
-- `docs/ARCHITECTURE.md`
+Issues and PRs are welcome. Small, focused changes with tests are preferred.
+If you are changing API behavior, update docs and add/adjust endpoint tests.
 
 ## License
 
-Licensed under the MIT License. See `LICENSE`.
+MIT. See `LICENSE`.

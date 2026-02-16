@@ -22,4 +22,6 @@ mime_guess = { workspace = true }
 time = { version = "0.3", features = ["formatting"] }
 zip = "8.0.0"
 [dev-dependencies]
+async-trait = { workspace = true }
 reqwest = { workspace = true }
+tower = "0.5"
