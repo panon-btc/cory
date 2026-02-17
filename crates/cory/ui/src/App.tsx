@@ -59,7 +59,7 @@ export default function App() {
     void (async () => {
       try {
         const limits = await fetchLimits();
-        useAppStore.getState().setSearchDepthMax(limits.hard_max_depth);
+        useAppStore.getState().setSearchDepthMax(limits.effective_default_depth);
       } catch {
         // Limits are non-critical; the store fallback max keeps search usable.
       }

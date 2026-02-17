@@ -84,9 +84,13 @@ pub(super) async fn get_graph(
         .parse()
         .map_err(|e| AppError::BadRequest(format!("invalid txid: {e}")))?;
 
-    validate_limit_bounds("max_depth", query.max_depth, HARD_MAX_DEPTH)?;
-    validate_limit_bounds("max_nodes", query.max_nodes, HARD_MAX_NODES)?;
-    validate_limit_bounds("max_edges", query.max_edges, HARD_MAX_EDGES)?;
+    let max_depth_allowed = state.default_limits.max_depth.min(HARD_MAX_DEPTH);
+    let max_nodes_allowed = state.default_limits.max_nodes.min(HARD_MAX_NODES);
+    let max_edges_allowed = state.default_limits.max_edges.min(HARD_MAX_EDGES);
+
+    validate_limit_bounds("max_depth", query.max_depth, max_depth_allowed)?;
+    validate_limit_bounds("max_nodes", query.max_nodes, max_nodes_allowed)?;
+    validate_limit_bounds("max_edges", query.max_edges, max_edges_allowed)?;
 
     let limits = GraphLimits {
         max_depth: query
