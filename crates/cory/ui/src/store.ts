@@ -25,6 +25,7 @@ import {
   setApiToken as setApiTokenInModule,
   setLabelInFile,
 } from "./api";
+import { SEARCH_DEPTH_DEFAULT, SEARCH_DEPTH_MAX_FALLBACK } from "./constants";
 import { computeLayout } from "./layout";
 import type { TxFlowNode } from "./layout";
 import { refreshNodesFromGraph } from "./model";
@@ -45,12 +46,13 @@ let lastSearchTxid = "";
 // URL helpers
 // ==========================================================================
 
-function replaceUrlSearchParam(search: string): void {
+function replaceUrlSearchParams(search: string, depth: number): void {
   const searchTrimmed = search.trim();
   const parts: string[] = [];
 
   if (searchTrimmed) {
     parts.push(`search=${encodeURIComponent(searchTrimmed)}`);
+    parts.push(`depth=${encodeURIComponent(String(depth))}`);
   }
 
   const next = `${window.location.pathname}${parts.length > 0 ? `?${parts.join("&")}` : ""}`;
@@ -99,8 +101,10 @@ interface AppState {
   // API token (persisted to sessionStorage)
   apiToken: string;
 
-  // Search URL param tracked for URL sync.
+  // Search params tracked for URL sync.
   searchParamTxid: string;
+  searchDepth: number;
+  searchDepthMax: number;
   searchFocusRequestId: number;
   searchFocusTxid: string | null;
 
@@ -118,6 +122,8 @@ interface AppState {
    *  short-circuit their own error handling when this returns true. */
   handleAuthError: (err: unknown) => boolean;
   setApiToken: (token: string) => void;
+  setSearchDepth: (depth: number) => void;
+  setSearchDepthMax: (maxDepth: number) => void;
   refreshLabelFiles: () => Promise<LabelFileSummary[]>;
   refreshHistory: () => Promise<HistoryEntry[]>;
   saveLabel: (fileId: string, labelType: Bip329Type, refId: string, label: string) => Promise<void>;
@@ -142,6 +148,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   historyEntries: [],
   apiToken: "",
   searchParamTxid: "",
+  searchDepth: SEARCH_DEPTH_DEFAULT,
+  searchDepthMax: SEARCH_DEPTH_MAX_FALLBACK,
   searchFocusRequestId: 0,
   searchFocusTxid: null,
 
@@ -178,6 +186,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     setApiTokenInModule(trimmed);
   },
 
+  setSearchDepth: (depth) => {
+    if (!Number.isFinite(depth)) return;
+    const normalized = Math.trunc(depth);
+    if (normalized < 1) return;
+    set((state) => ({ searchDepth: Math.min(normalized, state.searchDepthMax) }));
+  },
+
+  setSearchDepthMax: (maxDepth) => {
+    if (!Number.isFinite(maxDepth)) return;
+    const normalizedMax = Math.trunc(maxDepth);
+    if (normalizedMax < 1) return;
+    set((state) => ({
+      searchDepthMax: normalizedMax,
+      searchDepth: Math.min(state.searchDepth, normalizedMax),
+    }));
+  },
+
   refreshLabelFiles: async () => {
     try {
       const files = await fetchLabelFiles();
@@ -209,12 +234,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     searchAbortController = controller;
     const thisSearchId = ++searchId;
 
+    const maxDepth = get().searchDepth;
     lastSearchTxid = txid;
     set({ searchParamTxid: txid, loading: true, error: null });
-    replaceUrlSearchParam(txid);
+    replaceUrlSearchParams(txid, maxDepth);
 
     try {
-      const resp = await fetchGraph(txid, controller.signal);
+      const resp = await fetchGraph(txid, { signal: controller.signal, maxDepth });
       const { nodes: n, edges: e } = await computeLayout(resp);
 
       // Guard: if another search was started while we were awaiting,

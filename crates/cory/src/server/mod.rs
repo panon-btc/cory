@@ -3,6 +3,7 @@ mod error;
 mod graph;
 mod history;
 mod labels;
+mod limits;
 mod static_files;
 
 use std::collections::HashMap;
@@ -63,7 +64,9 @@ pub fn build_router(state: AppState, origin: &str) -> Router {
 
     let shared = Arc::new(state);
 
-    let public_api = Router::new().route("/api/v1/health", get(health));
+    let public_api = Router::new()
+        .route("/api/v1/health", get(health))
+        .route("/api/v1/limits", get(limits::get_limits));
 
     // Label mutation routes get a 2 MB body limit to prevent abuse via
     // oversized import payloads. Graph and other routes use Axum's default.
@@ -196,12 +199,16 @@ mod tests {
     }
 
     fn test_router(mode: FakeRpcMode) -> Router {
+        test_router_with_limits(mode, GraphLimits::default())
+    }
+
+    fn test_router_with_limits(mode: FakeRpcMode, default_limits: GraphLimits) -> Router {
         let state = AppState {
             rpc: Arc::new(FakeRpc { mode }),
             cache: Arc::new(Cache::with_capacity(100, 100)),
             labels: Arc::new(RwLock::new(LabelStore::new())),
             api_token: "test-token".to_string(),
-            default_limits: GraphLimits::default(),
+            default_limits,
             rpc_concurrency: 4,
             network: bitcoin::Network::Regtest,
             history: Arc::new(RwLock::new(HashMap::new())),
@@ -244,6 +251,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn limits_endpoint_exposes_hard_configured_and_effective_values() {
+        let router = test_router_with_limits(
+            FakeRpcMode::Ok,
+            GraphLimits {
+                max_depth: 5_000,
+                max_nodes: 80_000,
+                max_edges: 300_000,
+            },
+        );
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/limits")
+                    .body(Body::empty())
+                    .expect("request must build"),
+            )
+            .await
+            .expect("router should serve request");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_body_json(response).await;
+
+        assert_eq!(
+            json.get("hard_max_depth")
+                .and_then(serde_json::Value::as_u64),
+            Some(limits::HARD_MAX_DEPTH as u64)
+        );
+        assert_eq!(
+            json.get("configured_default_depth")
+                .and_then(serde_json::Value::as_u64),
+            Some(5_000)
+        );
+        assert_eq!(
+            json.get("effective_default_depth")
+                .and_then(serde_json::Value::as_u64),
+            Some(limits::HARD_MAX_DEPTH as u64)
+        );
+
+        assert_eq!(
+            json.get("hard_max_nodes")
+                .and_then(serde_json::Value::as_u64),
+            Some(limits::HARD_MAX_NODES as u64)
+        );
+        assert_eq!(
+            json.get("configured_default_nodes")
+                .and_then(serde_json::Value::as_u64),
+            Some(80_000)
+        );
+        assert_eq!(
+            json.get("effective_default_nodes")
+                .and_then(serde_json::Value::as_u64),
+            Some(limits::HARD_MAX_NODES as u64)
+        );
+
+        assert_eq!(
+            json.get("hard_max_edges")
+                .and_then(serde_json::Value::as_u64),
+            Some(limits::HARD_MAX_EDGES as u64)
+        );
+        assert_eq!(
+            json.get("configured_default_edges")
+                .and_then(serde_json::Value::as_u64),
+            Some(300_000)
+        );
+        assert_eq!(
+            json.get("effective_default_edges")
+                .and_then(serde_json::Value::as_u64),
+            Some(limits::HARD_MAX_EDGES as u64)
+        );
+    }
+
+    #[tokio::test]
     async fn graph_zero_limits_return_bad_request() {
         let router = test_router(FakeRpcMode::Ok);
         let url = format!("/api/v1/graph/tx/{}?max_nodes=0", txid_str(1));
@@ -263,6 +342,33 @@ mod tests {
         assert_eq!(
             json.get("error").and_then(serde_json::Value::as_str),
             Some("max_nodes must be at least 1")
+        );
+    }
+
+    #[tokio::test]
+    async fn graph_limit_above_hard_max_returns_bad_request() {
+        let router = test_router(FakeRpcMode::Ok);
+        let url = format!(
+            "/api/v1/graph/tx/{}?max_depth={}",
+            txid_str(1),
+            limits::HARD_MAX_DEPTH + 1
+        );
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri(url)
+                    .header("x-api-token", "test-token")
+                    .body(Body::empty())
+                    .expect("request must build"),
+            )
+            .await
+            .expect("router should serve request");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let json = response_body_json(response).await;
+        assert_eq!(
+            json.get("error").and_then(serde_json::Value::as_str),
+            Some("max_depth must be at most 1000")
         );
     }
 

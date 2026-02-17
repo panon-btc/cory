@@ -9,6 +9,9 @@ interface HeaderProps {
 export default function Header({ initialTxid = "" }: HeaderProps) {
   const [txid, setTxid] = useState(initialTxid);
   const doSearch = useAppStore((s) => s.doSearch);
+  const searchDepth = useAppStore((s) => s.searchDepth);
+  const searchDepthMax = useAppStore((s) => s.searchDepthMax);
+  const setSearchDepth = useAppStore((s) => s.setSearchDepth);
   const apiToken = useAppStore((s) => s.apiToken);
   const authError = useAppStore((s) => s.authError);
   const setApiToken = useAppStore((s) => s.setApiToken);
@@ -71,6 +74,33 @@ export default function Header({ initialTxid = "" }: HeaderProps) {
           spellCheck={false}
           style={{ flex: 1, fontFamily: "var(--mono)" }}
         />
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            color: "var(--text-muted)",
+            fontSize: 11,
+            whiteSpace: "nowrap",
+          }}
+          title={`Graph search depth (1-${searchDepthMax})`}
+        >
+          Depth
+          <input
+            type="number"
+            min={1}
+            max={searchDepthMax}
+            step={1}
+            value={searchDepth}
+            onChange={(e) => {
+              const value = Number.parseInt(e.target.value, 10);
+              if (!Number.isFinite(value)) return;
+              setSearchDepth(value);
+            }}
+            aria-label="Max graph depth"
+            style={{ width: 70, fontFamily: "var(--mono)" }}
+          />
+        </label>
         <button
           className="btn-primary"
           onClick={handleSearch}
