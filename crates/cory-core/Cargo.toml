@@ -1,6 +1,6 @@
 [package]
 name = "cory-core"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license.workspace = true
 description = "Core domain logic for Cory: Bitcoin RPC adapter, ancestry graph builder, labels, and caching."

@@ -1,6 +1,6 @@
 [package]
 name = "cory"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license.workspace = true
 description = "Visual Bitcoin transaction ancestry explorer with embedded web UI and REST API."
@@ -18,7 +18,7 @@ include = [
 ]
 
 [dependencies]
-cory-core = { version = "0.1.0", path = "../cory-core" }
+cory-core = { version = "0.1.1", path = "../cory-core" }
 axum = { workspace = true }
 bitcoin = { workspace = true }
 clap = { workspace = true }
