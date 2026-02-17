@@ -1,0 +1,60 @@
+/* ==============================================================================
+   Base & Reset Styles
+   ============================================================================== */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+input,
+select,
+button {
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  border-radius: 3px;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+input::placeholder {
+  color: var(--text-muted);
+}
+
+input:focus-visible,
+select:focus-visible,
+button:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+input:hover,
+select:hover {
+  border-color: var(--border-strong);
+}
+
+input:disabled,
+select:disabled,
+button:disabled {
+  color: var(--control-disabled);
+  border-color: var(--border-subtle);
+  cursor: not-allowed;
+  opacity: 0.78;
+}

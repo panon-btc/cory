@@ -12,9 +12,10 @@ import {
 } from "@xyflow/react";
 import type { NodeChange, EdgeChange, NodeProps } from "@xyflow/react";
 import toast from "react-hot-toast";
-import TxNode from "./txnode/Node";
-import { isNodeFullyResolved, useAppStore } from "../store";
-import type { TxFlowNode } from "../layout";
+import TxNode from "./TxNode/TxNode";
+import { useAppStore } from "../store/AppStore";
+import { isNodeFullyResolved } from "../graph/GraphUtils";
+import type { TxFlowNode } from "../graph/Layout";
 
 function hasExpandableInputs(
   graph: ReturnType<typeof useAppStore.getState>["graph"],

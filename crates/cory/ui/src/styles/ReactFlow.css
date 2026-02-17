@@ -1,0 +1,46 @@
+/* ==============================================================================
+   React Flow Theme Overrides
+   ============================================================================== */
+
+@import "@xyflow/react/dist/style.css";
+
+.react-flow__background {
+  background-color: var(--bg-page) !important;
+}
+
+.react-flow__minimap {
+  background-color: var(--surface-1) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 3px;
+}
+
+.react-flow__controls {
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.react-flow__controls-button {
+  background: var(--surface-1) !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+  fill: var(--text-primary) !important;
+}
+
+.react-flow__controls-button:hover {
+  background: var(--surface-2) !important;
+}
+
+.react-flow__edge-path {
+  stroke: var(--border-subtle) !important;
+  stroke-width: 1.5;
+}
+
+/* React Flow nodes are selectable and already visually highlighted.
+   Suppress browser default focus rectangles that look like random blue boxes. */
+.react-flow__node:focus-visible {
+  outline: none !important;
+}
+
+.react-flow__attribution {
+  display: none !important;
+}

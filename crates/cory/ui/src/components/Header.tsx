@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { Search } from "lucide-react";
-import { useAppStore } from "../store";
+import { useAppStore } from "../store/AppStore";
 
 interface HeaderProps {
   initialTxid?: string;
