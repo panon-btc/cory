@@ -61,7 +61,7 @@ export const AUTOSAVE_DEBOUNCE_MS = 2000;
 // ==============================================================================
 
 // Default max depth for UI searches unless URL or user input overrides it.
-export const SEARCH_DEPTH_DEFAULT = 4;
+export const SEARCH_DEPTH_DEFAULT = 3;
 
 // Conservative fallback until `/api/v1/limits` returns server hard caps.
 export const SEARCH_DEPTH_MAX_FALLBACK = 50;

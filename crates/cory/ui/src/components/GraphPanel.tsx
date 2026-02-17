@@ -13,10 +13,13 @@ import {
 import type { NodeChange, EdgeChange, NodeProps } from "@xyflow/react";
 import toast from "react-hot-toast";
 import TxNode from "./txnode/Node";
-import { useAppStore } from "../store";
+import { isNodeFullyResolved, useAppStore } from "../store";
 import type { TxFlowNode } from "../layout";
 
-function hasExpandableInputs(graph: ReturnType<typeof useAppStore.getState>["graph"], txid: string): boolean {
+function hasExpandableInputs(
+  graph: ReturnType<typeof useAppStore.getState>["graph"],
+  txid: string,
+): boolean {
   const sourceNode = graph?.nodes[txid];
   return sourceNode ? sourceNode.inputs.some((input) => input.prevout !== null) : false;
 }
@@ -39,8 +42,9 @@ export default function GraphPanel() {
   const setNodes = useAppStore((s) => s.setNodes);
   const setEdges = useAppStore((s) => s.setEdges);
   const setHasUserMovedNodes = useAppStore((s) => s.setHasUserMovedNodes);
-  const expandNodeInputs = useAppStore((s) => s.expandNodeInputs);
+  const toggleNodeInputs = useAppStore((s) => s.toggleNodeInputs);
   const expandingTxids = useAppStore((s) => s.expandingTxids);
+  const expandedTxids = useAppStore((s) => s.expandedTxids);
   const searchFocusRequestId = useAppStore((s) => s.searchFocusRequestId);
   const searchFocusTxid = useAppStore((s) => s.searchFocusTxid);
   const lastCenteredFocusRequestIdRef = useRef(0);
@@ -54,18 +58,22 @@ export default function GraphPanel() {
     () => ({
       tx: (props: NodeProps<TxFlowNode>) => {
         const canExpand = hasExpandableInputs(graph, props.id);
+        const isExpanded = Boolean(expandedTxids[props.id]);
+        const fullyResolved = isNodeFullyResolved(graph, props.id);
+        const collapseDisabled = isExpanded && !fullyResolved;
         return (
           <TxNode
             {...props}
             onCopied={handleCopied}
-            onExpand={(txid) => void expandNodeInputs(txid)}
-            expandDisabled={loading || !canExpand}
-            expandLoading={Boolean(expandingTxids[props.id])}
+            onToggleExpand={(txid) => void toggleNodeInputs(txid)}
+            expandMode={isExpanded && fullyResolved ? "collapse" : "expand"}
+            toggleDisabled={loading || !canExpand || collapseDisabled}
+            toggleLoading={Boolean(expandingTxids[props.id])}
           />
         );
       },
     }),
-    [expandNodeInputs, expandingTxids, graph, handleCopied, loading],
+    [expandedTxids, expandingTxids, graph, handleCopied, loading, toggleNodeInputs],
   );
 
   const onNodesChange = useCallback(

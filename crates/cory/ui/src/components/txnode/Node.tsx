@@ -1,7 +1,7 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
-import { ChevronsLeft, Copy } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, Copy } from "lucide-react";
 import type { TxOutputDisplayRow, TxFlowNode } from "../../layout";
 import {
   IO_START_TOP,
@@ -18,13 +18,14 @@ import { MiddleEllipsisText } from "./MiddleEllipsisText";
 
 interface TxNodeProps extends NodeProps<TxFlowNode> {
   onCopied: (value: string) => void;
-  onExpand: (txid: string) => void;
-  expandDisabled: boolean;
-  expandLoading: boolean;
+  onToggleExpand: (txid: string) => void;
+  expandMode: "expand" | "collapse";
+  toggleDisabled: boolean;
+  toggleLoading: boolean;
 }
 
-const EXPAND_BUTTON_LEFT_PULL = -10;
-const EXPAND_BUTTON_WIDTH_EXTRA = 10;
+const EXPAND_BUTTON_LEFT_PULL = -8;
+const EXPAND_BUTTON_WIDTH_EXTRA = 8;
 const EXPAND_BUTTON_ICON_SIZE = 12;
 const EXPAND_BUTTON_ICON_STROKE = 2;
 
@@ -32,10 +33,14 @@ const IO_GRID_COL_EXPAND_BUTTON = 1;
 const IO_GRID_COL_INPUTS = 3;
 const IO_GRID_COL_OUTPUTS = 5;
 
-function expandButtonTitle(expandLoading: boolean, expandDisabled: boolean): string {
-  if (expandLoading) return "Expanding...";
-  if (expandDisabled) return "No expandable inputs";
-  return "Expand input transactions";
+function expandButtonTitle(
+  expandMode: "expand" | "collapse",
+  toggleLoading: boolean,
+  toggleDisabled: boolean,
+): string {
+  if (toggleLoading) return "Expanding...";
+  if (toggleDisabled) return "No expandable inputs";
+  return expandMode === "collapse" ? "Collapse input transactions" : "Expand input transactions";
 }
 
 function ioGridTemplateColumns(inputColumnWidth: number, outputColumnWidth: number): string {
@@ -57,9 +62,10 @@ export default memo(function TxNode({
   data,
   selected,
   onCopied,
-  onExpand,
-  expandDisabled,
-  expandLoading,
+  onToggleExpand,
+  expandMode,
+  toggleDisabled,
+  toggleLoading,
 }: TxNodeProps) {
   const inputRowRefs = useRef(new Map<number, HTMLDivElement>());
   const outputRowRefs = useRef(new Map<number, HTMLDivElement>());
@@ -283,10 +289,12 @@ export default memo(function TxNode({
         <button
           type="button"
           className="nodrag nopan"
-          onClick={() => onExpand(data.txid)}
-          aria-label="Expand input transactions"
-          title={expandButtonTitle(expandLoading, expandDisabled)}
-          disabled={expandDisabled || expandLoading}
+          onClick={() => onToggleExpand(data.txid)}
+          aria-label={
+            expandMode === "collapse" ? "Collapse input transactions" : "Expand input transactions"
+          }
+          title={expandButtonTitle(expandMode, toggleLoading, toggleDisabled)}
+          disabled={toggleDisabled || toggleLoading}
           style={{
             gridColumn: IO_GRID_COL_EXPAND_BUTTON,
             alignSelf: "stretch",
@@ -302,24 +310,41 @@ export default memo(function TxNode({
             fontSize: 10,
             lineHeight: 1,
             padding: "6px 2px",
-            cursor: expandDisabled || expandLoading ? "not-allowed" : "pointer",
-            opacity: expandDisabled ? 0.55 : 1,
+            cursor: toggleDisabled || toggleLoading ? "not-allowed" : "pointer",
+            opacity: toggleDisabled ? 0.55 : 1,
             display: "flex",
             flexDirection: "column",
             justifyContent: "space-around",
             alignItems: "center",
           }}
         >
-          <ChevronsLeft
-            size={EXPAND_BUTTON_ICON_SIZE}
-            strokeWidth={EXPAND_BUTTON_ICON_STROKE}
-            aria-hidden="true"
-          />
-          <ChevronsLeft
-            size={EXPAND_BUTTON_ICON_SIZE}
-            strokeWidth={EXPAND_BUTTON_ICON_STROKE}
-            aria-hidden="true"
-          />
+          {expandMode === "collapse" ? (
+            <>
+              <ChevronsRight
+                size={EXPAND_BUTTON_ICON_SIZE}
+                strokeWidth={EXPAND_BUTTON_ICON_STROKE}
+                aria-hidden="true"
+              />
+              <ChevronsRight
+                size={EXPAND_BUTTON_ICON_SIZE}
+                strokeWidth={EXPAND_BUTTON_ICON_STROKE}
+                aria-hidden="true"
+              />
+            </>
+          ) : (
+            <>
+              <ChevronsLeft
+                size={EXPAND_BUTTON_ICON_SIZE}
+                strokeWidth={EXPAND_BUTTON_ICON_STROKE}
+                aria-hidden="true"
+              />
+              <ChevronsLeft
+                size={EXPAND_BUTTON_ICON_SIZE}
+                strokeWidth={EXPAND_BUTTON_ICON_STROKE}
+                aria-hidden="true"
+              />
+            </>
+          )}
         </button>
 
         <div style={{ minWidth: 0, paddingTop: inputTopOffset, gridColumn: IO_GRID_COL_INPUTS }}>

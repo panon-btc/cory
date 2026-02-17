@@ -36,8 +36,18 @@ function getElk() {
   return elkPromise;
 }
 
-function buildVisibleEdges(response: GraphResponse, nodeIds: Set<string>): AncestryEdge[] {
-  return response.edges.filter((e) => nodeIds.has(e.funding_txid) && nodeIds.has(e.spending_txid));
+function buildVisibleEdges(
+  response: GraphResponse,
+  nodeIds: Set<string>,
+  visibleNodeIds: Set<string>,
+): AncestryEdge[] {
+  return response.edges.filter(
+    (e) =>
+      nodeIds.has(e.funding_txid) &&
+      nodeIds.has(e.spending_txid) &&
+      visibleNodeIds.has(e.funding_txid) &&
+      visibleNodeIds.has(e.spending_txid),
+  );
 }
 
 function buildModelOrderByVout(sortedTxids: string[], visibleEdges: AncestryEdge[]): string[] {
@@ -368,15 +378,17 @@ function reorderParallelBridgeGroups(
 // producing cleaner visuals for dense graphs with many edges.
 export async function computeLayout(
   response: GraphResponse,
+  opts?: { visibleNodeIds?: Set<string> },
 ): Promise<{ nodes: TxFlowNode[]; edges: Edge[] }> {
   const nodeIds = new Set(Object.keys(response.nodes));
+  const visibleNodeIds = opts?.visibleNodeIds ?? nodeIds;
   const connectedOutputsByTx = buildConnectedOutputsByTx(response, nodeIds);
-  const visibleEdges = buildVisibleEdges(response, nodeIds);
+  const visibleEdges = buildVisibleEdges(response, nodeIds, visibleNodeIds);
 
   // Build render models once and reuse for both ELK sizing and final nodes,
   // avoiding duplicate computation of node data and heights.
   const renderModels = new Map<string, { data: TxNodeData; nodeHeight: number }>();
-  const sortedTxids = Object.keys(response.nodes).sort();
+  const sortedTxids = [...visibleNodeIds].sort();
   for (const txid of sortedTxids) {
     renderModels.set(txid, buildNodeRenderModel(response, txid, connectedOutputsByTx));
   }
