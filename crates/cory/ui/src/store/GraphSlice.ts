@@ -37,6 +37,7 @@ export interface GraphSlice {
   expandedTxids: Record<string, true>;
   resolvedTxids: Record<string, true>;
   expandingTxids: Record<string, true>;
+  hiddenTxids: Record<string, true>;
   searchParamTxid: string;
   searchDepth: number;
   searchDepthMax: number;
@@ -48,6 +49,7 @@ export interface GraphSlice {
     opts?: { preserveSelectedTxid?: string | null; quietErrors?: boolean },
   ) => Promise<void>;
   toggleNodeInputs: (txid: string) => Promise<void>;
+  collapseNode: (txid: string) => void;
   setSelectedTxid: (txid: string | null) => void;
   setNodes: (updater: TxFlowNode[] | ((prev: TxFlowNode[]) => TxFlowNode[])) => void;
   setEdges: (updater: Edge[] | ((prev: Edge[]) => Edge[])) => void;
@@ -68,6 +70,7 @@ export const createGraphSlice: StateCreator<AppState, [], [], GraphSlice> = (set
   expandedTxids: {},
   resolvedTxids: {},
   expandingTxids: {},
+  hiddenTxids: {},
   searchParamTxid: "",
   searchDepth: SEARCH_DEPTH_DEFAULT,
   searchDepthMax: SEARCH_DEPTH_MAX_FALLBACK,
@@ -158,6 +161,7 @@ export const createGraphSlice: StateCreator<AppState, [], [], GraphSlice> = (set
         expandedTxids: initialExpanded,
         resolvedTxids: initialResolved,
         expandingTxids: {},
+        hiddenTxids: {},
       });
 
       await get().refreshHistory();
@@ -193,16 +197,23 @@ export const createGraphSlice: StateCreator<AppState, [], [], GraphSlice> = (set
 
     if (!hasExpandableInputs(baseGraph, txid)) return;
 
+    // A node "should expand" if it is currently NOT expanded OR if it has hidden inputs.
+    // Expanding will both set expandedTxids[txid]=true AND clear hidden flags for its inputs.
     const isExpanded = Boolean(state.expandedTxids[txid]);
+    const hiddenInputIds = baseGraph.nodes[txid].inputs
+      .map((i) => i.prevout?.split(":")[0])
+      .filter((tid): tid is string => !!tid && !!state.hiddenTxids[tid]);
+    const shouldExpand = !isExpanded || hiddenInputIds.length > 0;
+
     const fullyResolved = isNodeFullyResolved(baseGraph, txid);
 
-    // If it's expanded and we have all parents, toggle means COLLAPSE.
-    if (isExpanded && fullyResolved) {
+    // If it's expanded and we have all parents (none hidden), toggle means COLLAPSE.
+    if (!shouldExpand && fullyResolved) {
       set((current) => {
         if (!current.graph) return current;
         const nextExpanded: Record<string, true> = { ...current.expandedTxids };
         delete nextExpanded[txid];
-        const visibleTxids = computeVisibleTxids(current.graph, nextExpanded);
+        const visibleTxids = computeVisibleTxids(current.graph, nextExpanded, current.hiddenTxids);
         const hidden = applyVisibilityToElements(current.nodes, current.edges, visibleTxids);
         return {
           expandedTxids: nextExpanded,
@@ -227,10 +238,16 @@ export const createGraphSlice: StateCreator<AppState, [], [], GraphSlice> = (set
         set((current) => {
           if (!current.graph || !current.graph.nodes[txid]) return current;
           const nextExpanded: Record<string, true> = { ...current.expandedTxids, [txid]: true };
-          const visibleTxids = computeVisibleTxids(current.graph, nextExpanded);
+          // Expand also means unhiding any inputs that were specifically hidden for this tx.
+          const nextHidden = { ...current.hiddenTxids };
+          for (const tid of hiddenInputIds) {
+            delete nextHidden[tid];
+          }
+          const visibleTxids = computeVisibleTxids(current.graph, nextExpanded, nextHidden);
           const visible = applyVisibilityToElements(current.nodes, current.edges, visibleTxids);
           return {
             expandedTxids: nextExpanded,
+            hiddenTxids: nextHidden,
             nodes: visible.nodes,
             edges: visible.edges,
           };
@@ -256,7 +273,14 @@ export const createGraphSlice: StateCreator<AppState, [], [], GraphSlice> = (set
         }
       }
 
-      const visibleTxids = computeVisibleTxids(mergedGraph, nextExpanded);
+      // Also ensure expandedTxids[txid] is true and hidden cleared.
+      nextExpanded[txid] = true;
+      const nextHidden = { ...latest.hiddenTxids };
+      for (const tid of hiddenInputIds) {
+        delete nextHidden[tid];
+      }
+
+      const visibleTxids = computeVisibleTxids(mergedGraph, nextExpanded, nextHidden);
       const hadUserMovedNodes = latest.hasUserMovedNodes;
       const existingNodeIds = new Set(Object.keys(currentGraph.nodes));
       const expandedNode = latest.nodes.find((node) => node.id === txid);
@@ -331,6 +355,7 @@ export const createGraphSlice: StateCreator<AppState, [], [], GraphSlice> = (set
         nodes: allNodes,
         edges: allEdges,
         expandedTxids: nextExpanded,
+        hiddenTxids: nextHidden,
         resolvedTxids: nextResolved,
         authError: null,
       });
@@ -347,6 +372,22 @@ export const createGraphSlice: StateCreator<AppState, [], [], GraphSlice> = (set
         return { expandingTxids: nextExpanding };
       });
     }
+  },
+
+  collapseNode: (txid) => {
+    const state = get();
+    if (!state.graph || !state.graph.nodes[txid]) return;
+    if (txid === state.graph.root_txid) return; // Cannot hide root
+
+    const nextHidden: Record<string, true> = { ...state.hiddenTxids, [txid]: true };
+    const visibleTxids = computeVisibleTxids(state.graph, state.expandedTxids, nextHidden);
+    const elements = applyVisibilityToElements(state.nodes, state.edges, visibleTxids);
+
+    set({
+      hiddenTxids: nextHidden,
+      nodes: elements.nodes,
+      edges: elements.edges,
+    });
   },
 
   triggerRelayout: () => {

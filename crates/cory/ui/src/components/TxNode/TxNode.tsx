@@ -24,10 +24,13 @@ import { InputRow } from "./InputRow";
 import { OutputRow } from "./OutputRow";
 import { TxNodeHeader } from "./TxNodeHeader";
 import { TxNodeExpandRail } from "./TxNodeExpandRail";
+import { TxNodeCollapseRail } from "./TxNodeCollapseRail";
 
 interface TxNodeProps extends NodeProps<TxFlowNode> {
   onCopied: (value: string) => void;
   onToggleExpand: (txid: string) => void;
+  onCollapseNode: (txid: string) => void;
+  isRoot: boolean;
   expandMode: "expand" | "collapse";
   toggleDisabled: boolean;
   toggleLoading: boolean;
@@ -37,7 +40,7 @@ const IO_GRID_COL_INPUTS = 3;
 const IO_GRID_COL_OUTPUTS = 5;
 
 function ioGridTemplateColumns(inputColumnWidth: number, outputColumnWidth: number): string {
-  return `${NODE_EXPAND_RAIL_WIDTH}px ${NODE_EXPAND_RAIL_GAP}px ${inputColumnWidth}px minmax(${IO_COLUMNS_MIN_GUTTER}px, 1fr) ${outputColumnWidth}px`;
+  return `${NODE_EXPAND_RAIL_WIDTH}px ${NODE_EXPAND_RAIL_GAP}px ${inputColumnWidth}px minmax(${IO_COLUMNS_MIN_GUTTER}px, 1fr) ${outputColumnWidth}px ${NODE_EXPAND_RAIL_GAP}px ${NODE_EXPAND_RAIL_WIDTH}px`;
 }
 
 export default memo(function TxNode({
@@ -45,6 +48,8 @@ export default memo(function TxNode({
   selected,
   onCopied,
   onToggleExpand,
+  onCollapseNode,
+  isRoot,
   expandMode,
   toggleDisabled,
   toggleLoading,
@@ -227,6 +232,8 @@ export default memo(function TxNode({
             ))}
           </div>
         </div>
+
+        <TxNodeCollapseRail txid={data.txid} disabled={isRoot} onCollapseNode={onCollapseNode} />
       </div>
     </div>
   );

@@ -197,10 +197,11 @@ export function buildParentsBySpending(
 export function computeVisibleTxids(
   graph: GraphResponse,
   expandedTxids: Record<string, true>,
+  hiddenTxids: Record<string, true> = {},
 ): Set<string> {
   const visible = new Set<string>();
   const root = graph.root_txid;
-  if (!graph.nodes[root]) return visible;
+  if (!graph.nodes[root] || hiddenTxids[root]) return visible;
 
   const parentsBySpending = buildParentsBySpending(graph.edges);
   const queue = [root];
@@ -212,7 +213,7 @@ export function computeVisibleTxids(
     if (!expandedTxids[spendingTxid]) continue;
 
     for (const parentTxid of parentsBySpending.get(spendingTxid) ?? []) {
-      if (!graph.nodes[parentTxid] || visible.has(parentTxid)) continue;
+      if (!graph.nodes[parentTxid] || visible.has(parentTxid) || hiddenTxids[parentTxid]) continue;
       visible.add(parentTxid);
       queue.push(parentTxid);
     }

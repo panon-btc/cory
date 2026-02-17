@@ -178,17 +178,18 @@ export function estimateNodeWidths(
 
   const nodeWidth = Math.max(
     NODE_MIN_WIDTH,
-    // The I/O section now includes an internal expand rail. Reserve that
-    // width here so the input/output columns keep the same usable space.
+    // The I/O section now includes an internal expand rail on the left and a hide rail on the right.
+    // Reserve that width here so the input/output columns keep the same usable space.
     20 +
       NODE_EXPAND_RAIL_WIDTH +
       NODE_EXPAND_RAIL_GAP +
       inputColumnWidth +
       IO_COLUMNS_MIN_GUTTER +
-      outputColumnWidth,
-    // Header rows do not render the rail, but they still share the same
-    // outer node width budget.
-    20 + NODE_EXPAND_RAIL_WIDTH + NODE_EXPAND_RAIL_GAP + headerWidth,
+      outputColumnWidth +
+      NODE_EXPAND_RAIL_GAP +
+      NODE_EXPAND_RAIL_WIDTH,
+    // Header rows do not render the rails, but they still share the same outer node width budget.
+    20 + NODE_EXPAND_RAIL_WIDTH + NODE_EXPAND_RAIL_GAP + headerWidth + NODE_EXPAND_RAIL_GAP + NODE_EXPAND_RAIL_WIDTH,
   );
   return { nodeWidth, inputColumnWidth, outputColumnWidth };
 }
