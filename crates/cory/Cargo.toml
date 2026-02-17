@@ -7,8 +7,10 @@ description = "Visual Bitcoin transaction ancestry explorer with embedded web UI
 documentation = "https://docs.rs/cory"
 homepage = "https://github.com/panon-btc/cory"
 repository = "https://github.com/panon-btc/cory"
+readme = "README.md"
 include = [
     "Cargo.toml",
+    "README.md",
     "build.rs",
     "src/**/*.rs",
     "tests/**/*.rs",

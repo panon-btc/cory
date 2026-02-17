@@ -7,6 +7,7 @@ description = "Core domain logic for Cory: Bitcoin RPC adapter, ancestry graph b
 documentation = "https://docs.rs/cory-core"
 homepage = "https://github.com/panon-btc/cory"
 repository = "https://github.com/panon-btc/cory"
+readme = "README.md"
 
 [dependencies]
 async-trait = { workspace = true }
