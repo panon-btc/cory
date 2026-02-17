@@ -352,7 +352,8 @@ impl BitcoinRpc for HttpRpcClient {
                 "getrawtransaction",
                 vec![serde_json::json!(txid.to_string()), serde_json::json!(1)],
             )
-            .await?;
+            .await
+            .map_err(|err| normalize_getrawtransaction_error(txid, err))?;
         self.parse_tx_node_from_raw(raw).await
     }
 
@@ -450,4 +451,78 @@ fn initial_request_id() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(1)
+}
+
+// ==============================================================================
+// RPC Error Normalization
+// ==============================================================================
+
+/// Convert Bitcoin Core "missing tx" JSON-RPC responses into `TxNotFound`.
+///
+/// This keeps not-found semantics strongly typed for upstream HTTP mapping,
+/// while preserving other RPC/transport failures as-is.
+fn normalize_getrawtransaction_error(txid: &Txid, err: CoreError) -> CoreError {
+    match err {
+        CoreError::Rpc(RpcError::ServerError { code, message })
+            if is_tx_not_found_server_error(code, &message) =>
+        {
+            CoreError::TxNotFound(*txid)
+        }
+        other => other,
+    }
+}
+
+fn is_tx_not_found_server_error(code: i64, message: &str) -> bool {
+    if code != -5 {
+        return false;
+    }
+
+    let msg = message.to_ascii_lowercase();
+    msg.contains("not found") || msg.contains("no such mempool or blockchain transaction")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bitcoin::hashes::Hash;
+
+    fn txid_1() -> Txid {
+        Txid::from_slice(&[1; 32]).expect("static txid bytes must parse")
+    }
+
+    #[test]
+    fn normalize_getrawtransaction_not_found_maps_to_typed_error() {
+        let txid = txid_1();
+        let err = CoreError::Rpc(RpcError::ServerError {
+            code: -5,
+            message: "No such mempool or blockchain transaction".to_string(),
+        });
+
+        let mapped = normalize_getrawtransaction_error(&txid, err);
+        assert!(matches!(mapped, CoreError::TxNotFound(found) if found == txid));
+    }
+
+    #[test]
+    fn normalize_getrawtransaction_other_server_error_preserved() {
+        let txid = txid_1();
+        let err = CoreError::Rpc(RpcError::ServerError {
+            code: -32603,
+            message: "Internal error".to_string(),
+        });
+
+        let mapped = normalize_getrawtransaction_error(&txid, err);
+        assert!(matches!(
+            mapped,
+            CoreError::Rpc(RpcError::ServerError { code: -32603, .. })
+        ));
+    }
+
+    #[test]
+    fn normalize_getrawtransaction_non_rpc_error_preserved() {
+        let txid = txid_1();
+        let err = CoreError::InvalidTxData("bad data".to_string());
+
+        let mapped = normalize_getrawtransaction_error(&txid, err);
+        assert!(matches!(mapped, CoreError::InvalidTxData(message) if message == "bad data"));
+    }
 }

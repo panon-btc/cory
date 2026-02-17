@@ -45,15 +45,10 @@ let lastSearchTxid = "";
 // URL helpers
 // ==========================================================================
 
-function replaceUrlParams(token: string, search: string): void {
-  const tokenTrimmed = token.trim();
+function replaceUrlSearchParam(search: string): void {
   const searchTrimmed = search.trim();
   const parts: string[] = [];
 
-  // Keep token first whenever both params are present.
-  if (tokenTrimmed) {
-    parts.push(`token=${encodeURIComponent(tokenTrimmed)}`);
-  }
   if (searchTrimmed) {
     parts.push(`search=${encodeURIComponent(searchTrimmed)}`);
   }
@@ -101,7 +96,7 @@ interface AppState {
   labelFiles: LabelFileSummary[];
   historyEntries: HistoryEntry[];
 
-  // API token (persisted to localStorage + URL)
+  // API token (persisted to sessionStorage)
   apiToken: string;
 
   // Search URL param tracked for URL sync.
@@ -173,10 +168,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setApiToken: (token) => {
-    set({ apiToken: token, authError: null });
-    localStorage.setItem("cory:apiToken", token);
-    setApiTokenInModule(token);
-    replaceUrlParams(token, get().searchParamTxid);
+    const trimmed = token.trim();
+    set({ apiToken: trimmed, authError: null });
+    if (trimmed) {
+      sessionStorage.setItem("cory:apiToken", trimmed);
+    } else {
+      sessionStorage.removeItem("cory:apiToken");
+    }
+    setApiTokenInModule(trimmed);
   },
 
   refreshLabelFiles: async () => {
@@ -212,7 +211,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     lastSearchTxid = txid;
     set({ searchParamTxid: txid, loading: true, error: null });
-    replaceUrlParams(get().apiToken, txid);
+    replaceUrlSearchParam(txid);
 
     try {
       const resp = await fetchGraph(txid, controller.signal);

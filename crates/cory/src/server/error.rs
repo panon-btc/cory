@@ -13,6 +13,7 @@ pub(crate) enum AppError {
     Unauthorized(String),
     NotFound(String),
     Conflict(String),
+    BadGateway(String),
     Internal(String),
 }
 
@@ -23,6 +24,7 @@ impl IntoResponse for AppError {
             Self::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
             Self::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             Self::Conflict(msg) => (StatusCode::CONFLICT, msg),
+            Self::BadGateway(msg) => (StatusCode::BAD_GATEWAY, msg),
             Self::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
         };
 

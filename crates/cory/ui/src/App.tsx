@@ -28,11 +28,19 @@ export default function App() {
   // search from the URL param. All three are independent, fire-and-forget
   // operations that only need to run once.
   useEffect(() => {
-    const token = initialToken || localStorage.getItem("cory:apiToken") || "";
+    const token = initialToken || sessionStorage.getItem("cory:apiToken") || "";
     if (token) {
       setApiToken(token);
       useAppStore.setState({ apiToken: token, searchParamTxid: initialSearch });
-      localStorage.setItem("cory:apiToken", token);
+      // Cleanup legacy storage from pre-hardening builds.
+      localStorage.removeItem("cory:apiToken");
+    }
+
+    if (initialToken) {
+      const params = new URLSearchParams(window.location.search);
+      params.delete("token");
+      const next = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`;
+      window.history.replaceState(null, "", next);
     }
 
     void useAppStore.getState().refreshLabelFiles();

@@ -34,7 +34,7 @@ pub(super) async fn static_files(uri: axum::http::Uri) -> Response {
             .into_response(),
         None => (
             StatusCode::NOT_FOUND,
-            "UI not built. Run: cd ui && npm run build",
+            "Cory was built without UI (no NPM at build time)",
         )
             .into_response(),
     }

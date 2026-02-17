@@ -343,26 +343,37 @@ async fn resolve_unresolved_prevouts(
         return;
     }
 
-    if let Ok(parent_txs) = rpc.get_transactions(&needed_parent_txids).await {
-        let parent_by_txid: HashMap<Txid, TxNode> =
-            parent_txs.into_iter().map(|tx| (tx.txid, tx)).collect();
+    match rpc.get_transactions(&needed_parent_txids).await {
+        Ok(parent_txs) => {
+            let parent_by_txid: HashMap<Txid, TxNode> =
+                parent_txs.into_iter().map(|tx| (tx.txid, tx)).collect();
 
-        for idx in indices_needing_parent {
-            let outpoint = inputs[idx]
-                .prevout
-                .expect("input prevout exists for unresolved inputs");
-            let Some(parent_tx) = parent_by_txid.get(&outpoint.txid) else {
-                continue;
-            };
-            let Some(output) = parent_tx.outputs.get(outpoint.vout as usize) else {
-                continue;
-            };
+            for idx in indices_needing_parent {
+                let outpoint = inputs[idx]
+                    .prevout
+                    .expect("input prevout exists for unresolved inputs");
+                let Some(parent_tx) = parent_by_txid.get(&outpoint.txid) else {
+                    continue;
+                };
+                let Some(output) = parent_tx.outputs.get(outpoint.vout as usize) else {
+                    continue;
+                };
 
-            cache
-                .insert_prevout(outpoint.txid, outpoint.vout, output.clone())
-                .await;
-            inputs[idx].value = Some(output.value);
-            inputs[idx].script_type = Some(output.script_type);
+                cache
+                    .insert_prevout(outpoint.txid, outpoint.vout, output.clone())
+                    .await;
+                inputs[idx].value = Some(output.value);
+                inputs[idx].script_type = Some(output.script_type);
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                %txid,
+                parent_tx_count = needed_parent_txids.len(),
+                unresolved_input_count = indices_needing_parent.len(),
+                error = %e,
+                "parent transaction fallback failed; prevouts remain unresolved"
+            );
         }
     }
 }

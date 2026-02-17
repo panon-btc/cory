@@ -84,7 +84,7 @@ pub(super) struct DeleteLabelQuery {
 // Handlers
 // ==============================================================================
 
-pub(super) async fn list_local_label_files(
+pub(super) async fn list_label_files(
     State(state): State<SharedState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<LabelFileSummary>>, AppError> {
