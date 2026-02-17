@@ -11,6 +11,7 @@ import type { Node, Edge } from "@xyflow/react";
 import type { GraphResponse, AncestryEdge } from "../Types";
 import { buildConnectedOutputsByTx, buildNodeRenderModel } from "./RenderModel";
 import type { TxNodeData } from "./RenderModel";
+import { calculateNodeGravityScore, calculateInversionCost, NEIGHBOR_WEIGHT } from "./LayoutScoring";
 
 // Typed React Flow node carrying our view-model data.
 export type TxFlowNode = Node<TxNodeData>;
@@ -51,7 +52,6 @@ function buildVisibleEdges(
 }
 
 function buildModelOrderByVout(sortedTxids: string[], visibleEdges: AncestryEdge[]): string[] {
-  const NEIGHBOR_WEIGHT = 100;
   const incomingBySpending = new Map<string, AncestryEdge[]>();
   const outgoingByFunding = new Map<string, AncestryEdge[]>();
 
@@ -73,33 +73,18 @@ function buildModelOrderByVout(sortedTxids: string[], visibleEdges: AncestryEdge
     }
 
     order = [...order].sort((a, b) => {
-      const scoreFor = (txid: string): number => {
-        const incoming = incomingBySpending.get(txid) ?? [];
-        const outgoing = outgoingByFunding.get(txid) ?? [];
-
-        let sum = 0;
-        let count = 0;
-
-        for (const edge of incoming) {
-          const parentIndex = indexByTx.get(edge.funding_txid);
-          if (parentIndex == null) continue;
-          sum += parentIndex * NEIGHBOR_WEIGHT + edge.funding_vout;
-          count += 1;
-        }
-
-        for (const edge of outgoing) {
-          const childIndex = indexByTx.get(edge.spending_txid);
-          if (childIndex == null) continue;
-          sum += childIndex * NEIGHBOR_WEIGHT + edge.funding_vout;
-          count += 1;
-        }
-
-        if (count > 0) return sum / count;
-        return (indexByTx.get(txid) ?? 0) * NEIGHBOR_WEIGHT;
-      };
-
-      const scoreA = scoreFor(a);
-      const scoreB = scoreFor(b);
+      const scoreA = calculateNodeGravityScore(
+        a,
+        indexByTx,
+        incomingBySpending.get(a) ?? [],
+        outgoingByFunding.get(a) ?? [],
+      );
+      const scoreB = calculateNodeGravityScore(
+        b,
+        indexByTx,
+        incomingBySpending.get(b) ?? [],
+        outgoingByFunding.get(b) ?? [],
+      );
       if (scoreA !== scoreB) return scoreA - scoreB;
       return a.localeCompare(b);
     });
@@ -199,7 +184,7 @@ function reorderLeftmostSourcesByVout(
     for (const edge of outgoing) {
       const childRank = yIndexById.get(edge.spending_txid);
       if (childRank == null) continue;
-      sum += childRank * 100 + edge.funding_vout;
+      sum += childRank * NEIGHBOR_WEIGHT + edge.funding_vout;
       count += 1;
     }
     if (count === 0) return Number.POSITIVE_INFINITY;
@@ -279,40 +264,19 @@ function reorderParallelBridgeGroups(
       return rank * 1_000 + edge.input_index;
     };
 
-    const inversionCost = (orderedIds: string[]): number => {
-      let cost = 0;
-      for (let i = 0; i < orderedIds.length; i += 1) {
-        for (let j = i + 1; j < orderedIds.length; j += 1) {
-          const a = orderedIds[i]!;
-          const b = orderedIds[j]!;
-
-          const aIncoming = incomingBySpending.get(a) ?? [];
-          const bIncoming = incomingBySpending.get(b) ?? [];
-          for (const ea of aIncoming) {
-            for (const eb of bIncoming) {
-              if (leftKey(ea) > leftKey(eb)) cost += 1;
-            }
-          }
-
-          const aOutgoing = outgoingByFunding.get(a) ?? [];
-          const bOutgoing = outgoingByFunding.get(b) ?? [];
-          for (const ea of aOutgoing) {
-            for (const eb of bOutgoing) {
-              if (rightKey(ea) > rightKey(eb)) cost += 1;
-            }
-          }
-        }
-      }
-      return cost;
-    };
-
     const fallbackOrder = [...siblings]
       .sort((a, b) => a.position.y - b.position.y || a.id.localeCompare(b.id))
       .map((n) => n.id);
 
     const ids = siblings.map((n) => n.id).sort();
     let bestOrder: string[] = [...fallbackOrder];
-    let bestCost = inversionCost(bestOrder);
+    let bestCost = calculateInversionCost(
+      bestOrder,
+      incomingBySpending,
+      outgoingByFunding,
+      leftKey,
+      rightKey,
+    );
 
     // Exact search for small groups. This directly minimizes avoidable
     // crossings on both parent->group and group->child sides.
@@ -321,7 +285,13 @@ function reorderParallelBridgeGroups(
       const current: string[] = [];
       const visit = () => {
         if (current.length === ids.length) {
-          const cost = inversionCost(current);
+          const cost = calculateInversionCost(
+            current,
+            incomingBySpending,
+            outgoingByFunding,
+            leftKey,
+            rightKey,
+          );
           const currentKey = current.join("|");
           const bestKey = bestOrder.join("|");
           if (cost < bestCost || (cost === bestCost && currentKey < bestKey)) {

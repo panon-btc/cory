@@ -23,10 +23,10 @@ import {
   shortOutpoint,
   shortAddress,
   formatSats,
-  formatLabelEntry,
   buildTxMetaParts,
 } from "../utils/Format";
 import { measureTextWidth } from "../utils/TextMeasure";
+import { resolveInputLabels, resolveOutputLabels, resolveTxLabels } from "./LabelUtils";
 
 // ==============================================================================
 // View-Model Interfaces
@@ -271,15 +271,11 @@ export function buildNodeRenderModel(
 
   // 2) Build input rows with merged input+address labels and dynamic row height.
   const inputRows: TxInputView[] = nodeData.inputs.map((input, index) => {
-    const inputRef = `${txid}:${index}`;
-    const inputLabels = response.labels_by_type.input[inputRef] ?? [];
-    const address = response.input_address_refs[inputRef] ?? null;
-    const addrLabels = address ? (response.labels_by_type.addr[address] ?? []) : [];
-    const labelLines = [...addrLabels.map(formatLabelEntry), ...inputLabels.map(formatLabelEntry)];
+    const labelLines = resolveInputLabels(response, txid, index);
     return {
       index,
       prevout: input.prevout,
-      address,
+      address: response.input_address_refs[`${txid}:${index}`] ?? null,
       labelLines,
       rowHeight: PRIMARY_ROW_HEIGHT + labelLines.length * LABEL_LINE_HEIGHT,
     };
@@ -288,11 +284,7 @@ export function buildNodeRenderModel(
   // 3) Build full output rows first; visibility/collapse is handled in a later pass.
   const connectedIndices = connectedOutputsByTx.get(txid) ?? new Set<number>();
   const allOutputRows: TxOutputRowView[] = nodeData.outputs.map((output, index) => {
-    const outputRef = `${txid}:${index}`;
-    const outputLabels = response.labels_by_type.output[outputRef] ?? [];
-    const address = response.output_address_refs[outputRef] ?? null;
-    const addrLabels = address ? (response.labels_by_type.addr[address] ?? []) : [];
-    const labelLines = [...addrLabels.map(formatLabelEntry), ...outputLabels.map(formatLabelEntry)];
+    const labelLines = resolveOutputLabels(response, txid, index);
 
     return {
       kind: "output",
@@ -300,7 +292,7 @@ export function buildNodeRenderModel(
       value: output.value,
       scriptType: output.script_type,
       connected: connectedIndices.has(index),
-      address,
+      address: response.output_address_refs[`${txid}:${index}`] ?? null,
       labelLines,
       rowHeight: PRIMARY_ROW_HEIGHT + labelLines.length * LABEL_LINE_HEIGHT,
     };
@@ -328,7 +320,7 @@ export function buildNodeRenderModel(
   }
 
   // 5) Assemble header metadata and final node height for layout sizing.
-  const txLabels = (response.labels_by_type.tx[txid] ?? []).map(formatLabelEntry);
+  const txLabels = resolveTxLabels(response, txid);
   const inputTotalHeight = inputRows.reduce((sum, row) => sum + row.rowHeight, 0);
   const outputTotalHeight = outputRows.reduce((sum, row) => sum + row.rowHeight, 0);
   const { nodeWidth, inputColumnWidth, outputColumnWidth } = estimateNodeWidths(
