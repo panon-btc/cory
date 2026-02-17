@@ -1,6 +1,7 @@
 import type { TxInputView } from "../../graph/Layout";
-import { copyToClipboard } from "../../utils/Format";
 import { MiddleEllipsisText } from "./MiddleEllipsisText";
+import { CopyButton } from "../Common/CopyButton";
+import { LabelLine } from "../Common/LabelLine";
 
 interface InputRowProps {
   row: TxInputView;
@@ -25,30 +26,9 @@ export function InputRow({ row, refCallback, onCopied }: InputRowProps) {
       }}
     >
       <div style={{ display: "flex", gap: 6, alignItems: "center", minWidth: 0, width: "100%" }}>
-        <button
-          type="button"
-          className="nodrag nopan"
-          onClick={() => {
-            void copyToClipboard(copyValue).then((copied) => {
-              if (copied) {
-                onCopied(copyValue);
-              }
-            });
-          }}
-          title={`Copy: ${copyValue}`}
-          style={{
-            color: "var(--accent)",
-            minWidth: 24,
-            border: "none",
-            background: "transparent",
-            padding: 0,
-            textAlign: "left",
-            font: "inherit",
-            cursor: "pointer",
-          }}
-        >
+        <CopyButton value={copyValue} onCopied={onCopied}>
           #{row.index}
-        </button>
+        </CopyButton>
         <MiddleEllipsisText
           text={row.address ?? row.prevout ?? "coinbase"}
           title={row.address ?? row.prevout ?? "coinbase"}
@@ -60,23 +40,11 @@ export function InputRow({ row, refCallback, onCopied }: InputRowProps) {
         />
       </div>
       {row.labelLines.map((label, idx) => (
-        <div
+        <LabelLine
           key={`input-${row.index}-label-${idx}`}
-          style={{
-            marginLeft: 30,
-            color: "var(--text-muted)",
-            fontSize: 9,
-            fontStyle: "italic",
-            lineHeight: 1.1,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            maxWidth: "100%",
-          }}
-          title={label}
-        >
-          {label}
-        </div>
+          label={label}
+          style={{ marginLeft: 30 }}
+        />
       ))}
     </div>
   );

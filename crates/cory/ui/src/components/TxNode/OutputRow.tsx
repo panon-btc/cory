@@ -1,6 +1,8 @@
 import type { TxOutputDisplayRow } from "../../graph/Layout";
-import { formatSats, copyToClipboard } from "../../utils/Format";
+import { formatSats } from "../../utils/Format";
 import { MiddleEllipsisText } from "./MiddleEllipsisText";
+import { CopyButton } from "../Common/CopyButton";
+import { LabelLine } from "../Common/LabelLine";
 
 interface OutputRowProps {
   row: TxOutputDisplayRow;
@@ -9,8 +11,6 @@ interface OutputRowProps {
   onCopied: (value: string) => void;
 }
 
-// Renders a single output row (address + value + labels) or a gap
-// placeholder ("... N hidden ...") for collapsed output ranges.
 export function OutputRow({ row, txid, refCallback, onCopied }: OutputRowProps) {
   if (row.kind === "gap") {
     return (
@@ -45,34 +45,9 @@ export function OutputRow({ row, txid, refCallback, onCopied }: OutputRowProps) 
         minHeight: row.rowHeight,
       }}
     >
-      <button
-        type="button"
-        className="nodrag nopan"
-        onClick={() => {
-          void copyToClipboard(copyValue).then((copied) => {
-            if (copied) {
-              onCopied(copyValue);
-            }
-          });
-        }}
-        title={
-          row.address
-            ? `Copy output address: ${row.address}`
-            : `Copy output ref: ${txid}:${row.index}`
-        }
-        style={{
-          color: "var(--accent)",
-          minWidth: 24,
-          border: "none",
-          background: "transparent",
-          padding: 0,
-          textAlign: "left",
-          font: "inherit",
-          cursor: "pointer",
-        }}
-      >
+      <CopyButton value={copyValue} onCopied={onCopied}>
         #{row.index}
-      </button>
+      </CopyButton>
       <div
         style={{
           display: "flex",
@@ -105,21 +80,7 @@ export function OutputRow({ row, txid, refCallback, onCopied }: OutputRowProps) 
           {formatSats(row.value)}
         </span>
         {row.labelLines.map((label, idx) => (
-          <span
-            key={`output-${row.index}-label-${idx}`}
-            style={{
-              color: "var(--text-muted)",
-              fontSize: 9,
-              fontStyle: "italic",
-              lineHeight: 1.1,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-            title={label}
-          >
-            {label}
-          </span>
+          <LabelLine key={`output-${row.index}-label-${idx}`} label={label} />
         ))}
       </div>
     </div>

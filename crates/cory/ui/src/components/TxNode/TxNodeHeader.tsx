@@ -1,15 +1,10 @@
-// ==============================================================================
-// TxNode Header Component
-// ==============================================================================
-//
-// Renders the transaction ID, copy button, labels, and metadata summary
-// (block height, fees, flags) at the top of a transaction node.
-
 import { useMemo } from "react";
 import { Copy } from "lucide-react";
-import { copyToClipboard, buildTxMetaParts } from "../../utils/Format";
+import { buildTxMetaParts } from "../../utils/Format";
 import { MiddleEllipsisText } from "./MiddleEllipsisText";
 import type { TxNodeData } from "../../graph/RenderModel";
+import { CopyButton } from "../Common/CopyButton";
+import { LabelLine } from "../Common/LabelLine";
 
 interface TxNodeHeaderProps {
   data: TxNodeData;
@@ -32,31 +27,18 @@ export function TxNodeHeader({ data, onCopied }: TxNodeHeaderProps) {
   return (
     <>
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <button
-          type="button"
-          className="nodrag nopan"
-          onClick={() => {
-            void copyToClipboard(data.txid).then((copied) => {
-              if (copied) {
-                onCopied(data.txid);
-              }
-            });
-          }}
-          aria-label="Copy transaction ID"
+        <CopyButton
+          value={data.txid}
+          onCopied={onCopied}
           title={`Copy txid: ${data.txid}`}
           style={{
             border: "1px solid var(--border)",
-            background: "transparent",
-            color: "var(--text-muted)",
             borderRadius: 3,
-            fontSize: 10,
-            lineHeight: 1,
             padding: "2px 4px",
-            cursor: "pointer",
           }}
         >
           <Copy size={12} strokeWidth={2} aria-hidden="true" />
-        </button>
+        </CopyButton>
         <MiddleEllipsisText
           text={data.txid}
           style={{
@@ -70,20 +52,7 @@ export function TxNodeHeader({ data, onCopied }: TxNodeHeaderProps) {
       </div>
 
       {data.txLabels.length > 0 && (
-        <div
-          style={{
-            color: "var(--text-muted)",
-            fontSize: 9,
-            fontStyle: "italic",
-            marginTop: 2,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-          title={data.txLabels.join(", ")}
-        >
-          {data.txLabels.join(", ")}
-        </div>
+        <LabelLine label={data.txLabels.join(", ")} style={{ marginTop: 2 }} />
       )}
 
       <div style={{ color: "var(--text-muted)", fontSize: 10, marginTop: 2 }}>
