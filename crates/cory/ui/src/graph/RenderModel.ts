@@ -312,7 +312,10 @@ export function buildNodeRenderModel(
   let prevVisibleIndex = -1;
   for (const visibleIndex of visibleOutputIndices) {
     const hiddenCount = visibleIndex - prevVisibleIndex - 1;
-    if (hiddenCount > 0) {
+    if (hiddenCount === 1) {
+      // If only one output is hidden, just show it instead of a gap row.
+      outputRows.push(allOutputRows[prevVisibleIndex + 1]!);
+    } else if (hiddenCount > 1) {
       outputRows.push({
         kind: "gap",
         hiddenCount,
