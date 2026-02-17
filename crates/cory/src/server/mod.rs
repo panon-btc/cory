@@ -425,4 +425,87 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     }
+
+    #[tokio::test]
+    async fn graph_request_records_history_by_default() {
+        let router = test_router(FakeRpcMode::Ok);
+        let txid = txid_str(5);
+
+        let graph_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/graph/tx/{txid}"))
+                    .header("x-api-token", "test-token")
+                    .body(Body::empty())
+                    .expect("request must build"),
+            )
+            .await
+            .expect("router should serve request");
+        assert_eq!(graph_response.status(), StatusCode::OK);
+
+        let history_response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/history")
+                    .header("x-api-token", "test-token")
+                    .body(Body::empty())
+                    .expect("request must build"),
+            )
+            .await
+            .expect("router should serve request");
+        assert_eq!(history_response.status(), StatusCode::OK);
+
+        let json = response_body_json(history_response).await;
+        let entries = json
+            .get("entries")
+            .and_then(serde_json::Value::as_array)
+            .expect("history response must include entries array");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0]
+                .get("txid")
+                .and_then(serde_json::Value::as_str)
+                .expect("history entry must include txid"),
+            txid
+        );
+    }
+
+    #[tokio::test]
+    async fn graph_request_can_skip_history_recording() {
+        let router = test_router(FakeRpcMode::Ok);
+        let txid = txid_str(6);
+
+        let graph_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/graph/tx/{txid}?record_history=false"))
+                    .header("x-api-token", "test-token")
+                    .body(Body::empty())
+                    .expect("request must build"),
+            )
+            .await
+            .expect("router should serve request");
+        assert_eq!(graph_response.status(), StatusCode::OK);
+
+        let history_response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/history")
+                    .header("x-api-token", "test-token")
+                    .body(Body::empty())
+                    .expect("request must build"),
+            )
+            .await
+            .expect("router should serve request");
+        assert_eq!(history_response.status(), StatusCode::OK);
+
+        let json = response_body_json(history_response).await;
+        let entries = json
+            .get("entries")
+            .and_then(serde_json::Value::as_array)
+            .expect("history response must include entries array");
+        assert!(entries.is_empty());
+    }
 }

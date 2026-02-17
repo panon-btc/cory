@@ -16,6 +16,11 @@ import TxNode from "./txnode/Node";
 import { useAppStore } from "../store";
 import type { TxFlowNode } from "../layout";
 
+function hasExpandableInputs(graph: ReturnType<typeof useAppStore.getState>["graph"], txid: string): boolean {
+  const sourceNode = graph?.nodes[txid];
+  return sourceNode ? sourceNode.inputs.some((input) => input.prevout !== null) : false;
+}
+
 // Controlled React Flow: the Zustand store is the single source of truth
 // for nodes and edges. User interactions (drags, selections) flow through
 // onNodesChange/onEdgesChange, which apply changes to the store directly.
@@ -34,6 +39,8 @@ export default function GraphPanel() {
   const setNodes = useAppStore((s) => s.setNodes);
   const setEdges = useAppStore((s) => s.setEdges);
   const setHasUserMovedNodes = useAppStore((s) => s.setHasUserMovedNodes);
+  const expandNodeInputs = useAppStore((s) => s.expandNodeInputs);
+  const expandingTxids = useAppStore((s) => s.expandingTxids);
   const searchFocusRequestId = useAppStore((s) => s.searchFocusRequestId);
   const searchFocusTxid = useAppStore((s) => s.searchFocusTxid);
   const lastCenteredFocusRequestIdRef = useRef(0);
@@ -45,9 +52,20 @@ export default function GraphPanel() {
 
   const nodeTypes = useMemo(
     () => ({
-      tx: (props: NodeProps<TxFlowNode>) => <TxNode {...props} onCopied={handleCopied} />,
+      tx: (props: NodeProps<TxFlowNode>) => {
+        const canExpand = hasExpandableInputs(graph, props.id);
+        return (
+          <TxNode
+            {...props}
+            onCopied={handleCopied}
+            onExpand={(txid) => void expandNodeInputs(txid)}
+            expandDisabled={loading || !canExpand}
+            expandLoading={Boolean(expandingTxids[props.id])}
+          />
+        );
+      },
     }),
-    [handleCopied],
+    [expandNodeInputs, expandingTxids, graph, handleCopied, loading],
   );
 
   const onNodesChange = useCallback(

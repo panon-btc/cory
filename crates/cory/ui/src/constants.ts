@@ -27,6 +27,12 @@ export const IO_ROW_GAP = 2;
 // Minimum horizontal separation between input and output columns.
 export const IO_COLUMNS_MIN_GUTTER = 16;
 
+// Left-side expand rail width rendered inside each node.
+export const NODE_EXPAND_RAIL_WIDTH = 17;
+
+// Gap between the expand rail and node content columns.
+export const NODE_EXPAND_RAIL_GAP = 6;
+
 // ==============================================================================
 // Sidebar Resize Constraints
 // ==============================================================================

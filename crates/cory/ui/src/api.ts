@@ -85,11 +85,14 @@ async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response>
 
 export async function fetchGraph(
   txid: string,
-  opts?: { signal?: AbortSignal; maxDepth?: number },
+  opts?: { signal?: AbortSignal; maxDepth?: number; recordHistory?: boolean },
 ): Promise<GraphResponse> {
   const query = new URLSearchParams();
   if (typeof opts?.maxDepth === "number") {
     query.set("max_depth", String(opts.maxDepth));
+  }
+  if (typeof opts?.recordHistory === "boolean") {
+    query.set("record_history", String(opts.recordHistory));
   }
   const suffix = query.toString();
   const path = `/api/v1/graph/tx/${encodeURIComponent(txid)}${suffix ? `?${suffix}` : ""}`;

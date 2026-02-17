@@ -15,6 +15,8 @@ import {
   PRIMARY_ROW_HEIGHT,
   LABEL_LINE_HEIGHT,
   IO_COLUMNS_MIN_GUTTER,
+  NODE_EXPAND_RAIL_GAP,
+  NODE_EXPAND_RAIL_WIDTH,
 } from "./constants";
 import {
   shortTxid,
@@ -176,8 +178,17 @@ export function estimateNodeWidths(
 
   const nodeWidth = Math.max(
     NODE_MIN_WIDTH,
-    20 + inputColumnWidth + IO_COLUMNS_MIN_GUTTER + outputColumnWidth,
-    20 + headerWidth,
+    // The I/O section now includes an internal expand rail. Reserve that
+    // width here so the input/output columns keep the same usable space.
+    20 +
+      NODE_EXPAND_RAIL_WIDTH +
+      NODE_EXPAND_RAIL_GAP +
+      inputColumnWidth +
+      IO_COLUMNS_MIN_GUTTER +
+      outputColumnWidth,
+    // Header rows do not render the rail, but they still share the same
+    // outer node width budget.
+    20 + NODE_EXPAND_RAIL_WIDTH + NODE_EXPAND_RAIL_GAP + headerWidth,
   );
   return { nodeWidth, inputColumnWidth, outputColumnWidth };
 }

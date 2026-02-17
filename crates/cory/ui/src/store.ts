@@ -7,6 +7,7 @@
 
 import { create } from "zustand";
 import type { Edge } from "@xyflow/react";
+import toast from "react-hot-toast";
 import type {
   Bip329Type,
   GraphResponse,
@@ -79,6 +80,162 @@ function labelBucket(
   return null;
 }
 
+function edgeKey(edge: {
+  spending_txid: string;
+  input_index: number;
+  funding_txid: string;
+  funding_vout: number;
+}): string {
+  return `${edge.spending_txid}:${edge.input_index}:${edge.funding_txid}:${edge.funding_vout}`;
+}
+
+function mergeStringArrayMaps(
+  current: Record<string, string[]>,
+  incoming: Record<string, string[]>,
+): Record<string, string[]> {
+  const merged: Record<string, string[]> = { ...current };
+  for (const [key, values] of Object.entries(incoming)) {
+    const existing = merged[key] ?? [];
+    merged[key] = [...new Set([...existing, ...values])];
+  }
+  return merged;
+}
+
+function computeMaxDepthReached(
+  rootTxid: string,
+  nodes: Record<string, unknown>,
+  edges: Array<{ spending_txid: string; funding_txid: string }>,
+): number {
+  if (!nodes[rootTxid]) return 0;
+
+  const parentsBySpending = new Map<string, string[]>();
+  for (const edge of edges) {
+    if (!nodes[edge.spending_txid] || !nodes[edge.funding_txid]) continue;
+    const parents = parentsBySpending.get(edge.spending_txid) ?? [];
+    parents.push(edge.funding_txid);
+    parentsBySpending.set(edge.spending_txid, parents);
+  }
+
+  const visited = new Set<string>([rootTxid]);
+  const queue: Array<{ txid: string; depth: number }> = [{ txid: rootTxid, depth: 0 }];
+  let maxDepth = 0;
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) break;
+    if (current.depth > maxDepth) {
+      maxDepth = current.depth;
+    }
+
+    for (const parentTxid of parentsBySpending.get(current.txid) ?? []) {
+      if (visited.has(parentTxid)) continue;
+      visited.add(parentTxid);
+      queue.push({ txid: parentTxid, depth: current.depth + 1 });
+    }
+  }
+
+  return maxDepth;
+}
+
+function mergeGraphResponses(current: GraphResponse, incoming: GraphResponse): GraphResponse {
+  const mergedNodes = {
+    ...current.nodes,
+    ...incoming.nodes,
+  };
+  const mergedEdgeMap = new Map<string, (typeof current.edges)[number]>();
+  for (const edge of current.edges) {
+    mergedEdgeMap.set(edgeKey(edge), edge);
+  }
+  for (const edge of incoming.edges) {
+    mergedEdgeMap.set(edgeKey(edge), edge);
+  }
+  const mergedEdges = [...mergedEdgeMap.values()];
+
+  return {
+    ...current,
+    nodes: mergedNodes,
+    edges: mergedEdges,
+    truncated: current.truncated || incoming.truncated,
+    stats: {
+      node_count: Object.keys(mergedNodes).length,
+      edge_count: mergedEdges.length,
+      max_depth_reached: computeMaxDepthReached(current.root_txid, mergedNodes, mergedEdges),
+    },
+    enrichments: {
+      ...current.enrichments,
+      ...incoming.enrichments,
+    },
+    labels_by_type: {
+      tx: { ...current.labels_by_type.tx, ...incoming.labels_by_type.tx },
+      input: { ...current.labels_by_type.input, ...incoming.labels_by_type.input },
+      output: { ...current.labels_by_type.output, ...incoming.labels_by_type.output },
+      addr: { ...current.labels_by_type.addr, ...incoming.labels_by_type.addr },
+    },
+    input_address_refs: {
+      ...current.input_address_refs,
+      ...incoming.input_address_refs,
+    },
+    output_address_refs: {
+      ...current.output_address_refs,
+      ...incoming.output_address_refs,
+    },
+    address_occurrences: mergeStringArrayMaps(
+      current.address_occurrences,
+      incoming.address_occurrences,
+    ),
+  };
+}
+
+function placeExpandedParentsLeft(
+  nodes: TxFlowNode[],
+  existingNodeIds: Set<string>,
+  expandedTxid: string,
+  incoming: GraphResponse,
+  anchor: { x: number; y: number; width: number } | null,
+): TxFlowNode[] {
+  if (!anchor) return nodes;
+
+  // Preserve a stable vertical ordering for newly added parents by using
+  // the smallest input index where each parent is referenced.
+  const parentOrder = new Map<string, number>();
+  for (const edge of incoming.edges) {
+    if (edge.spending_txid !== expandedTxid) continue;
+    const existing = parentOrder.get(edge.funding_txid);
+    if (existing == null || edge.input_index < existing) {
+      parentOrder.set(edge.funding_txid, edge.input_index);
+    }
+  }
+
+  const newParents = [...parentOrder.entries()]
+    .filter(([parentTxid]) => !existingNodeIds.has(parentTxid))
+    .sort((a, b) => a[1] - b[1])
+    .map(([parentTxid]) => parentTxid);
+
+  if (newParents.length === 0) return nodes;
+
+  // Keep new parents visibly to the left of the expanded node and centered
+  // around its current vertical position.
+  const PARENT_X_GAP = 120;
+  const PARENT_Y_GAP = 190;
+  const targetX = anchor.x - (anchor.width + PARENT_X_GAP);
+  const startY = anchor.y - ((newParents.length - 1) * PARENT_Y_GAP) / 2;
+  const yById = new Map<string, number>(
+    newParents.map((parentTxid, index) => [parentTxid, startY + index * PARENT_Y_GAP]),
+  );
+
+  return nodes.map((node) => {
+    const targetY = yById.get(node.id);
+    if (targetY == null) return node;
+    return {
+      ...node,
+      position: {
+        x: targetX,
+        y: targetY,
+      },
+    };
+  });
+}
+
 // ==========================================================================
 // Store interface
 // ==========================================================================
@@ -93,6 +250,7 @@ interface AppState {
   error: string | null;
   authError: string | null;
   hasUserMovedNodes: boolean;
+  expandingTxids: Record<string, true>;
 
   // Labels
   labelFiles: LabelFileSummary[];
@@ -113,6 +271,7 @@ interface AppState {
     txid: string,
     opts?: { preserveSelectedTxid?: string | null; quietErrors?: boolean },
   ) => Promise<void>;
+  expandNodeInputs: (txid: string) => Promise<void>;
   setSelectedTxid: (txid: string | null) => void;
   setNodes: (updater: TxFlowNode[] | ((prev: TxFlowNode[]) => TxFlowNode[])) => void;
   setEdges: (updater: Edge[] | ((prev: Edge[]) => Edge[])) => void;
@@ -144,6 +303,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   error: null,
   authError: null,
   hasUserMovedNodes: false,
+  expandingTxids: {},
   labelFiles: [],
   historyEntries: [],
   apiToken: "",
@@ -267,6 +427,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         searchFocusTxid: searchTargetTxid,
         authError: null,
         hasUserMovedNodes: false,
+        expandingTxids: {},
       });
 
       // History refresh is best-effort and should not break graph rendering.
@@ -293,6 +454,91 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (searchId === thisSearchId) {
         set({ loading: false });
       }
+    }
+  },
+
+  expandNodeInputs: async (txid) => {
+    const state = get();
+    const baseGraph = state.graph;
+    if (!baseGraph || !baseGraph.nodes[txid]) return;
+    if (state.loading || state.expandingTxids[txid]) return;
+
+    const sourceNode = baseGraph.nodes[txid];
+    if (!sourceNode.inputs.some((input) => input.prevout !== null)) return;
+
+    set((current) => ({
+      expandingTxids: {
+        ...current.expandingTxids,
+        [txid]: true,
+      },
+      error: null,
+    }));
+
+    try {
+      const incoming = await fetchGraph(txid, { maxDepth: 1, recordHistory: false });
+      const latest = get();
+      const currentGraph = latest.graph;
+      if (!currentGraph || !currentGraph.nodes[txid]) return;
+
+      const mergedGraph = mergeGraphResponses(currentGraph, incoming);
+      const hadUserMovedNodes = latest.hasUserMovedNodes;
+      const existingNodeIds = new Set(Object.keys(currentGraph.nodes));
+      const expandedNode = latest.nodes.find((node) => node.id === txid);
+      const previousPositions = new Map<string, TxFlowNode["position"]>(
+        latest.nodes.map((node) => [node.id, node.position]),
+      );
+
+      const { nodes: laidOutNodes, edges } = await computeLayout(mergedGraph);
+      const selectedTxid = get().selectedTxid;
+      const mergedNodes = laidOutNodes.map((node) => {
+        if (hadUserMovedNodes && existingNodeIds.has(node.id)) {
+          const previousPosition = previousPositions.get(node.id);
+          if (previousPosition) {
+            return {
+              ...node,
+              position: previousPosition,
+              selected: node.id === selectedTxid,
+            };
+          }
+        }
+        return {
+          ...node,
+          selected: node.id === selectedTxid,
+        };
+      });
+      const anchoredMergedNodes = placeExpandedParentsLeft(
+        mergedNodes,
+        existingNodeIds,
+        txid,
+        incoming,
+        expandedNode
+          ? {
+              x: expandedNode.position.x,
+              y: expandedNode.position.y,
+              width: typeof expandedNode.style?.width === "number" ? expandedNode.style.width : 320,
+            }
+          : null,
+      );
+
+      set({
+        graph: mergedGraph,
+        nodes: anchoredMergedNodes,
+        edges,
+        authError: null,
+      });
+    } catch (e) {
+      if (get().handleAuthError(e)) {
+        toast.error(errorMessage(e, "request failed"), { id: "graph-expand-error" });
+        return;
+      }
+      toast.error(errorMessage(e, "Failed to expand node inputs"), { id: "graph-expand-error" });
+    } finally {
+      set((current) => {
+        if (!current.expandingTxids[txid]) return current;
+        const nextExpanding = { ...current.expandingTxids };
+        delete nextExpanding[txid];
+        return { expandingTxids: nextExpanding };
+      });
     }
   },
 
