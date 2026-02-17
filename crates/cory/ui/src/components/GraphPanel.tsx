@@ -12,9 +12,9 @@ import {
 } from "@xyflow/react";
 import type { NodeChange, EdgeChange, NodeProps } from "@xyflow/react";
 import toast from "react-hot-toast";
-import TxNode from "./txnode/Node";
-import { isNodeFullyResolved, useAppStore } from "../store";
-import type { TxFlowNode } from "../layout";
+import TxNode from "./TxNode/TxNode";
+import { useAppStore } from "../store/AppStore";
+import type { TxFlowNode } from "../graph/Layout";
 
 function hasExpandableInputs(
   graph: ReturnType<typeof useAppStore.getState>["graph"],
@@ -43,8 +43,10 @@ export default function GraphPanel() {
   const setEdges = useAppStore((s) => s.setEdges);
   const setHasUserMovedNodes = useAppStore((s) => s.setHasUserMovedNodes);
   const toggleNodeInputs = useAppStore((s) => s.toggleNodeInputs);
+  const collapseNode = useAppStore((s) => s.collapseNode);
   const expandingTxids = useAppStore((s) => s.expandingTxids);
   const expandedTxids = useAppStore((s) => s.expandedTxids);
+  const hiddenTxids = useAppStore((s) => s.hiddenTxids);
   const searchFocusRequestId = useAppStore((s) => s.searchFocusRequestId);
   const searchFocusTxid = useAppStore((s) => s.searchFocusTxid);
   const lastCenteredFocusRequestIdRef = useRef(0);
@@ -59,21 +61,43 @@ export default function GraphPanel() {
       tx: (props: NodeProps<TxFlowNode>) => {
         const canExpand = hasExpandableInputs(graph, props.id);
         const isExpanded = Boolean(expandedTxids[props.id]);
-        const fullyResolved = isNodeFullyResolved(graph, props.id);
-        const collapseDisabled = isExpanded && !fullyResolved;
+
+        // Check if any of this node's inputs are currently hidden.
+        // If so, the left rail should show "Expand" (pointing left) to allow unhiding.
+        const inputs = graph?.nodes[props.id]?.inputs ?? [];
+        const hasHiddenInputs = inputs.some((input) => {
+          const tid = input.prevout?.split(":")[0];
+          return tid && hiddenTxids[tid];
+        });
+
+        // Toggle mode is 'expand' (pointing left) if NOT expanded OR if there are hidden inputs.
+        // This makes the rail show << if we can still expand back some children.
+        const expandMode = !isExpanded || hasHiddenInputs ? "expand" : "collapse";
+
         return (
           <TxNode
             {...props}
             onCopied={handleCopied}
             onToggleExpand={(txid) => void toggleNodeInputs(txid)}
-            expandMode={isExpanded && fullyResolved ? "collapse" : "expand"}
-            toggleDisabled={loading || !canExpand || collapseDisabled}
+            onCollapseNode={(txid) => collapseNode(txid)}
+            isRoot={props.id === graph?.root_txid}
+            expandMode={expandMode}
+            toggleDisabled={loading || (!canExpand && expandMode === "expand" && !hasHiddenInputs)}
             toggleLoading={Boolean(expandingTxids[props.id])}
           />
         );
       },
     }),
-    [expandedTxids, expandingTxids, graph, handleCopied, loading, toggleNodeInputs],
+    [
+      expandedTxids,
+      expandingTxids,
+      graph,
+      handleCopied,
+      collapseNode,
+      loading,
+      toggleNodeInputs,
+      hiddenTxids,
+    ],
   );
 
   const onNodesChange = useCallback(

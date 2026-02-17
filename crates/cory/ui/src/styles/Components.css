@@ -1,0 +1,164 @@
+/* ==============================================================================
+   Component & Utility Styles
+   ============================================================================== */
+
+/* Generic Buttons */
+button {
+  cursor: pointer;
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-2) 75%, var(--accent) 25%);
+}
+
+button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-2) 70%, var(--accent-active) 30%);
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.btn-primary:active:not(:disabled) {
+  background: var(--accent-active);
+  border-color: var(--accent-active);
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--border-subtle);
+}
+
+.btn-danger {
+  background: var(--danger-bg);
+  border-color: color-mix(in srgb, var(--error) 45%, var(--border-subtle) 55%);
+  color: var(--error);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger-bg) 70%, var(--error) 30%);
+}
+
+.icon-btn {
+  width: 24px;
+  height: 24px;
+  line-height: 1;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+
+/* Panels */
+.panel {
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+}
+
+.panel-elevated {
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+
+/* Typography Utilities */
+.muted {
+  color: var(--text-muted);
+}
+
+.text-warning {
+  color: var(--warning);
+}
+
+.text-error {
+  color: var(--error);
+}
+
+.text-success {
+  color: var(--success);
+}
+
+/* Notices */
+.notice {
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 8px;
+  font-size: 10px;
+  font-style: italic;
+  font-weight: 700;
+}
+
+.notice-warning {
+  background: var(--warning-bg);
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border-subtle) 55%);
+  color: var(--warning);
+}
+
+.notice-info {
+  background: color-mix(in srgb, var(--info) 14%, var(--surface-1) 86%);
+  border-color: color-mix(in srgb, var(--info) 45%, var(--border-subtle) 55%);
+  color: var(--text-secondary);
+}
+
+/* Specific UI Elements */
+.stats-chip {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-1) 78%, var(--bg-page) 22%);
+  border: 1px solid var(--border-subtle);
+}
+
+.row-action-button {
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 0;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.row-action-button:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+/* Sidebar Layout */
+.resize-handle {
+  background: var(--surface-2);
+  border-left: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+}
+
+.resize-handle:hover {
+  background: color-mix(in srgb, var(--surface-2) 70%, var(--accent) 30%);
+  color: var(--text-primary);
+}
+
+.resize-handle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
+.resize-handle-collapsed {
+  background: color-mix(in srgb, var(--surface-2) 70%, var(--accent) 30%);
+  color: var(--text-primary);
+}
