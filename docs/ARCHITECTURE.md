@@ -127,9 +127,9 @@ Resolution order (highest priority first):
 
 `crates/cory/build.rs` orchestrates UI builds during Cargo builds:
 - Runs `npm ci` and `npm run build` when UI sources change.
-- Release profile requires a successful UI build by default.
-- `CORY_REQUIRE_UI=1` always requires UI build success.
-- `CORY_REQUIRE_UI=0` makes UI build optional.
+- If npm is unavailable or an npm step fails, the server build continues.
+- When no embedded UI is available at runtime, the UI route returns a clear
+  fallback message.
 
 UI assets are embedded with `rust-embed` from `ui/dist`.
 

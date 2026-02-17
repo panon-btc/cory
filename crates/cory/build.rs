@@ -3,9 +3,9 @@
 // ==============================================================================
 //
 // Automatically builds the React UI during `cargo build` so the embedded
-// SPA is always up-to-date. If npm/Node.js is not installed, the build
-// still succeeds — the server will show a clear "UI not built" message
-// at runtime instead.
+// SPA is always up-to-date when npm is available. If npm is unavailable
+// or a build step fails, we continue compiling the server and rely on
+// existing embedded assets (if any).
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -33,11 +33,6 @@ const UI_CONFIG_FILES: &[&str] = &[
 ];
 
 fn main() {
-    // When CORY_REQUIRE_UI=1 (set in CI), npm/vite failures abort the build
-    // instead of falling back to the "UI not built" runtime message.
-    let require_ui = std::env::var("CORY_REQUIRE_UI").unwrap_or_default() == "1";
-    println!("cargo:rerun-if-env-changed=CORY_REQUIRE_UI");
-
     let ui_dir = Path::new("ui");
 
     // Tell Cargo when to re-run this script: only when UI source files
@@ -77,13 +72,10 @@ fn main() {
             log!("npm not found — skipping UI build");
             log_ui_warning(&[
                 "The server will compile, but the UI will show:",
-                "  \"UI not built. Run: cd ui && npm run build\"",
+                "  \"Cory was built without UI (no NPM at build time)\"",
                 "",
                 "Install Node.js + npm and rebuild to get the UI.",
             ]);
-            if require_ui {
-                std::process::exit(1);
-            }
             return;
         }
     }
@@ -95,7 +87,7 @@ fn main() {
 
     log!("running `npm ci`...");
 
-    if !run_npm_step(&["ci"], ui_dir, require_ui) {
+    if !run_npm_step(&["ci"], ui_dir) {
         return;
     }
     log!("`npm ci` done");
@@ -104,7 +96,7 @@ fn main() {
 
     log!("running `npm run build`...");
 
-    if run_npm_step(&["run", "build"], ui_dir, require_ui) {
+    if run_npm_step(&["run", "build"], ui_dir) {
         log!("`npm run build` done — UI assets ready in ui/dist/");
         // Write the hash marker so subsequent builds can skip npm.
         let _ = std::fs::write(&hash_marker, &current_hash);
@@ -112,8 +104,8 @@ fn main() {
 }
 
 /// Runs an npm command in `ui_dir`. Returns `true` on success, `false` on
-/// failure. When `require_ui` is set, a failure exits the process.
-fn run_npm_step(args: &[&str], ui_dir: &Path, require_ui: bool) -> bool {
+/// failure.
+fn run_npm_step(args: &[&str], ui_dir: &Path) -> bool {
     let label = format!("npm {}", args.join(" "));
 
     match Command::new("npm").args(args).current_dir(ui_dir).status() {
@@ -124,16 +116,10 @@ fn run_npm_step(args: &[&str], ui_dir: &Path, require_ui: bool) -> bool {
                 "",
                 "UI will not be embedded. Check the build output above.",
             ]);
-            if require_ui {
-                std::process::exit(1);
-            }
             false
         }
         Err(e) => {
             log_ui_warning(&[&format!("`{label}` could not be executed: {e}")]);
-            if require_ui {
-                std::process::exit(1);
-            }
             false
         }
     }

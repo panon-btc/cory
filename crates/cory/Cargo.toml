@@ -3,9 +3,16 @@ name = "cory"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+include = [
+    "Cargo.toml",
+    "build.rs",
+    "src/**/*.rs",
+    "tests/**/*.rs",
+    "ui/dist/**",
+]
 
 [dependencies]
-cory-core = { path = "../cory-core" }
+cory-core = { version = "0.1.0", path = "../cory-core" }
 axum = { workspace = true }
 bitcoin = { workspace = true }
 clap = { workspace = true }

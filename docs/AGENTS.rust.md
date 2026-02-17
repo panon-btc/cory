@@ -52,11 +52,10 @@ fails for the correct reason. Remove the temporary example after.
 
 ## Build integration with the UI
 
-The `crates/cory/build.rs` script runs `npm install && npm run build`
-automatically during `cargo build`. By default, release builds require
-the UI build to succeed; debug builds remain optional unless
-`CORY_REQUIRE_UI=1` is set. Build status is logged with `[ui]`
-prefixed warnings.
+The `crates/cory/build.rs` script runs `npm ci && npm run build`
+automatically during `cargo build` when npm is available and UI sources
+changed. If npm is unavailable or an npm step fails, the server build
+continues with warning logs prefixed by `[ui]`.
 
 The built UI is embedded into the binary via `rust-embed` from
 `crates/cory/ui/dist/`.
