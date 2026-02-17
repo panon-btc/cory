@@ -9,12 +9,12 @@ homepage = "https://github.com/panon-btc/cory"
 repository = "https://github.com/panon-btc/cory"
 readme = "README.md"
 include = [
-    "Cargo.toml",
-    "README.md",
-    "build.rs",
-    "src/**/*.rs",
-    "tests/**/*.rs",
-    "ui/dist/**",
+    "/Cargo.toml",
+    "/README.md",
+    "/build.rs",
+    "/src/**/*.rs",
+    "/tests/**/*.rs",
+    "/ui/dist/**",
 ]
 
 [dependencies]
