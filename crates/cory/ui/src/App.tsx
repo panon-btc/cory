@@ -2,7 +2,8 @@ import { useEffect } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { Toaster } from "react-hot-toast";
 import { useAppStore, relayoutIfHeightsChanged } from "./store";
-import { setApiToken } from "./api";
+import { fetchLimits, setApiToken } from "./api";
+import { SEARCH_DEPTH_DEFAULT } from "./constants";
 import { useSidebarResize } from "./hooks/useSidebarResize";
 import { useThemeMode } from "./hooks/useThemeMode";
 import Header from "./components/Header";
@@ -10,9 +11,17 @@ import GraphPanel from "./components/GraphPanel";
 import LabelPanel from "./components/label_panel/Panel";
 
 export default function App() {
+  const parseDepth = (raw: string | null): number => {
+    if (!raw) return SEARCH_DEPTH_DEFAULT;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed < 1) return SEARCH_DEPTH_DEFAULT;
+    return parsed;
+  };
+
   const initialParams = new URLSearchParams(window.location.search);
   const initialSearch = initialParams.get("search")?.trim() ?? "";
   const initialToken = initialParams.get("token")?.trim() ?? "";
+  const initialDepth = parseDepth(initialParams.get("depth")?.trim() ?? null);
 
   const {
     width: sidebarWidth,
@@ -24,14 +33,15 @@ export default function App() {
   const { themeMode, toggleThemeMode } = useThemeMode();
   const graph = useAppStore((s) => s.graph);
 
-  // On mount: sync API token, load label files, and kick off the initial
-  // search from the URL param. All three are independent, fire-and-forget
-  // operations that only need to run once.
+  // On mount: sync token, restore URL search params, refresh side panels,
+  // then fetch server limits before the initial search so depth clamping
+  // is consistent with backend hard caps.
   useEffect(() => {
+    useAppStore.setState({ searchParamTxid: initialSearch, searchDepth: initialDepth });
     const token = initialToken || sessionStorage.getItem("cory:apiToken") || "";
     if (token) {
       setApiToken(token);
-      useAppStore.setState({ apiToken: token, searchParamTxid: initialSearch });
+      useAppStore.setState({ apiToken: token });
       // Cleanup legacy storage from pre-hardening builds.
       localStorage.removeItem("cory:apiToken");
     }
@@ -46,9 +56,18 @@ export default function App() {
     void useAppStore.getState().refreshLabelFiles();
     void useAppStore.getState().refreshHistory();
 
-    if (initialSearch) {
-      void useAppStore.getState().doSearch(initialSearch);
-    }
+    void (async () => {
+      try {
+        const limits = await fetchLimits();
+        useAppStore.getState().setSearchDepthMax(limits.hard_max_depth);
+      } catch {
+        // Limits are non-critical; the store fallback max keeps search usable.
+      }
+
+      if (initialSearch) {
+        await useAppStore.getState().doSearch(initialSearch);
+      }
+    })();
     // Intentionally empty: all values come from URL params parsed once at
     // module evaluation time. Re-running on changes would cause loops.
     // eslint-disable-next-line react-hooks/exhaustive-deps

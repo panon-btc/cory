@@ -14,18 +14,9 @@ use cory_core::AncestryGraph;
 
 use super::auth::check_auth;
 use super::error::AppError;
+use super::limits::{HARD_MAX_DEPTH, HARD_MAX_EDGES, HARD_MAX_NODES};
 use super::SharedState;
 
-// ==============================================================================
-// Hard Ceilings for Graph Queries
-// ==============================================================================
-//
-// These prevent clients from requesting arbitrarily large graphs that would
-// exhaust server resources, regardless of what the CLI defaults are.
-
-const MAX_GRAPH_DEPTH: usize = 1000;
-const MAX_GRAPH_NODES: usize = 50_000;
-const MAX_GRAPH_EDGES: usize = 200_000;
 const MAX_HISTORY_ENTRIES: usize = 1000;
 
 // ==============================================================================
@@ -93,23 +84,23 @@ pub(super) async fn get_graph(
         .parse()
         .map_err(|e| AppError::BadRequest(format!("invalid txid: {e}")))?;
 
-    validate_nonzero_limit("max_depth", query.max_depth)?;
-    validate_nonzero_limit("max_nodes", query.max_nodes)?;
-    validate_nonzero_limit("max_edges", query.max_edges)?;
+    validate_limit_bounds("max_depth", query.max_depth, HARD_MAX_DEPTH)?;
+    validate_limit_bounds("max_nodes", query.max_nodes, HARD_MAX_NODES)?;
+    validate_limit_bounds("max_edges", query.max_edges, HARD_MAX_EDGES)?;
 
     let limits = GraphLimits {
         max_depth: query
             .max_depth
             .unwrap_or(state.default_limits.max_depth)
-            .min(MAX_GRAPH_DEPTH),
+            .min(HARD_MAX_DEPTH),
         max_nodes: query
             .max_nodes
             .unwrap_or(state.default_limits.max_nodes)
-            .min(MAX_GRAPH_NODES),
+            .min(HARD_MAX_NODES),
         max_edges: query
             .max_edges
             .unwrap_or(state.default_limits.max_edges)
-            .min(MAX_GRAPH_EDGES),
+            .min(HARD_MAX_EDGES),
     };
 
     let graph = cory_core::graph::build_ancestry(
@@ -152,9 +143,16 @@ pub(super) async fn get_graph(
 // Error Mapping and Validation Helpers
 // ==============================================================================
 
-fn validate_nonzero_limit(field: &str, value: Option<usize>) -> Result<(), AppError> {
-    if value == Some(0) {
-        return Err(AppError::BadRequest(format!("{field} must be at least 1")));
+fn validate_limit_bounds(field: &str, value: Option<usize>, max: usize) -> Result<(), AppError> {
+    if let Some(limit) = value {
+        if limit == 0 {
+            return Err(AppError::BadRequest(format!("{field} must be at least 1")));
+        }
+        if limit > max {
+            return Err(AppError::BadRequest(format!(
+                "{field} must be at most {max}"
+            )));
+        }
     }
     Ok(())
 }
@@ -351,9 +349,17 @@ mod tests {
     use axum::response::IntoResponse;
 
     #[test]
-    fn validate_nonzero_limit_rejects_zero() {
+    fn validate_limit_bounds_rejects_zero() {
         let err =
-            validate_nonzero_limit("max_nodes", Some(0)).expect_err("zero limit must be rejected");
+            validate_limit_bounds("max_nodes", Some(0), 100).expect_err("zero limit must fail");
+        let response = err.into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn validate_limit_bounds_rejects_over_max() {
+        let err = validate_limit_bounds("max_depth", Some(101), 100)
+            .expect_err("limit above max must be rejected");
         let response = err.into_response();
         assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
     }

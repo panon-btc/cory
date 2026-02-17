@@ -49,3 +49,13 @@ export const SIDEBAR_DEFAULT_WIDTH = 390;
 
 // Milliseconds of silence after the last keystroke before autosaving a label.
 export const AUTOSAVE_DEBOUNCE_MS = 2000;
+
+// ==============================================================================
+// Graph Search Limits (UI-side defaults)
+// ==============================================================================
+
+// Default max depth for UI searches unless URL or user input overrides it.
+export const SEARCH_DEPTH_DEFAULT = 4;
+
+// Conservative fallback until `/api/v1/limits` returns server hard caps.
+export const SEARCH_DEPTH_MAX_FALLBACK = 50;

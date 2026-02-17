@@ -33,8 +33,8 @@ Server startup:
 
 Graph request flow (`GET /api/v1/graph/tx/{txid}`):
 1. Validate auth token and txid.
-2. Validate query overrides (`max_depth`, `max_nodes`, `max_edges`), rejecting
-   zero values.
+2. Validate query overrides (`max_depth`, `max_nodes`, `max_edges`) against
+   server bounds, rejecting out-of-range values.
 3. Build ancestry graph via `cory-core::graph::build_ancestry`.
 4. Enrich graph response with fee/feerate/RBF/locktime and labels.
 5. Record search history (bounded in-memory set with eviction).
@@ -65,6 +65,7 @@ Key behavior:
 
 Public:
 - `GET /api/v1/health`
+- `GET /api/v1/limits`
 
 Protected (require `X-API-Token`):
 - `GET /api/v1/graph/tx/{txid}`
@@ -100,7 +101,7 @@ State and auth behavior:
 - `?token=` is supported as one-time bootstrap input.
 - Token is removed from URL after bootstrap and persisted to `sessionStorage`
   (not `localStorage`).
-- URL synchronization keeps `search` state, not auth token.
+- URL synchronization keeps `search` + `depth` state, not auth token.
 
 UI capabilities:
 - txid search and ancestry graph visualization

@@ -84,3 +84,15 @@ export interface HistoryEntry {
 export interface HistoryResponse {
   entries: HistoryEntry[];
 }
+
+export interface LimitsResponse {
+  hard_max_depth: number;
+  configured_default_depth: number;
+  effective_default_depth: number;
+  hard_max_nodes: number;
+  configured_default_nodes: number;
+  effective_default_nodes: number;
+  hard_max_edges: number;
+  configured_default_edges: number;
+  effective_default_edges: number;
+}

@@ -1,4 +1,10 @@
-import type { Bip329Type, GraphResponse, HistoryResponse, LabelFileSummary } from "./types";
+import type {
+  Bip329Type,
+  GraphResponse,
+  HistoryResponse,
+  LabelFileSummary,
+  LimitsResponse,
+} from "./types";
 
 interface ApiErrorPayload {
   error?: unknown;
@@ -77,9 +83,23 @@ async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response>
   return resp;
 }
 
-export async function fetchGraph(txid: string, signal?: AbortSignal): Promise<GraphResponse> {
-  const resp = await apiFetch(`/api/v1/graph/tx/${encodeURIComponent(txid)}`, { signal });
+export async function fetchGraph(
+  txid: string,
+  opts?: { signal?: AbortSignal; maxDepth?: number },
+): Promise<GraphResponse> {
+  const query = new URLSearchParams();
+  if (typeof opts?.maxDepth === "number") {
+    query.set("max_depth", String(opts.maxDepth));
+  }
+  const suffix = query.toString();
+  const path = `/api/v1/graph/tx/${encodeURIComponent(txid)}${suffix ? `?${suffix}` : ""}`;
+  const resp = await apiFetch(path, { signal: opts?.signal });
   return resp.json() as Promise<GraphResponse>;
+}
+
+export async function fetchLimits(): Promise<LimitsResponse> {
+  const resp = await apiFetch("/api/v1/limits");
+  return resp.json() as Promise<LimitsResponse>;
 }
 
 export async function fetchHistory(): Promise<HistoryResponse> {
