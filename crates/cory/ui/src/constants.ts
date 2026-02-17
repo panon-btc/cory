@@ -27,6 +27,12 @@ export const IO_ROW_GAP = 2;
 // Minimum horizontal separation between input and output columns.
 export const IO_COLUMNS_MIN_GUTTER = 16;
 
+// Left-side expand rail width rendered inside each node.
+export const NODE_EXPAND_RAIL_WIDTH = 17;
+
+// Gap between the expand rail and node content columns.
+export const NODE_EXPAND_RAIL_GAP = 6;
+
 // ==============================================================================
 // Sidebar Resize Constraints
 // ==============================================================================
@@ -55,7 +61,7 @@ export const AUTOSAVE_DEBOUNCE_MS = 2000;
 // ==============================================================================
 
 // Default max depth for UI searches unless URL or user input overrides it.
-export const SEARCH_DEPTH_DEFAULT = 4;
+export const SEARCH_DEPTH_DEFAULT = 3;
 
 // Conservative fallback until `/api/v1/limits` returns server hard caps.
 export const SEARCH_DEPTH_MAX_FALLBACK = 50;

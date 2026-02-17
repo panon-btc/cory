@@ -28,6 +28,7 @@ pub(super) struct GraphQuery {
     max_depth: Option<usize>,
     max_nodes: Option<usize>,
     max_edges: Option<usize>,
+    record_history: Option<bool>,
 }
 
 /// Graph response extends the core `AncestryGraph` with enrichment data
@@ -119,16 +120,19 @@ pub(super) async fn get_graph(
 
     // Record successful ancestry searches for the server-lifetime history panel.
     // Repeated txids overwrite their timestamp instead of creating duplicates.
-    let searched_at = OffsetDateTime::now_utc()
-        .format(&Rfc3339)
-        .map_err(|e| AppError::Internal(format!("format search timestamp: {e}")))?;
-    let mut history = state.history.write().await;
-    record_search_history(
-        &mut history,
-        txid.to_string(),
-        searched_at,
-        MAX_HISTORY_ENTRIES,
-    );
+    // Expansion-style requests can opt out to avoid polluting top-level history.
+    if query.record_history.unwrap_or(true) {
+        let searched_at = OffsetDateTime::now_utc()
+            .format(&Rfc3339)
+            .map_err(|e| AppError::Internal(format!("format search timestamp: {e}")))?;
+        let mut history = state.history.write().await;
+        record_search_history(
+            &mut history,
+            txid.to_string(),
+            searched_at,
+            MAX_HISTORY_ENTRIES,
+        );
+    }
 
     let label_store = state.labels.read().await;
     let enrichments = build_graph_enrichments(&graph, &label_store, state.network);

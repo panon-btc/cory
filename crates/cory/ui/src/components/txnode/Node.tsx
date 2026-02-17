@@ -1,13 +1,15 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
-import { Copy } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, Copy } from "lucide-react";
 import type { TxOutputDisplayRow, TxFlowNode } from "../../layout";
 import {
   IO_START_TOP,
   PRIMARY_ROW_HEIGHT,
   IO_ROW_GAP,
   IO_COLUMNS_MIN_GUTTER,
+  NODE_EXPAND_RAIL_GAP,
+  NODE_EXPAND_RAIL_WIDTH,
 } from "../../constants";
 import { copyToClipboard, buildTxMetaParts } from "../../format";
 import { InputRow } from "./InputRow";
@@ -16,6 +18,33 @@ import { MiddleEllipsisText } from "./MiddleEllipsisText";
 
 interface TxNodeProps extends NodeProps<TxFlowNode> {
   onCopied: (value: string) => void;
+  onToggleExpand: (txid: string) => void;
+  expandMode: "expand" | "collapse";
+  toggleDisabled: boolean;
+  toggleLoading: boolean;
+}
+
+const EXPAND_BUTTON_LEFT_PULL = -8;
+const EXPAND_BUTTON_WIDTH_EXTRA = 8;
+const EXPAND_BUTTON_ICON_SIZE = 12;
+const EXPAND_BUTTON_ICON_STROKE = 2;
+
+const IO_GRID_COL_EXPAND_BUTTON = 1;
+const IO_GRID_COL_INPUTS = 3;
+const IO_GRID_COL_OUTPUTS = 5;
+
+function expandButtonTitle(
+  expandMode: "expand" | "collapse",
+  toggleLoading: boolean,
+  toggleDisabled: boolean,
+): string {
+  if (toggleLoading) return "Expanding...";
+  if (toggleDisabled) return "No expandable inputs";
+  return expandMode === "collapse" ? "Collapse input transactions" : "Expand input transactions";
+}
+
+function ioGridTemplateColumns(inputColumnWidth: number, outputColumnWidth: number): string {
+  return `${NODE_EXPAND_RAIL_WIDTH}px ${NODE_EXPAND_RAIL_GAP}px ${inputColumnWidth}px minmax(${IO_COLUMNS_MIN_GUTTER}px, 1fr) ${outputColumnWidth}px`;
 }
 
 // Two-pass handle positioning:
@@ -29,7 +58,15 @@ interface TxNodeProps extends NodeProps<TxFlowNode> {
 // row's actual offsetTop to correct for any discrepancy between estimated
 // and real heights (e.g. from font rendering differences or collapsed
 // output gaps). The measured values take priority in the Handle `top` prop.
-export default memo(function TxNode({ data, selected, onCopied }: TxNodeProps) {
+export default memo(function TxNode({
+  data,
+  selected,
+  onCopied,
+  onToggleExpand,
+  expandMode,
+  toggleDisabled,
+  toggleLoading,
+}: TxNodeProps) {
   const inputRowRefs = useRef(new Map<number, HTMLDivElement>());
   const outputRowRefs = useRef(new Map<number, HTMLDivElement>());
   const [measuredInputHandleTops, setMeasuredInputHandleTops] = useState<Record<number, number>>(
@@ -245,10 +282,72 @@ export default memo(function TxNode({ data, selected, onCopied }: TxNodeProps) {
         style={{
           marginTop: 8,
           display: "grid",
-          gridTemplateColumns: `${data.inputColumnWidth}px minmax(${IO_COLUMNS_MIN_GUTTER}px, 1fr) ${data.outputColumnWidth}px`,
+          gridTemplateColumns: ioGridTemplateColumns(data.inputColumnWidth, data.outputColumnWidth),
+          alignItems: "start",
         }}
       >
-        <div style={{ minWidth: 0, paddingTop: inputTopOffset }}>
+        <button
+          type="button"
+          className="nodrag nopan"
+          onClick={() => onToggleExpand(data.txid)}
+          aria-label={
+            expandMode === "collapse" ? "Collapse input transactions" : "Expand input transactions"
+          }
+          title={expandButtonTitle(expandMode, toggleLoading, toggleDisabled)}
+          disabled={toggleDisabled || toggleLoading}
+          style={{
+            gridColumn: IO_GRID_COL_EXPAND_BUTTON,
+            alignSelf: "stretch",
+            // Node has 10px horizontal padding; pull the rail into that space
+            // so it touches the node's left border with no visible gap.
+            marginLeft: EXPAND_BUTTON_LEFT_PULL,
+            width: NODE_EXPAND_RAIL_WIDTH + EXPAND_BUTTON_WIDTH_EXTRA,
+            border: "none",
+            borderRight: "1px solid var(--border-strong)",
+            background: "var(--surface-1)",
+            color: "var(--text-muted)",
+            borderRadius: 0,
+            fontSize: 10,
+            lineHeight: 1,
+            padding: "6px 2px",
+            cursor: toggleDisabled || toggleLoading ? "not-allowed" : "pointer",
+            opacity: toggleDisabled ? 0.55 : 1,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-around",
+            alignItems: "center",
+          }}
+        >
+          {expandMode === "collapse" ? (
+            <>
+              <ChevronsRight
+                size={EXPAND_BUTTON_ICON_SIZE}
+                strokeWidth={EXPAND_BUTTON_ICON_STROKE}
+                aria-hidden="true"
+              />
+              <ChevronsRight
+                size={EXPAND_BUTTON_ICON_SIZE}
+                strokeWidth={EXPAND_BUTTON_ICON_STROKE}
+                aria-hidden="true"
+              />
+            </>
+          ) : (
+            <>
+              <ChevronsLeft
+                size={EXPAND_BUTTON_ICON_SIZE}
+                strokeWidth={EXPAND_BUTTON_ICON_STROKE}
+                aria-hidden="true"
+              />
+              <ChevronsLeft
+                size={EXPAND_BUTTON_ICON_SIZE}
+                strokeWidth={EXPAND_BUTTON_ICON_STROKE}
+                aria-hidden="true"
+              />
+            </>
+          )}
+        </button>
+
+        <div style={{ minWidth: 0, paddingTop: inputTopOffset, gridColumn: IO_GRID_COL_INPUTS }}>
           <div style={{ color: "var(--text-muted)", fontSize: 10 }}>Inputs</div>
           <div style={{ display: "grid", gap: 2, marginTop: 3 }}>
             {data.inputRows.map((row) => (
@@ -263,7 +362,7 @@ export default memo(function TxNode({ data, selected, onCopied }: TxNodeProps) {
           </div>
         </div>
 
-        <div style={{ minWidth: 0, paddingTop: outputTopOffset, gridColumn: 3 }}>
+        <div style={{ minWidth: 0, paddingTop: outputTopOffset, gridColumn: IO_GRID_COL_OUTPUTS }}>
           <div style={{ color: "var(--text-muted)", fontSize: 10 }}>Outputs</div>
           <div style={{ display: "grid", gap: 2, marginTop: 3 }}>
             {data.outputRows.map((row, rowIndex) => (
