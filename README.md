@@ -7,6 +7,16 @@ Local-first Bitcoin transaction ancestry explorer and BIP-329 label editor.
 </p>
 
 <p align="center">
+  <a href="https://github.com/panon-btc/cory/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/panon-btc/cory/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://crates.io/crates/cory"><img alt="Crates.io (cory)" src="https://img.shields.io/crates/v/cory.svg"></a>
+  <a href="https://docs.rs/cory-core"><img alt="docs.rs (cory-core)" src="https://img.shields.io/docsrs/cory-core"></a>
+  <a href="https://github.com/panon-btc/cory/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/panon-btc/cory"></a>
+  <a href="https://github.com/panon-btc/cory/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/panon-btc/cory"></a>
+  <a href="https://github.com/panon-btc/cory/commits"><img alt="Last commit" src="https://img.shields.io/github/last-commit/panon-btc/cory"></a>
+  <a href="https://github.com/panon-btc/cory/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/panon-btc/cory"></a>
+</p>
+
+<p align="center">
   <video src="https://github.com/user-attachments/assets/0338f1f3-111d-41ef-9769-6c4e46c9e298" alt="Cory screenshot" controls></video>
 </p>
 
@@ -41,29 +51,32 @@ interactively, on your own machine.
 
 - Rust (stable)
 - Bitcoin Core RPC endpoint
-- Node.js + npm (required when building from source)
 
-For reliable historical lookups, run Bitcoin Core with `txindex=1`.
-
-### Run From Source
+### Install
 
 ```bash
-cargo run --bin cory -- \
+cargo install cory
+```
+
+### Run
+
+```bash
+cory \
   --connection http://127.0.0.1:8332 \
   --rpc-user <user> \
   --rpc-pass <pass>
 ```
 
-Then open:
+Open `http://127.0.0.1:3080`.
 
-```text
-http://127.0.0.1:3080
+For reliable historical lookups, run Bitcoin Core with `txindex=1`.
+
+You can also use a public endpoint (and leak your searches) by lowering
+connection requirements (see `--help`), e.g.:
+
+```bash
+cory --connection https://bitcoin-rpc.publicnode.com --max-depth 2
 ```
-
-On startup, Cory prints:
-- a session API token
-- a safe URL (no token in query string)
-- an optional bootstrap URL with `?token=...` and a leak warning
 
 ## Security and Privacy Notes
 
@@ -105,6 +118,11 @@ Behavior notes:
 - Graph endpoint returns semantic errors (`400`, `404`, `502`, `500`).
 
 ## Development
+
+### Development Requirements
+
+- Rust (stable)
+- Node.js + npm (required for UI development and source builds)
 
 ### Common Commands
 
