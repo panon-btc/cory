@@ -346,13 +346,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn graph_limit_above_hard_max_returns_bad_request() {
-        let router = test_router(FakeRpcMode::Ok);
-        let url = format!(
-            "/api/v1/graph/tx/{}?max_depth={}",
-            txid_str(1),
-            limits::HARD_MAX_DEPTH + 1
+    async fn graph_limit_above_configured_max_returns_bad_request() {
+        let router = test_router_with_limits(
+            FakeRpcMode::Ok,
+            GraphLimits {
+                max_depth: 2,
+                max_nodes: 500,
+                max_edges: 2000,
+            },
         );
+        let url = format!("/api/v1/graph/tx/{}?max_depth={}", txid_str(1), 3);
         let response = router
             .oneshot(
                 Request::builder()
@@ -368,7 +371,7 @@ mod tests {
         let json = response_body_json(response).await;
         assert_eq!(
             json.get("error").and_then(serde_json::Value::as_str),
-            Some("max_depth must be at most 1000")
+            Some("max_depth must be at most 2")
         );
     }
 
