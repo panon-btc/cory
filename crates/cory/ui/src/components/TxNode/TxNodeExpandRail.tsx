@@ -39,6 +39,19 @@ export function TxNodeExpandRail({
   toggleLoading,
   onToggleExpand,
 }: TxNodeExpandRailProps) {
+  if (toggleDisabled && expandMode === "expand") {
+    return (
+      <div
+        style={{
+          gridColumn: IO_GRID_COL_EXPAND_BUTTON,
+          alignSelf: "stretch",
+          marginLeft: EXPAND_BUTTON_LEFT_PULL,
+          width: NODE_EXPAND_RAIL_WIDTH + EXPAND_BUTTON_WIDTH_EXTRA,
+        }}
+      />
+    );
+  }
+
   return (
     <button
       type="button"

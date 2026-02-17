@@ -14,7 +14,6 @@ import type { NodeChange, EdgeChange, NodeProps } from "@xyflow/react";
 import toast from "react-hot-toast";
 import TxNode from "./TxNode/TxNode";
 import { useAppStore } from "../store/AppStore";
-import { isNodeFullyResolved } from "../graph/GraphUtils";
 import type { TxFlowNode } from "../graph/Layout";
 
 function hasExpandableInputs(
@@ -60,15 +59,13 @@ export default function GraphPanel() {
       tx: (props: NodeProps<TxFlowNode>) => {
         const canExpand = hasExpandableInputs(graph, props.id);
         const isExpanded = Boolean(expandedTxids[props.id]);
-        const fullyResolved = isNodeFullyResolved(graph, props.id);
-        const collapseDisabled = isExpanded && !fullyResolved;
         return (
           <TxNode
             {...props}
             onCopied={handleCopied}
             onToggleExpand={(txid) => void toggleNodeInputs(txid)}
-            expandMode={isExpanded && fullyResolved ? "collapse" : "expand"}
-            toggleDisabled={loading || !canExpand || collapseDisabled}
+            expandMode={isExpanded ? "collapse" : "expand"}
+            toggleDisabled={loading || (!canExpand && !isExpanded)}
             toggleLoading={Boolean(expandingTxids[props.id])}
           />
         );

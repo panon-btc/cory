@@ -12,12 +12,19 @@ import { computeLayout, type TxFlowNode } from "../graph/Layout";
 import {
   applyVisibilityToElements,
   computeVisibleTxids,
+  isNodeFullyResolved,
+  hasAnyResolvedInputs,
   mergeGraphResponses,
   placeExpandedParentsLeft,
   relayoutIfHeightsChanged,
 } from "../graph/GraphUtils";
 import { replaceUrlSearchParams } from "../utils/Navigation";
 import { internalState } from "./InternalState";
+
+function hasExpandableInputs(graph: GraphResponse, txid: string): boolean {
+  const node = graph.nodes[txid];
+  return node ? node.inputs.some((input) => input.prevout !== null) : false;
+}
 
 export interface GraphSlice {
   nodes: TxFlowNode[];
@@ -126,6 +133,19 @@ export const createGraphSlice: StateCreator<AppState, [], [], GraphSlice> = (set
         selected: node.id === nextSelectedTxid,
       }));
 
+      // Initialize expanded/resolved states based on what we actually fetched.
+      // Truncated nodes (no parents in this response) remain collapsed.
+      const initialExpanded: Record<string, true> = {};
+      const initialResolved: Record<string, true> = {};
+      for (const tid of Object.keys(resp.nodes)) {
+        if (hasAnyResolvedInputs(resp, tid)) {
+          initialExpanded[tid] = true;
+        }
+        if (isNodeFullyResolved(resp, tid)) {
+          initialResolved[tid] = true;
+        }
+      }
+
       set({
         graph: resp,
         nodes: selectedNodes,
@@ -135,8 +155,8 @@ export const createGraphSlice: StateCreator<AppState, [], [], GraphSlice> = (set
         searchFocusTxid: searchTargetTxid,
         authError: null,
         hasUserMovedNodes: false,
-        expandedTxids: {},
-        resolvedTxids: {},
+        expandedTxids: initialExpanded,
+        resolvedTxids: initialResolved,
         expandingTxids: {},
       });
 
@@ -171,11 +191,13 @@ export const createGraphSlice: StateCreator<AppState, [], [], GraphSlice> = (set
     if (!baseGraph || !baseGraph.nodes[txid]) return;
     if (state.loading || state.expandingTxids[txid]) return;
 
-    const sourceNode = baseGraph.nodes[txid];
-    if (!sourceNode.inputs.some((input) => input.prevout !== null)) return;
+    if (!hasExpandableInputs(baseGraph, txid)) return;
 
     const isExpanded = Boolean(state.expandedTxids[txid]);
-    if (isExpanded) {
+    const fullyResolved = isNodeFullyResolved(baseGraph, txid);
+
+    // If it's expanded and we have all parents, toggle means COLLAPSE.
+    if (isExpanded && fullyResolved) {
       set((current) => {
         if (!current.graph) return current;
         const nextExpanded: Record<string, true> = { ...current.expandedTxids };
@@ -191,8 +213,8 @@ export const createGraphSlice: StateCreator<AppState, [], [], GraphSlice> = (set
       return;
     }
 
-    const wasResolved = Boolean(state.resolvedTxids[txid]);
-    if (!wasResolved) {
+    // Otherwise, toggle means EXPAND (either from memory or from server).
+    if (!fullyResolved) {
       set((current) => ({
         expandingTxids: { ...current.expandingTxids, [txid]: true },
         error: null,
@@ -200,7 +222,8 @@ export const createGraphSlice: StateCreator<AppState, [], [], GraphSlice> = (set
     }
 
     try {
-      if (wasResolved) {
+      if (fullyResolved) {
+        // We have the data but it was hidden.
         set((current) => {
           if (!current.graph || !current.graph.nodes[txid]) return current;
           const nextExpanded: Record<string, true> = { ...current.expandedTxids, [txid]: true };
@@ -221,8 +244,18 @@ export const createGraphSlice: StateCreator<AppState, [], [], GraphSlice> = (set
       if (!currentGraph || !currentGraph.nodes[txid]) return;
 
       const mergedGraph = mergeGraphResponses(currentGraph, incoming);
-      const nextExpanded: Record<string, true> = { ...latest.expandedTxids, [txid]: true };
-      const nextResolved: Record<string, true> = { ...latest.resolvedTxids, [txid]: true };
+      const nextExpanded = { ...latest.expandedTxids };
+      const nextResolved = { ...latest.resolvedTxids };
+
+      for (const tid of Object.keys(mergedGraph.nodes)) {
+        if (hasAnyResolvedInputs(mergedGraph, tid)) {
+          nextExpanded[tid] = true;
+        }
+        if (isNodeFullyResolved(mergedGraph, tid)) {
+          nextResolved[tid] = true;
+        }
+      }
+
       const visibleTxids = computeVisibleTxids(mergedGraph, nextExpanded);
       const hadUserMovedNodes = latest.hasUserMovedNodes;
       const existingNodeIds = new Set(Object.keys(currentGraph.nodes));
@@ -307,14 +340,12 @@ export const createGraphSlice: StateCreator<AppState, [], [], GraphSlice> = (set
       }
       throw e;
     } finally {
-      if (!wasResolved) {
-        set((current) => {
-          if (!current.expandingTxids[txid]) return current;
-          const nextExpanding = { ...current.expandingTxids };
-          delete nextExpanding[txid];
-          return { expandingTxids: nextExpanding };
-        });
-      }
+      set((current) => {
+        if (!current.expandingTxids[txid]) return current;
+        const nextExpanding = { ...current.expandingTxids };
+        delete nextExpanding[txid];
+        return { expandingTxids: nextExpanding };
+      });
     }
   },
 

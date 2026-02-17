@@ -15,8 +15,6 @@ import { refreshNodesFromGraph } from "./RenderModel";
 // Label Helpers
 // ==========================================================================
 
-// Map a BIP-329 label type to the corresponding bucket in LabelsByType.
-// Returns null for types we don't store client-side (e.g. "pubkey", "xpub").
 export function labelBucket(
   labels: LabelsByType,
   labelType: Bip329Type,
@@ -240,31 +238,44 @@ export function applyVisibilityToElements(
   };
 }
 
+/**
+ * A node is "fully resolved" if all its expandable inputs (those with a prevout)
+ * have corresponding edges in the graph that point to parent nodes which also
+ * exist in the graph.
+ */
 export function isNodeFullyResolved(graph: GraphResponse | null, txid: string): boolean {
   const node = graph?.nodes[txid];
   if (!graph || !node) return false;
 
-  const expectedInputCount = node.inputs.reduce(
-    (count, input) => count + (input.prevout !== null ? 1 : 0),
-    0,
-  );
-  if (expectedInputCount === 0) return false;
+  const expectedInputCount = node.inputs.filter((i) => i.prevout !== null).length;
+  if (expectedInputCount === 0) return true;
 
   const resolvedInputIndices = new Set<number>();
   for (const edge of graph.edges) {
-    if (edge.spending_txid === txid) {
+    if (edge.spending_txid === txid && graph.nodes[edge.funding_txid]) {
       resolvedInputIndices.add(edge.input_index);
     }
   }
+
   return resolvedInputIndices.size >= expectedInputCount;
+}
+
+/**
+ * Checks if a node has any parents currently visible in the graph.
+ */
+export function hasAnyResolvedInputs(graph: GraphResponse | null, txid: string): boolean {
+  if (!graph) return false;
+  for (const edge of graph.edges) {
+    if (edge.spending_txid === txid && graph.nodes[edge.funding_txid]) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // ==========================================================================
 // Height-change relayout helper
 // ==========================================================================
-//
-// Label edits change node heights without changing the graph topology.
-// Detects height changes and reruns ELK layout so nodes don't overlap.
 
 export function relayoutIfHeightsChanged(
   graph: GraphResponse,
