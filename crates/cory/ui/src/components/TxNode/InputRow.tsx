@@ -9,8 +9,8 @@ interface InputRowProps {
   onCopied: (value: string) => void;
 }
 
-export function InputRow({ row, txid, refCallback, onCopied }: InputRowProps) {
-  const copyValue = row.address ?? `${txid}:${row.index}`;
+export function InputRow({ row, refCallback, onCopied }: InputRowProps) {
+  const copyValue = row.address ?? row.prevout ?? "coinbase";
 
   return (
     <div
@@ -35,11 +35,7 @@ export function InputRow({ row, txid, refCallback, onCopied }: InputRowProps) {
               }
             });
           }}
-          title={
-            row.address
-              ? `Copy input address: ${row.address}`
-              : `Copy input ref: ${txid}:${row.index}`
-          }
+          title={`Copy: ${copyValue}`}
           style={{
             color: "var(--accent)",
             minWidth: 24,
