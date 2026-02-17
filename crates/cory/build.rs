@@ -34,6 +34,8 @@ const UI_CONFIG_FILES: &[&str] = &[
 
 fn main() {
     let ui_dir = Path::new("ui");
+    let has_npm_project =
+        ui_dir.join("package.json").exists() && ui_dir.join("package-lock.json").exists();
 
     // Tell Cargo when to re-run this script: only when UI source files
     // or config change. This avoids re-running npm on every Rust-only build.
@@ -54,10 +56,17 @@ fn main() {
     if dist.join("index.html").exists() {
         if let Ok(cached) = std::fs::read_to_string(&hash_marker) {
             if cached.trim() == current_hash {
-                log!("UI sources unchanged — skipping npm build");
+                log!("UI sources unchanged: skipping npm build");
                 return;
             }
         }
+    }
+
+    // Packaged crates include prebuilt `ui/dist` but not necessarily npm project
+    // files. If the npm project files are absent, skip npm steps entirely.
+    if !has_npm_project {
+        log!("npm project files not packaged: skipping npm build steps and using packaged UI");
+        return;
     }
 
     // Check if npm is available at all.
@@ -97,7 +106,7 @@ fn main() {
     log!("running `npm run build`...");
 
     if run_npm_step(&["run", "build"], ui_dir) {
-        log!("`npm run build` done — UI assets ready in ui/dist/");
+        log!("`npm run build` done, UI assets ready in ui/dist/");
         // Write the hash marker so subsequent builds can skip npm.
         let _ = std::fs::write(&hash_marker, &current_hash);
     }
