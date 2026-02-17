@@ -3,6 +3,10 @@ name = "cory"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+description = "Visual Bitcoin transaction ancestry explorer with embedded web UI and REST API."
+documentation = "https://docs.rs/cory"
+homepage = "https://github.com/panon-btc/cory"
+repository = "https://github.com/panon-btc/cory"
 include = [
     "Cargo.toml",
     "build.rs",

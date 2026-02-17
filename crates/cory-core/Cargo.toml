@@ -3,6 +3,10 @@ name = "cory-core"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+description = "Core domain logic for Cory: Bitcoin RPC adapter, ancestry graph builder, labels, and caching."
+documentation = "https://docs.rs/cory-core"
+homepage = "https://github.com/panon-btc/cory"
+repository = "https://github.com/panon-btc/cory"
 
 [dependencies]
 async-trait = { workspace = true }
