@@ -189,7 +189,12 @@ export function estimateNodeWidths(
       NODE_EXPAND_RAIL_GAP +
       NODE_EXPAND_RAIL_WIDTH,
     // Header rows do not render the rails, but they still share the same outer node width budget.
-    20 + NODE_EXPAND_RAIL_WIDTH + NODE_EXPAND_RAIL_GAP + headerWidth + NODE_EXPAND_RAIL_GAP + NODE_EXPAND_RAIL_WIDTH,
+    20 +
+      NODE_EXPAND_RAIL_WIDTH +
+      NODE_EXPAND_RAIL_GAP +
+      headerWidth +
+      NODE_EXPAND_RAIL_GAP +
+      NODE_EXPAND_RAIL_WIDTH,
   );
   return { nodeWidth, inputColumnWidth, outputColumnWidth };
 }

@@ -6,7 +6,7 @@
 // to expand or collapse parent transactions (inputs).
 
 import { ChevronsLeft, ChevronsRight } from "lucide-react";
-import { NODE_EXPAND_RAIL_WIDTH } from "../../Constants";
+import { BaseRail, RAIL_ICON_SIZE, RAIL_ICON_STROKE } from "./BaseRail";
 
 interface TxNodeExpandRailProps {
   txid: string;
@@ -16,10 +16,6 @@ interface TxNodeExpandRailProps {
   onToggleExpand: (txid: string) => void;
 }
 
-const EXPAND_BUTTON_LEFT_PULL = -8;
-const EXPAND_BUTTON_WIDTH_EXTRA = 8;
-const EXPAND_BUTTON_ICON_SIZE = 12;
-const EXPAND_BUTTON_ICON_STROKE = 2;
 const IO_GRID_COL_EXPAND_BUTTON = 1;
 
 function expandButtonTitle(
@@ -39,77 +35,34 @@ export function TxNodeExpandRail({
   toggleLoading,
   onToggleExpand,
 }: TxNodeExpandRailProps) {
+  // If disabled and in expand mode, render a simple placeholder.
   if (toggleDisabled && expandMode === "expand") {
-    return (
-      <div
-        style={{
-          gridColumn: IO_GRID_COL_EXPAND_BUTTON,
-          alignSelf: "stretch",
-          marginLeft: EXPAND_BUTTON_LEFT_PULL,
-          width: NODE_EXPAND_RAIL_WIDTH + EXPAND_BUTTON_WIDTH_EXTRA,
-        }}
-      />
-    );
+    return <BaseRail side="left" gridColumn={IO_GRID_COL_EXPAND_BUTTON} disabled />;
   }
 
   return (
-    <button
-      type="button"
-      className="nodrag nopan"
+    <BaseRail
+      side="left"
+      gridColumn={IO_GRID_COL_EXPAND_BUTTON}
       onClick={() => onToggleExpand(txid)}
-      aria-label={
+      disabled={toggleDisabled}
+      loading={toggleLoading}
+      title={expandButtonTitle(expandMode, toggleLoading, toggleDisabled)}
+      ariaLabel={
         expandMode === "collapse" ? "Collapse input transactions" : "Expand input transactions"
       }
-      title={expandButtonTitle(expandMode, toggleLoading, toggleDisabled)}
-      disabled={toggleDisabled || toggleLoading}
-      style={{
-        gridColumn: IO_GRID_COL_EXPAND_BUTTON,
-        alignSelf: "stretch",
-        marginLeft: EXPAND_BUTTON_LEFT_PULL,
-        width: NODE_EXPAND_RAIL_WIDTH + EXPAND_BUTTON_WIDTH_EXTRA,
-        border: "none",
-        borderRight: "1px solid var(--border-strong)",
-        background: "var(--surface-1)",
-        color: "var(--text-muted)",
-        borderRadius: 0,
-        fontSize: 10,
-        lineHeight: 1,
-        padding: "6px 2px",
-        cursor: toggleDisabled || toggleLoading ? "not-allowed" : "pointer",
-        opacity: toggleDisabled ? 0.55 : 1,
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "space-around",
-        alignItems: "center",
-      }}
     >
       {expandMode === "collapse" ? (
         <>
-          <ChevronsRight
-            size={EXPAND_BUTTON_ICON_SIZE}
-            strokeWidth={EXPAND_BUTTON_ICON_STROKE}
-            aria-hidden="true"
-          />
-          <ChevronsRight
-            size={EXPAND_BUTTON_ICON_SIZE}
-            strokeWidth={EXPAND_BUTTON_ICON_STROKE}
-            aria-hidden="true"
-          />
+          <ChevronsRight size={RAIL_ICON_SIZE} strokeWidth={RAIL_ICON_STROKE} aria-hidden="true" />
+          <ChevronsRight size={RAIL_ICON_SIZE} strokeWidth={RAIL_ICON_STROKE} aria-hidden="true" />
         </>
       ) : (
         <>
-          <ChevronsLeft
-            size={EXPAND_BUTTON_ICON_SIZE}
-            strokeWidth={EXPAND_BUTTON_ICON_STROKE}
-            aria-hidden="true"
-          />
-          <ChevronsLeft
-            size={EXPAND_BUTTON_ICON_SIZE}
-            strokeWidth={EXPAND_BUTTON_ICON_STROKE}
-            aria-hidden="true"
-          />
+          <ChevronsLeft size={RAIL_ICON_SIZE} strokeWidth={RAIL_ICON_STROKE} aria-hidden="true" />
+          <ChevronsLeft size={RAIL_ICON_SIZE} strokeWidth={RAIL_ICON_STROKE} aria-hidden="true" />
         </>
       )}
-    </button>
+    </BaseRail>
   );
 }

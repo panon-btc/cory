@@ -11,7 +11,11 @@ import type { Node, Edge } from "@xyflow/react";
 import type { GraphResponse, AncestryEdge } from "../Types";
 import { buildConnectedOutputsByTx, buildNodeRenderModel } from "./RenderModel";
 import type { TxNodeData } from "./RenderModel";
-import { calculateNodeGravityScore, calculateInversionCost, NEIGHBOR_WEIGHT } from "./LayoutScoring";
+import {
+  calculateNodeGravityScore,
+  calculateInversionCost,
+  NEIGHBOR_WEIGHT,
+} from "./LayoutScoring";
 
 // Typed React Flow node carrying our view-model data.
 export type TxFlowNode = Node<TxNodeData>;

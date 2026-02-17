@@ -15,7 +15,11 @@ export function resolveInputLabels(response: GraphResponse, txid: string, index:
   return [...addrLabels.map(formatLabelEntry), ...inputLabels.map(formatLabelEntry)];
 }
 
-export function resolveOutputLabels(response: GraphResponse, txid: string, index: number): string[] {
+export function resolveOutputLabels(
+  response: GraphResponse,
+  txid: string,
+  index: number,
+): string[] {
   const outputRef = `${txid}:${index}`;
   const outputLabels = response.labels_by_type.output[outputRef] ?? [];
   const address = response.output_address_refs[outputRef] ?? null;
