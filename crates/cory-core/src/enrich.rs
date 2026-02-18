@@ -130,29 +130,40 @@ pub fn locktime_info(locktime: u32, has_non_final_sequence: bool) -> LocktimeInf
     }
 }
 
-/// Derive a display address for a script.
+/// Derive a display identifier (address or data) for a script.
 ///
-/// For standard scripts, this uses `bitcoin::Address::from_script`.
-/// For P2PK scripts (which have no native address), it derives the
-/// corresponding P2PKH address to provide a useful identifier in the UI.
+/// For standard scripts, this returns the Bitcoin address string.
+/// For P2PK scripts, it returns the corresponding P2PKH address string.
+/// For OP_RETURN scripts, it attempts to return the decoded ASCII data.
 #[must_use]
-pub fn derive_address(
-    script: &bitcoin::Script,
-    network: bitcoin::Network,
-) -> Option<bitcoin::Address> {
+pub fn derive_display_id(script: &bitcoin::Script, network: bitcoin::Network) -> Option<String> {
     if let Ok(address) = bitcoin::Address::from_script(script, network) {
-        return Some(address);
+        return Some(address.to_string());
     }
 
-    // Fallback for P2PK: extract pubkey and return P2PKH address
+    // Fallback for P2PK: extract pubkey and return P2PKH address string
     if script.is_p2pk() {
         let bytes = script.as_bytes();
         if bytes.len() > 2 {
             // P2PK is <len> <pubkey> OP_CHECKSIG
-            // len is at bytes[0], OP_CHECKSIG is at bytes[last]
             let pubkey_bytes = &bytes[1..bytes.len() - 1];
             if let Ok(pubkey) = bitcoin::PublicKey::from_slice(pubkey_bytes) {
-                return Some(bitcoin::Address::p2pkh(pubkey, network));
+                return Some(bitcoin::Address::p2pkh(&pubkey, network).to_string());
+            }
+        }
+    }
+
+    // Fallback for OP_RETURN: try to decode ASCII data
+    if script.is_op_return() {
+        for instruction in script.instructions() {
+            if let Ok(bitcoin::script::Instruction::PushBytes(b)) = instruction {
+                let bytes = b.as_bytes();
+                if !bytes.is_empty() && bytes.iter().all(|&b| b.is_ascii() && !b.is_ascii_control())
+                {
+                    if let Ok(s) = std::str::from_utf8(bytes) {
+                        return Some(s.to_string());
+                    }
+                }
             }
         }
     }
@@ -301,7 +312,7 @@ mod tests {
     // -- classify_script tests ------------------------------------------------
 
     #[test]
-    fn derive_address_p2pk() {
+    fn derive_display_id_p2pk() {
         let network = bitcoin::Network::Bitcoin;
         // PUSH65 <65-byte-uncompressed-key> OP_CHECKSIG
         let mut bytes = vec![0x41];
@@ -316,8 +327,17 @@ mod tests {
         bytes.push(0xac);
         let script = bitcoin::ScriptBuf::from_bytes(bytes);
 
-        let address = derive_address(script.as_script(), network).expect("should derive address");
-        assert_eq!(address.to_string(), "1LzBzVqEeuQyjD2mRWHes3dgWrT9titxvq");
+        let id = derive_display_id(script.as_script(), network).expect("should derive display id");
+        assert_eq!(id, "1LzBzVqEeuQyjD2mRWHes3dgWrT9titxvq");
+    }
+
+    #[test]
+    fn derive_display_id_op_return_ascii() {
+        let network = bitcoin::Network::Bitcoin;
+        // OP_RETURN PUSH "hello"
+        let script = bitcoin::ScriptBuf::from_bytes(vec![0x6a, 0x05, b'h', b'e', b'l', b'l', b'o']);
+        let id = derive_display_id(script.as_script(), network).expect("should derive display id");
+        assert_eq!(id, "hello");
     }
 
     #[test]
