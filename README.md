@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="logo.svg" alt="Cory logo" width="360" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/logo.svg">
+    <img src="assets/logo.svg" alt="Cory logo" width="360" />
+  </picture>
 </p>
 
 <p align="center">
@@ -17,7 +21,7 @@ Local-first Bitcoin transaction ancestry explorer and BIP-329 label editor.
 </p>
 
 <p align="center">
-  <video src="https://github.com/user-attachments/assets/0338f1f3-111d-41ef-9769-6c4e46c9e298" alt="Cory screenshot" controls></video>
+  <img src="assets/webcast.gif" alt="Cory demo" />
 </p>
 
 
