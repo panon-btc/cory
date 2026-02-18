@@ -10,11 +10,12 @@ import {
   useReactFlow,
   useNodesInitialized,
 } from "@xyflow/react";
-import type { NodeChange, EdgeChange, NodeProps } from "@xyflow/react";
+import type { NodeChange, EdgeChange, NodeProps, NodePositionChange } from "@xyflow/react";
 import toast from "react-hot-toast";
 import TxNode from "./TxNode/TxNode";
 import { useAppStore } from "../store/AppStore";
 import type { TxFlowNode } from "../graph/Layout";
+import { computeAllAncestors } from "../graph/GraphUtils";
 
 function hasExpandableInputs(
   graph: ReturnType<typeof useAppStore.getState>["graph"],
@@ -24,11 +25,6 @@ function hasExpandableInputs(
   return sourceNode ? sourceNode.inputs.some((input) => input.prevout !== null) : false;
 }
 
-// Controlled React Flow: the Zustand store is the single source of truth
-// for nodes and edges. User interactions (drags, selections) flow through
-// onNodesChange/onEdgesChange, which apply changes to the store directly.
-// This eliminates the previous two-state sync pattern (useNodesState +
-// useEffect + syncingFromPropsRef) that was fragile and order-dependent.
 export default function GraphPanel() {
   const { setCenter, fitView } = useReactFlow();
   const nodes = useAppStore((s) => s.nodes);
@@ -52,6 +48,20 @@ export default function GraphPanel() {
   const lastCenteredFocusRequestIdRef = useRef(0);
   const nodesInitialized = useNodesInitialized();
 
+  // Track the Ctrl key status to enable recursive node movement.
+  const ctrlKeyRef = useRef(false);
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      ctrlKeyRef.current = e.ctrlKey;
+    };
+    window.addEventListener("keydown", handleKey);
+    window.addEventListener("keyup", handleKey);
+    return () => {
+      window.removeEventListener("keydown", handleKey);
+      window.removeEventListener("keyup", handleKey);
+    };
+  }, []);
+
   const handleCopied = useCallback((value: string) => {
     toast(`Copied ${value} to clipboard`, { id: "clipboard-copy-toast" });
   }, []);
@@ -62,16 +72,12 @@ export default function GraphPanel() {
         const canExpand = hasExpandableInputs(graph, props.id);
         const isExpanded = Boolean(expandedTxids[props.id]);
 
-        // Check if any of this node's inputs are currently hidden.
-        // If so, the left rail should show "Expand" (pointing left) to allow unhiding.
         const inputs = graph?.nodes[props.id]?.inputs ?? [];
         const hasHiddenInputs = inputs.some((input) => {
           const tid = input.prevout?.split(":")[0];
           return tid && hiddenTxids[tid];
         });
 
-        // Toggle mode is 'expand' (pointing left) if NOT expanded OR if there are hidden inputs.
-        // This makes the rail show << if we can still expand back some children.
         const expandMode = !isExpanded || hasHiddenInputs ? "expand" : "collapse";
 
         return (
@@ -102,12 +108,53 @@ export default function GraphPanel() {
 
   const onNodesChange = useCallback(
     (changes: NodeChange<TxFlowNode>[]) => {
-      if (changes.some((change) => change.type === "position")) {
+      const isPositionChange = changes.some((change) => change.type === "position");
+      if (isPositionChange) {
         setHasUserMovedNodes(true);
       }
-      setNodes((prev) => applyNodeChanges(changes, prev));
+
+      let allChanges = [...changes];
+
+      // If dragging with Ctrl held, recursively apply the same position delta to all ancestors.
+      const firstChange = changes[0];
+      if (
+        ctrlKeyRef.current &&
+        graph &&
+        changes.length === 1 &&
+        firstChange?.type === "position" &&
+        firstChange.dragging
+      ) {
+        const primaryChange = firstChange as NodePositionChange;
+        const primaryNode = nodes.find((n) => n.id === primaryChange.id);
+
+        if (primaryNode && primaryChange.position) {
+          const deltaX = primaryChange.position.x - primaryNode.position.x;
+          const deltaY = primaryChange.position.y - primaryNode.position.y;
+
+          if (deltaX !== 0 || deltaY !== 0) {
+            const ancestorIds = computeAllAncestors(graph, primaryNode.id);
+
+            for (const ancestorId of ancestorIds) {
+              const ancestorNode = nodes.find((n) => n.id === ancestorId);
+              if (ancestorNode) {
+                allChanges.push({
+                  id: ancestorId,
+                  type: "position",
+                  dragging: true,
+                  position: {
+                    x: ancestorNode.position.x + deltaX,
+                    y: ancestorNode.position.y + deltaY,
+                  },
+                });
+              }
+            }
+          }
+        }
+      }
+
+      setNodes((prev) => applyNodeChanges(allChanges, prev));
     },
-    [setHasUserMovedNodes, setNodes],
+    [setHasUserMovedNodes, setNodes, graph, nodes],
   );
 
   const onEdgesChange = useCallback(
@@ -119,9 +166,6 @@ export default function GraphPanel() {
 
   const minimapNodeColor = useCallback(() => "var(--accent)", []);
 
-  // After each successful search, center the searched txid and select it.
-  // This runs once per search completion (guarded by request id), not on
-  // subsequent drags/edits.
   useEffect(() => {
     if (!nodesInitialized) return;
     if (!searchFocusTxid) return;
@@ -225,6 +269,17 @@ export default function GraphPanel() {
         proOptions={{ hideAttribution: true }}
       >
         <Controls />
+        <div className="controls-legend">
+          <div>
+            <b>Shift + Drag</b>: Box-select multiple nodes
+          </div>
+          <div>
+            <b>Ctrl + Click</b>: Select multiple nodes one-by-one
+          </div>
+          <div>
+            <b>Ctrl + Drag (single node)</b>: Move node and its ancestors
+          </div>
+        </div>
         <MiniMap nodeColor={minimapNodeColor} maskColor="var(--overlay-mask)" />
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--border)" />
       </ReactFlow>
