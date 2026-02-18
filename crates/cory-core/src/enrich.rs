@@ -17,7 +17,9 @@ use crate::types::{ScriptType, TxNode};
 /// than reimplementing opcode-level checks.
 #[must_use]
 pub fn classify_script(script: &Script) -> ScriptType {
-    if script.is_p2pkh() {
+    if script.is_p2pk() {
+        ScriptType::P2pk
+    } else if script.is_p2pkh() {
         ScriptType::P2pkh
     } else if script.is_p2sh() {
         ScriptType::P2sh
@@ -126,6 +128,36 @@ pub fn locktime_info(locktime: u32, has_non_final_sequence: bool) -> LocktimeInf
         kind,
         active: has_non_final_sequence,
     }
+}
+
+/// Derive a display address for a script.
+///
+/// For standard scripts, this uses `bitcoin::Address::from_script`.
+/// For P2PK scripts (which have no native address), it derives the
+/// corresponding P2PKH address to provide a useful identifier in the UI.
+#[must_use]
+pub fn derive_address(
+    script: &bitcoin::Script,
+    network: bitcoin::Network,
+) -> Option<bitcoin::Address> {
+    if let Ok(address) = bitcoin::Address::from_script(script, network) {
+        return Some(address);
+    }
+
+    // Fallback for P2PK: extract pubkey and return P2PKH address
+    if script.is_p2pk() {
+        let bytes = script.as_bytes();
+        if bytes.len() > 2 {
+            // P2PK is <len> <pubkey> OP_CHECKSIG
+            // len is at bytes[0], OP_CHECKSIG is at bytes[last]
+            let pubkey_bytes = &bytes[1..bytes.len() - 1];
+            if let Ok(pubkey) = bitcoin::PublicKey::from_slice(pubkey_bytes) {
+                return Some(bitcoin::Address::p2pkh(pubkey, network));
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -267,6 +299,36 @@ mod tests {
     }
 
     // -- classify_script tests ------------------------------------------------
+
+    #[test]
+    fn derive_address_p2pk() {
+        let network = bitcoin::Network::Bitcoin;
+        // PUSH65 <65-byte-uncompressed-key> OP_CHECKSIG
+        let mut bytes = vec![0x41];
+        let pubkey_bytes = [
+            0x04, 0x01, 0x51, 0x8f, 0xa1, 0xd1, 0xe1, 0xe3, 0xe1, 0x62, 0x85, 0x2d, 0x68, 0xd9,
+            0xbe, 0x1c, 0x0a, 0xba, 0xd5, 0xe3, 0xd6, 0x29, 0x7e, 0xc9, 0x5f, 0x1f, 0x91, 0xb9,
+            0x09, 0xdc, 0x1a, 0xfe, 0x61, 0x6d, 0x68, 0x76, 0xf9, 0x29, 0x18, 0x45, 0x1c, 0xa3,
+            0x87, 0xc4, 0x38, 0x76, 0x09, 0xae, 0x1a, 0x89, 0x50, 0x07, 0x09, 0x61, 0x95, 0xa8,
+            0x24, 0xba, 0xf9, 0xc3, 0x8e, 0xa9, 0x8c, 0x09, 0xc3,
+        ];
+        bytes.extend_from_slice(&pubkey_bytes);
+        bytes.push(0xac);
+        let script = bitcoin::ScriptBuf::from_bytes(bytes);
+
+        let address = derive_address(script.as_script(), network).expect("should derive address");
+        assert_eq!(address.to_string(), "1LzBzVqEeuQyjD2mRWHes3dgWrT9titxvq");
+    }
+
+    #[test]
+    fn classify_p2pk_script() {
+        // PUSH65 <65-byte-uncompressed-key> OP_CHECKSIG
+        let mut bytes = vec![0x41];
+        bytes.extend_from_slice(&[0x04; 65]);
+        bytes.push(0xac);
+        let script = bitcoin::ScriptBuf::from_bytes(bytes);
+        assert_eq!(classify_script(script.as_script()), ScriptType::P2pk);
+    }
 
     #[test]
     fn classify_p2wpkh_script() {
