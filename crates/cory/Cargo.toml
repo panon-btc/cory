@@ -34,6 +34,10 @@ rust-embed = { workspace = true }
 mime_guess = { workspace = true }
 time = { version = "0.3", features = ["formatting"] }
 zip = "8.0.0"
+[build-dependencies]
+sha2 = "0.10"
+hex = "0.4"
+
 [dev-dependencies]
 async-trait = { workspace = true }
 reqwest = { workspace = true }
