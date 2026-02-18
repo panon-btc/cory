@@ -126,6 +126,37 @@ button:active:not(:disabled) {
   border: 1px solid var(--border-subtle);
 }
 
+/* Legend/Instructions for graph interaction controls */
+.controls-legend {
+  position: absolute;
+  bottom: 24px;
+  left: 48px;
+  z-index: 5;
+  background: color-mix(in srgb, var(--surface-1) 85%, transparent);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 8px 10px;
+  pointer-events: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(4px);
+}
+
+.controls-legend b {
+  color: var(--text-secondary);
+}
+
+.controls-legend div {
+  margin-bottom: 2px;
+}
+
+.controls-legend div:last-child {
+  margin-bottom: 0;
+}
+
 .row-action-button {
   border: none;
   background: transparent;

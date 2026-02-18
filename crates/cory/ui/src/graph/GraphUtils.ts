@@ -194,6 +194,25 @@ export function buildParentsBySpending(
   return parentsBySpending;
 }
 
+export function computeAllAncestors(graph: GraphResponse, txid: string): Set<string> {
+  const ancestors = new Set<string>();
+  const parentsBySpending = buildParentsBySpending(graph.edges);
+  const queue = [txid];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) break;
+
+    for (const parentTxid of parentsBySpending.get(current) ?? []) {
+      if (!graph.nodes[parentTxid] || ancestors.has(parentTxid)) continue;
+      ancestors.add(parentTxid);
+      queue.push(parentTxid);
+    }
+  }
+
+  return ancestors;
+}
+
 export function computeVisibleTxids(
   graph: GraphResponse,
   expandedTxids: Record<string, true>,
