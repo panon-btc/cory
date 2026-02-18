@@ -29,6 +29,8 @@ pub fn classify_script(script: &Script) -> ScriptType {
         ScriptType::P2wsh
     } else if script.is_p2tr() {
         ScriptType::P2tr
+    } else if is_anchor(script) {
+        ScriptType::Anchor
     } else if script.is_multisig() {
         ScriptType::BareMultisig
     } else if script.is_op_return() {
@@ -36,6 +38,13 @@ pub fn classify_script(script: &Script) -> ScriptType {
     } else {
         ScriptType::Unknown
     }
+}
+
+/// Detect Pay-to-Anchor (P2A) scripts.
+/// These are technically version 1 witness programs with a 2-byte push: `OP_1 <0x4e73>`.
+fn is_anchor(script: &Script) -> bool {
+    let bytes = script.as_bytes();
+    bytes == [0x51, 0x02, 0x4e, 0x73]
 }
 
 // ==============================================================================
@@ -139,7 +148,11 @@ pub fn locktime_info(locktime: u32, has_non_final_sequence: bool) -> LocktimeInf
 #[must_use]
 pub fn derive_display_id(script: &bitcoin::Script, network: bitcoin::Network) -> Option<String> {
     if let Ok(address) = bitcoin::Address::from_script(script, network) {
-        return Some(address.to_string());
+        let addr_str = address.to_string();
+        if is_anchor(script) {
+            return Some(format!("{} (anchor)", addr_str));
+        }
+        return Some(addr_str);
     }
 
     // Fallback for P2PK: extract pubkey and return P2PKH address string
@@ -379,6 +392,14 @@ mod tests {
     }
 
     #[test]
+    fn derive_display_id_anchor() {
+        let network = bitcoin::Network::Bitcoin;
+        let script = bitcoin::ScriptBuf::from_bytes(vec![0x51, 0x02, 0x4e, 0x73]);
+        let id = derive_display_id(script.as_script(), network).expect("should derive display id");
+        assert_eq!(id, "bc1pfeessrawgf (anchor)");
+    }
+
+    #[test]
     fn derive_display_id_bare_multisig() {
         let network = bitcoin::Network::Bitcoin;
         let mut pubkey_bytes = vec![0x02];
@@ -432,6 +453,12 @@ mod tests {
         let script = bitcoin::ScriptBuf::from_bytes(vec![0x6a, 0x05, b'h', b'e', b'l', b'l', b'o']);
         let id = derive_display_id(script.as_script(), network).expect("should derive display id");
         assert_eq!(id, "hello");
+    }
+
+    #[test]
+    fn classify_anchor_script() {
+        let script = bitcoin::ScriptBuf::from_bytes(vec![0x51, 0x02, 0x4e, 0x73]);
+        assert_eq!(classify_script(script.as_script()), ScriptType::Anchor);
     }
 
     #[test]
