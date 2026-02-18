@@ -17,7 +17,9 @@ use crate::types::{ScriptType, TxNode};
 /// than reimplementing opcode-level checks.
 #[must_use]
 pub fn classify_script(script: &Script) -> ScriptType {
-    if script.is_p2pkh() {
+    if script.is_p2pk() {
+        ScriptType::P2pk
+    } else if script.is_p2pkh() {
         ScriptType::P2pkh
     } else if script.is_p2sh() {
         ScriptType::P2sh
@@ -27,6 +29,8 @@ pub fn classify_script(script: &Script) -> ScriptType {
         ScriptType::P2wsh
     } else if script.is_p2tr() {
         ScriptType::P2tr
+    } else if is_anchor(script) {
+        ScriptType::Anchor
     } else if script.is_multisig() {
         ScriptType::BareMultisig
     } else if script.is_op_return() {
@@ -34,6 +38,13 @@ pub fn classify_script(script: &Script) -> ScriptType {
     } else {
         ScriptType::Unknown
     }
+}
+
+/// Detect Pay-to-Anchor (P2A) scripts.
+/// These are technically version 1 witness programs with a 2-byte push: `OP_1 <0x4e73>`.
+fn is_anchor(script: &Script) -> bool {
+    let bytes = script.as_bytes();
+    bytes == [0x51, 0x02, 0x4e, 0x73]
 }
 
 // ==============================================================================
@@ -126,6 +137,101 @@ pub fn locktime_info(locktime: u32, has_non_final_sequence: bool) -> LocktimeInf
         kind,
         active: has_non_final_sequence,
     }
+}
+
+/// Derive a display identifier (address or data) for a script.
+///
+/// For standard scripts, this returns the Bitcoin address string.
+/// For P2PK scripts, it returns the corresponding P2PKH address string.
+/// For OP_RETURN scripts, it attempts to return the decoded ASCII data.
+/// For Bare Multisig, it returns "M-of-N: [addr1, addr2, ...]".
+#[must_use]
+pub fn derive_display_id(script: &bitcoin::Script, network: bitcoin::Network) -> Option<String> {
+    // 1. OP_RETURN: try to decode ASCII data.
+    // We check this first because OP_RETURN scripts should never be treated as addresses.
+    if script.is_op_return() {
+        for instruction in script.instructions() {
+            if let Ok(bitcoin::script::Instruction::PushBytes(b)) = instruction {
+                let bytes = b.as_bytes();
+                if !bytes.is_empty() && bytes.iter().all(|&b| b.is_ascii() && !b.is_ascii_control())
+                {
+                    if let Ok(s) = std::str::from_utf8(bytes) {
+                        return Some(s.to_string());
+                    }
+                }
+            }
+        }
+        return None;
+    }
+
+    // 2. Standard Addresses (including P2TR, SegWit, and Anchor)
+    if let Ok(address) = bitcoin::Address::from_script(script, network) {
+        let addr_str = address.to_string();
+        if is_anchor(script) {
+            return Some(format!("{} (anchor)", addr_str));
+        }
+        return Some(addr_str);
+    }
+
+    // 3. Fallback for P2PK: extract pubkey and return P2PKH address string
+    if script.is_p2pk() {
+        let bytes = script.as_bytes();
+        if bytes.len() > 2 {
+            // P2PK is <len> <pubkey> OP_CHECKSIG
+            let pubkey_bytes = &bytes[1..bytes.len() - 1];
+            if let Ok(pubkey) = bitcoin::PublicKey::from_slice(pubkey_bytes) {
+                return Some(bitcoin::Address::p2pkh(pubkey, network).to_string());
+            }
+        }
+    }
+
+    // 4. Fallback for Bare Multisig: extract M, N and addresses
+    if script.is_multisig() {
+        let mut instructions = script.instructions();
+        let mut m = None;
+        let mut pubkeys = Vec::new();
+
+        while let Some(Ok(instruction)) = instructions.next() {
+            match instruction {
+                bitcoin::script::Instruction::Op(op) => {
+                    use bitcoin::opcodes::all::{OP_PUSHNUM_1, OP_PUSHNUM_16};
+                    match op {
+                        op if op.to_u8() >= OP_PUSHNUM_1.to_u8()
+                            && op.to_u8() <= OP_PUSHNUM_16.to_u8() =>
+                        {
+                            let val = (op.to_u8() - OP_PUSHNUM_1.to_u8() + 1) as usize;
+                            if m.is_none() {
+                                m = Some(val);
+                            } else {
+                                // This is N
+                                let n = val;
+                                let addrs: Vec<String> = pubkeys
+                                    .iter()
+                                    .map(|pk: &bitcoin::PublicKey| {
+                                        bitcoin::Address::p2pkh(*pk, network).to_string()
+                                    })
+                                    .collect();
+                                return Some(format!(
+                                    "{}/{} musig: {}",
+                                    m.unwrap_or(0),
+                                    n,
+                                    addrs.join(", ")
+                                ));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                bitcoin::script::Instruction::PushBytes(b) => {
+                    if let Ok(pk) = bitcoin::PublicKey::from_slice(b.as_bytes()) {
+                        pubkeys.push(pk);
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -267,6 +373,106 @@ mod tests {
     }
 
     // -- classify_script tests ------------------------------------------------
+
+    #[test]
+    fn derive_display_id_p2pk() {
+        let network = bitcoin::Network::Bitcoin;
+        // PUSH65 <65-byte-uncompressed-key> OP_CHECKSIG
+        let mut bytes = vec![0x41];
+        let pubkey_bytes = [
+            0x04, 0x01, 0x51, 0x8f, 0xa1, 0xd1, 0xe1, 0xe3, 0xe1, 0x62, 0x85, 0x2d, 0x68, 0xd9,
+            0xbe, 0x1c, 0x0a, 0xba, 0xd5, 0xe3, 0xd6, 0x29, 0x7e, 0xc9, 0x5f, 0x1f, 0x91, 0xb9,
+            0x09, 0xdc, 0x1a, 0xfe, 0x61, 0x6d, 0x68, 0x76, 0xf9, 0x29, 0x18, 0x45, 0x1c, 0xa3,
+            0x87, 0xc4, 0x38, 0x76, 0x09, 0xae, 0x1a, 0x89, 0x50, 0x07, 0x09, 0x61, 0x95, 0xa8,
+            0x24, 0xba, 0xf9, 0xc3, 0x8e, 0xa9, 0x8c, 0x09, 0xc3,
+        ];
+        bytes.extend_from_slice(&pubkey_bytes);
+        bytes.push(0xac);
+        let script = bitcoin::ScriptBuf::from_bytes(bytes);
+
+        let id = derive_display_id(script.as_script(), network).expect("should derive display id");
+        assert_eq!(id, "1LzBzVqEeuQyjD2mRWHes3dgWrT9titxvq");
+    }
+
+    #[test]
+    fn derive_display_id_anchor() {
+        let network = bitcoin::Network::Bitcoin;
+        let script = bitcoin::ScriptBuf::from_bytes(vec![0x51, 0x02, 0x4e, 0x73]);
+        let id = derive_display_id(script.as_script(), network).expect("should derive display id");
+        assert_eq!(id, "bc1pfeessrawgf (anchor)");
+    }
+
+    #[test]
+    fn derive_display_id_bare_multisig() {
+        let network = bitcoin::Network::Bitcoin;
+        let mut pubkey_bytes = vec![0x02];
+        pubkey_bytes.extend_from_slice(&[0x00; 31]);
+        pubkey_bytes.push(0x01);
+        let pubkey = bitcoin::PublicKey::from_slice(&pubkey_bytes).unwrap();
+
+        // 1-of-1: OP_1 <pubkey> OP_1 OP_CHECKMULTISIG
+        let mut script_bytes = vec![0x51, 0x21];
+        script_bytes.extend_from_slice(&pubkey_bytes);
+        script_bytes.extend_from_slice(&[0x51, 0xae]);
+        let script = bitcoin::ScriptBuf::from_bytes(script_bytes);
+
+        let id = derive_display_id(script.as_script(), network).expect("should derive display id");
+        let expected_addr = bitcoin::Address::p2pkh(pubkey, network).to_string();
+        assert_eq!(id, format!("1/1 musig: {}", expected_addr));
+    }
+
+    #[test]
+    fn derive_display_id_bare_multisig_2_of_3() {
+        let network = bitcoin::Network::Bitcoin;
+        let mut pubkeys = Vec::new();
+        let mut script_bytes = vec![0x52]; // OP_2
+
+        for i in 1..4 {
+            let mut pk_bytes = vec![0x02];
+            pk_bytes.extend_from_slice(&[0x00; 31]);
+            pk_bytes.push(i as u8);
+            let pk = bitcoin::PublicKey::from_slice(&pk_bytes).unwrap();
+            pubkeys.push(pk);
+            script_bytes.push(0x21); // PUSH 33
+            script_bytes.extend_from_slice(&pk_bytes);
+        }
+
+        script_bytes.push(0x53); // OP_3
+        script_bytes.push(0xae); // OP_CHECKMULTISIG
+        let script = bitcoin::ScriptBuf::from_bytes(script_bytes);
+
+        let id = derive_display_id(script.as_script(), network).expect("should derive display id");
+        let addrs: Vec<String> = pubkeys
+            .iter()
+            .map(|pk| bitcoin::Address::p2pkh(*pk, network).to_string())
+            .collect();
+        assert_eq!(id, format!("2/3 musig: {}", addrs.join(", ")));
+    }
+
+    #[test]
+    fn derive_display_id_op_return_ascii() {
+        let network = bitcoin::Network::Bitcoin;
+        // OP_RETURN PUSH "hello"
+        let script = bitcoin::ScriptBuf::from_bytes(vec![0x6a, 0x05, b'h', b'e', b'l', b'l', b'o']);
+        let id = derive_display_id(script.as_script(), network).expect("should derive display id");
+        assert_eq!(id, "hello");
+    }
+
+    #[test]
+    fn classify_anchor_script() {
+        let script = bitcoin::ScriptBuf::from_bytes(vec![0x51, 0x02, 0x4e, 0x73]);
+        assert_eq!(classify_script(script.as_script()), ScriptType::Anchor);
+    }
+
+    #[test]
+    fn classify_p2pk_script() {
+        // PUSH65 <65-byte-uncompressed-key> OP_CHECKSIG
+        let mut bytes = vec![0x41];
+        bytes.extend_from_slice(&[0x04; 65]);
+        bytes.push(0xac);
+        let script = bitcoin::ScriptBuf::from_bytes(bytes);
+        assert_eq!(classify_script(script.as_script()), ScriptType::P2pk);
+    }
 
     #[test]
     fn classify_p2wpkh_script() {

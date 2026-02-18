@@ -270,10 +270,9 @@ fn build_graph_enrichments(
                     .insert(output_ref.clone(), to_label_entries(output_labels));
             }
 
-            if let Ok(address) =
-                bitcoin::Address::from_script(output.script_pub_key.as_script(), network)
+            if let Some(address_ref) =
+                enrich::derive_display_id(output.script_pub_key.as_script(), network)
             {
-                let address_ref = address.to_string();
                 output_address_refs.insert(output_ref.clone(), address_ref.clone());
                 address_occurrences
                     .entry(address_ref.clone())
@@ -311,8 +310,8 @@ fn build_graph_enrichments(
             );
             continue;
         };
-        let Ok(address) =
-            bitcoin::Address::from_script(funding_output.script_pub_key.as_script(), network)
+        let Some(address_str) =
+            enrich::derive_display_id(funding_output.script_pub_key.as_script(), network)
         else {
             tracing::debug!(
                 funding_txid = %edge.funding_txid,
@@ -322,7 +321,7 @@ fn build_graph_enrichments(
             continue;
         };
         let input_ref = format!("{}:{}", edge.spending_txid, edge.input_index);
-        input_address_refs.insert(input_ref, address.to_string());
+        input_address_refs.insert(input_ref, address_str);
     }
 
     GraphEnrichments {

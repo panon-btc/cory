@@ -78,6 +78,16 @@ connection requirements (see `--help`), e.g.:
 cory --connection https://bitcoin-rpc.publicnode.com --max-depth 2
 ```
 
+### Some interesting mainnet txids to try
+
+| TXID | Description |
+|---|---|
+| `591e91f809d716912ca1d4a9295e70c3e78bab077683f79350f101da64588073` | TX ancestors contains the first Satoshi -> Hal Finney transaction |
+| `a1075db55d416d3ca199f55b6084e2115b9345e16c5cf302fc80e9d5fbf5d48d` | bitcoin pizza day (131 inputs: do it with a depth of 1!) |
+| `06a0dc290a0f59450a515dd7df3c04d8730a5157c91beba20311f88d0619a670` | `OP_RETURN` "The Great Print - We are all Satoshi" |
+| `b10c007c60e14f9d087e0291d4d0c7869697c6681d979c6639dbd960792b4d41` | first [p2tr before activation](https://b10c.me/blog/007-spending-p2tr-pre-activation/) |
+| `b10c0000004da5a9d1d9b4ae32e09f0b3e62d21a5cce5428d4ad714fb444eb5d` | [xB10C's weird bitcoin transaction](https://stacker.news/items/593226) |
+
 ## Security and Privacy Notes
 
 - Server binds to `127.0.0.1` by default.
